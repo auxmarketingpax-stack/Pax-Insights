@@ -1318,7 +1318,7 @@
   }
 
   function getUserRole() {
-    return normalizeUserRole(state.profile?.role, USER_ROLE.USER);
+    return getProfileRole(state.profile);
   }
 
   function normalizeEmail(value) {
@@ -1338,6 +1338,7 @@
   }
 
   function getProfileRole(profile = null) {
+    if (isDeveloperEmail(profile?.email || "")) return USER_ROLE.DEVELOPER;
     return normalizeUserRole(profile?.role, USER_ROLE.USER);
   }
 
@@ -2592,7 +2593,8 @@
     }
   }
 
-  function getRoleLabel(role = getUserRole()) {
+  function getRoleLabel(role = getUserRole(), email = "") {
+    if (isDeveloperEmail(email || getCurrentUserEmail())) return "Desenvolvedor";
     const normalizedRole = normalizeUserRole(role, USER_ROLE.USER);
     if (normalizedRole === USER_ROLE.DEVELOPER) return "Desenvolvedor";
     if (normalizedRole === USER_ROLE.ADMIN) return "Administrador";
@@ -2605,7 +2607,9 @@
   }
 
   function getRoleOptionsMarkup(selectedRole = USER_ROLE.USER, targetEmail = "") {
-    const normalizedSelectedRole = normalizeUserRole(selectedRole, USER_ROLE.USER);
+    const normalizedSelectedRole = isDeveloperEmail(targetEmail)
+      ? USER_ROLE.DEVELOPER
+      : normalizeUserRole(selectedRole, USER_ROLE.USER);
     const options = [
       { value: USER_ROLE.USER, label: "Usuario comum" },
       { value: USER_ROLE.MANAGEMENT, label: "Gest\u00e3o" },
@@ -2624,6 +2628,11 @@
   function canAssignRoleToProfile(profile = null, nextRole = USER_ROLE.USER) {
     if (!profile) return false;
     return canManageProfile(profile, { action: "role", nextRole });
+  }
+
+  function getPersistedRoleValue(nextRole = USER_ROLE.USER, email = "") {
+    const normalizedRole = normalizeUserRole(nextRole, USER_ROLE.USER);
+    return isDeveloperEmail(email) ? USER_ROLE.ADMIN : normalizedRole;
   }
 
   function canAssignRoleToRequest(request = null, nextRole = USER_ROLE.USER) {
@@ -9040,7 +9049,7 @@
           <span class="status-chip ${escapeHtml(String(profile.access_status || ACCESS_STATUS.PENDING).toLowerCase())}">${escapeHtml(getAccessStatusLabel(String(profile.access_status || ACCESS_STATUS.PENDING).toLowerCase()))}</span>
         </div>
         <div class="team-item-meta">E-mail: ${escapeHtml(profile.email || "-")}</div>
-        <div class="team-item-meta">Nivel: ${escapeHtml(getRoleLabel(String(profile.role || USER_ROLE.USER).toLowerCase()))}</div>
+        <div class="team-item-meta">Nivel: ${escapeHtml(getRoleLabel(String(profile.role || USER_ROLE.USER).toLowerCase(), profile.email || ""))}</div>
         <div class="team-item-meta">Departamento: ${escapeHtml(getDepartmentAccessLabel(profile.department_id, profile.department_id_secondary))}</div>
         ${canManageAdminAreas() ? `
           <div class="team-item-actions">
@@ -10873,10 +10882,11 @@
       alert("Você não pode alterar esse cargo.");
       return;
     }
+    const persistedRole = getPersistedRoleValue(role, profile.email || "");
 
     const { error } = await state.supabase
       .from("profiles")
-      .update({ role })
+      .update({ role: persistedRole })
       .eq("id", profileId);
 
     if (error) {
@@ -11089,12 +11099,13 @@
         alert("Você não pode aprovar esse cargo para esse usuário.");
         return;
       }
+      const persistedApprovedRole = getPersistedRoleValue(approvedRole, profile.email || "");
 
       const { error: profileError } = await state.supabase
         .from("profiles")
         .update({
           access_status: ACCESS_STATUS.APPROVED,
-          role: approvedRole,
+          role: persistedApprovedRole,
           department_id: approvedDepartmentId,
           department_id_secondary: approvedSecondaryDepartmentId,
           approved_at: new Date().toISOString(),
@@ -11132,11 +11143,12 @@
       alert("Você não pode aprovar esse cargo para essa solicitação.");
       return;
     }
+    const persistedApprovedRole = getPersistedRoleValue(approvedRole, request.email || "");
 
     const profileFilter = request.auth_user_id
       ? state.supabase.from("profiles").update({
           access_status: ACCESS_STATUS.APPROVED,
-          role: approvedRole,
+          role: persistedApprovedRole,
           department_id: approvedDepartmentId,
           department_id_secondary: approvedSecondaryDepartmentId,
           approved_at: new Date().toISOString(),
@@ -11144,7 +11156,7 @@
         }).eq("id", request.auth_user_id)
       : state.supabase.from("profiles").update({
           access_status: ACCESS_STATUS.APPROVED,
-          role: approvedRole,
+          role: persistedApprovedRole,
           department_id: approvedDepartmentId,
           department_id_secondary: approvedSecondaryDepartmentId,
           approved_at: new Date().toISOString(),
