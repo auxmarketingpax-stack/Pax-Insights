@@ -24,6 +24,8 @@
     crmNavbarCollapseBtn: $("crmNavbarCollapseBtn"),
     crmNavbarExpandBtn: $("crmNavbarExpandBtn"),
     crmFunnelSidebar: $("crmFunnelSidebar"),
+    crmFunnelNav: $("crmFunnelNav"),
+    funnelContextMenu: $("funnelContextMenu"),
     funnelCategoryB2BList: $("funnelCategoryB2BList"),
     funnelCategoryB2CList: $("funnelCategoryB2CList"),
     funnelBackBtn: $("funnelBackBtn"),
@@ -143,32 +145,65 @@
 
   const funnels = [
     {
-      id: "funnel-b2b-vendas",
-      name: "Vendas",
+      id: "funnel-b2b-acao",
+      name: "Acao Externos",
       category: "B2B",
       groupId: "group-b2b-vendas",
       subfunnels: [
-        { id: "sub-b2b-apresentacao", name: "Apresentacao" },
-        { id: "sub-b2b-acao", name: "Acao Externos" },
-        { id: "sub-b2b-redes", name: "Redes Sociais" },
+        { id: "sub-b2b-acao-apresentacao", name: "Apresentacao" },
+        { id: "sub-b2b-acao-qualificacao", name: "Qualificacao" },
+        { id: "sub-b2b-acao-fechamento", name: "Fechamento" },
       ],
     },
     {
-      id: "funnel-b2c-vendas",
-      name: "Vendas",
+      id: "funnel-b2b-redes",
+      name: "Redes Sociais",
+      category: "B2B",
+      groupId: "group-b2b-vendas",
+      subfunnels: [
+        { id: "sub-b2b-redes-captacao", name: "Captacao" },
+        { id: "sub-b2b-redes-negociacao", name: "Negociacao" },
+        { id: "sub-b2b-redes-fechamento", name: "Fechamento" },
+      ],
+    },
+    {
+      id: "funnel-b2c-indicacao",
+      name: "Indicacao",
       category: "B2C",
       groupId: "group-b2c-vendas",
       subfunnels: [
-        { id: "sub-b2c-indicacao", name: "Indicacao" },
-        { id: "sub-b2c-redes", name: "Redes Sociais" },
-        { id: "sub-b2c-acao", name: "Acao Externos" },
+        { id: "sub-b2c-indicacao-apresentacao", name: "Apresentacao" },
+        { id: "sub-b2c-indicacao-continuar", name: "Continuar" },
+        { id: "sub-b2c-indicacao-fechamento", name: "Fechamento" },
+      ],
+    },
+    {
+      id: "funnel-b2c-redes",
+      name: "Redes Sociais",
+      category: "B2C",
+      groupId: "group-b2c-vendas",
+      subfunnels: [
+        { id: "sub-b2c-redes-captacao", name: "Captacao" },
+        { id: "sub-b2c-redes-negociacao", name: "Negociacao" },
+        { id: "sub-b2c-redes-fechamento", name: "Fechamento" },
+      ],
+    },
+    {
+      id: "funnel-b2c-acao",
+      name: "Acao Externos",
+      category: "B2C",
+      groupId: "group-b2c-vendas",
+      subfunnels: [
+        { id: "sub-b2c-acao-contato", name: "Contato Inicial" },
+        { id: "sub-b2c-acao-qualificacao", name: "Qualificacao" },
+        { id: "sub-b2c-acao-fechamento", name: "Fechamento" },
       ],
     },
   ];
 
   const groups = [
-    { id: "group-b2b-vendas", category: "B2B", name: "Vendas", summary: "Vendas" },
-    { id: "group-b2c-vendas", category: "B2C", name: "Vendas", summary: "Vendas" },
+    { id: "group-b2b-vendas", category: "B2B", name: "Vendas", summary: "Vendas", collapsed: false },
+    { id: "group-b2c-vendas", category: "B2C", name: "Vendas", summary: "Vendas", collapsed: false },
   ];
 
   const stages = funnels.flatMap((funnel) => funnel.subfunnels.flatMap((subfunnel) => (
@@ -183,18 +218,26 @@
   )));
 
   const leads = [
-    { id: "lead-1", name: "Marliene Magalhaes Soares", contact: "64 99967-3937", owner: "Elvislania Alves da Silva", start_date: "2026-07-21", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-indicacao", stage_id: "sub-b2c-indicacao-novo", referral_name: "Eleone", referral_sector: "LOGISTICA", observations: [{ text: "Contato inicial realizado.", date: "2026-07-21" }] },
-    { id: "lead-2", name: "Sara Jessica", contact: "64 99246-3059", owner: "Maria Clara Nicacio Martins", start_date: "2026-07-20", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-indicacao", stage_id: "sub-b2c-indicacao-novo", referral_name: "Eduarda", referral_sector: "CONVENIOS", observations: [{ text: "Aguardando retorno da familia.", date: "2026-07-20" }] },
-    { id: "lead-3", name: "Joana", contact: "64 98127-0417", owner: "Elvislania Alves da Silva", start_date: "2026-07-14", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-indicacao", stage_id: "sub-b2c-indicacao-apresentacao", referral_name: "Nathalia", referral_sector: "BANCARIO", observations: [{ text: "Apresentacao realizada.", date: "2026-07-15" }] },
-    { id: "lead-4", name: "Wellington", contact: "64 98429-1633", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-acao", stage_id: "sub-b2c-acao-espera", referral_name: "", referral_sector: "", observations: [{ text: "Sem resposta no ultimo follow-up.", date: "2026-07-18" }] },
-    { id: "lead-5", name: "Gabriel", contact: "64 98439-5957", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-acao", stage_id: "sub-b2c-acao-apresentacao", referral_name: "", referral_sector: "", observations: [{ text: "Interesse inicial confirmado.", date: "2026-07-16" }] },
-    { id: "lead-6", name: "Cibele Guimaraes", contact: "64 99602-3273", owner: "Elvislania Alves da Silva", start_date: "2026-07-20", traffic_type: "Pago", social_source: "Instagram", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-redes", stage_id: "sub-b2c-redes-novo", referral_name: "", referral_sector: "", observations: [{ text: "Lead vindo de campanha social.", date: "2026-07-20" }] },
-    { id: "lead-7", name: "Carla Vanessa Lenz Dutra", contact: "64 99994-0835", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-20", traffic_type: "Pago", social_source: "Instagram", plan_name: "Premium II", value: 150, contract: "43508", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-redes", stage_id: "sub-b2c-redes-fechado", referral_name: "", referral_sector: "", observations: [{ text: "Contrato aprovado.", date: "2026-07-22" }] },
-    { id: "lead-8", name: "Devanil Lima Mendes", contact: "64 99315-2777", owner: "Elvislania Alves da Silva", start_date: "2026-07-06", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "CRISTAL", value: 90, contract: "43604", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-indicacao", stage_id: "sub-b2c-indicacao-fechado", referral_name: "Andre", referral_sector: "FUNERARIA", observations: [{ text: "Venda concluida com indicacao direta.", date: "2026-07-06" }] },
-    { id: "lead-9", name: "Maria das Gracas", contact: "64 99257-4090", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-13", traffic_type: "Pago", social_source: "Indicacao", plan_name: "Premium II", value: 150, contract: "43299", funnel_id: "funnel-b2c-vendas", subfunnel_id: "sub-b2c-indicacao", stage_id: "sub-b2c-indicacao-fechado", referral_name: "", referral_sector: "", observations: [{ text: "Fechamento registrado na mesma semana.", date: "2026-07-13" }] },
-    { id: "lead-10", name: "Renan", contact: "64 99279-0513", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-vendas", subfunnel_id: "sub-b2b-acao", stage_id: "sub-b2b-acao-novo", referral_name: "", referral_sector: "", observations: [{ text: "Primeiro contato pendente.", date: "2026-07-14" }] },
-    { id: "lead-11", name: "Ana", contact: "64 99331-6258", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-20", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-vendas", subfunnel_id: "sub-b2b-apresentacao", stage_id: "sub-b2b-apresentacao-apresentacao", referral_name: "Henrique Daniel", referral_sector: "COBRANCA", observations: [{ text: "Apresentacao enviada.", date: "2026-07-20" }] },
-    { id: "lead-12", name: "Daniel Borges", contact: "64 99283-8345", owner: "Elvislania Alves da Silva", start_date: "2026-06-30", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "CRISTAL", value: 90, contract: "43509", funnel_id: "funnel-b2b-vendas", subfunnel_id: "sub-b2b-apresentacao", stage_id: "sub-b2b-apresentacao-fechado", referral_name: "Diene", referral_sector: "FUNERARIA", observations: [{ text: "Cliente convertido apos reuniao.", date: "2026-07-01" }] },
+    { id: "lead-1", name: "Marliene Magalhaes Soares", contact: "64 99967-3937", owner: "Elvislania Alves da Silva", start_date: "2026-07-21", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-apresentacao", stage_id: "sub-b2c-indicacao-apresentacao-novo", referral_name: "Eleone", referral_sector: "LOGISTICA", observations: [{ text: "Contato inicial realizado.", date: "2026-07-21" }] },
+    { id: "lead-2", name: "Sara Jessica", contact: "64 99246-3059", owner: "Maria Clara Nicacio Martins", start_date: "2026-07-20", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-continuar", stage_id: "sub-b2c-indicacao-continuar-novo", referral_name: "Eduarda", referral_sector: "CONVENIOS", observations: [{ text: "Aguardando retorno da familia.", date: "2026-07-20" }] },
+    { id: "lead-3", name: "Joana", contact: "64 98127-0417", owner: "Elvislania Alves da Silva", start_date: "2026-07-14", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-apresentacao", stage_id: "sub-b2c-indicacao-apresentacao-apresentacao", referral_name: "Nathalia", referral_sector: "BANCARIO", observations: [{ text: "Apresentacao realizada.", date: "2026-07-15" }] },
+    { id: "lead-4", name: "Wellington", contact: "64 98429-1633", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-acao", subfunnel_id: "sub-b2c-acao-contato", stage_id: "sub-b2c-acao-contato-espera", referral_name: "", referral_sector: "", observations: [{ text: "Sem resposta no ultimo follow-up.", date: "2026-07-18" }] },
+    { id: "lead-5", name: "Gabriel", contact: "64 98439-5957", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-acao", subfunnel_id: "sub-b2c-acao-qualificacao", stage_id: "sub-b2c-acao-qualificacao-apresentacao", referral_name: "", referral_sector: "", observations: [{ text: "Interesse inicial confirmado.", date: "2026-07-16" }] },
+    { id: "lead-6", name: "Cibele Guimaraes", contact: "64 99602-3273", owner: "Elvislania Alves da Silva", start_date: "2026-07-20", traffic_type: "Pago", social_source: "Instagram", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-redes", subfunnel_id: "sub-b2c-redes-captacao", stage_id: "sub-b2c-redes-captacao-novo", referral_name: "", referral_sector: "", observations: [{ text: "Lead vindo de campanha social.", date: "2026-07-20" }] },
+    { id: "lead-7", name: "Carla Vanessa Lenz Dutra", contact: "64 99994-0835", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-20", traffic_type: "Pago", social_source: "Instagram", plan_name: "Premium II", value: 150, contract: "43508", funnel_id: "funnel-b2c-redes", subfunnel_id: "sub-b2c-redes-fechamento", stage_id: "sub-b2c-redes-fechamento-fechado", referral_name: "", referral_sector: "", observations: [{ text: "Contrato aprovado.", date: "2026-07-22" }] },
+    { id: "lead-8", name: "Devanil Lima Mendes", contact: "64 99315-2777", owner: "Elvislania Alves da Silva", start_date: "2026-07-06", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "CRISTAL", value: 90, contract: "43604", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-fechamento", stage_id: "sub-b2c-indicacao-fechamento-fechado", referral_name: "Andre", referral_sector: "FUNERARIA", observations: [{ text: "Venda concluida com indicacao direta.", date: "2026-07-06" }] },
+    { id: "lead-9", name: "Maria das Gracas", contact: "64 99257-4090", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-13", traffic_type: "Pago", social_source: "Indicacao", plan_name: "Premium II", value: 150, contract: "43299", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-fechamento", stage_id: "sub-b2c-indicacao-fechamento-fechado", referral_name: "", referral_sector: "", observations: [{ text: "Fechamento registrado na mesma semana.", date: "2026-07-13" }] },
+    { id: "lead-10", name: "Renan", contact: "64 99279-0513", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-acao", subfunnel_id: "sub-b2b-acao-apresentacao", stage_id: "sub-b2b-acao-apresentacao-novo", referral_name: "", referral_sector: "", observations: [{ text: "Primeiro contato pendente.", date: "2026-07-14" }] },
+    { id: "lead-11", name: "Ana", contact: "64 99331-6258", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-20", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-acao", subfunnel_id: "sub-b2b-acao-qualificacao", stage_id: "sub-b2b-acao-qualificacao-apresentacao", referral_name: "Henrique Daniel", referral_sector: "COBRANCA", observations: [{ text: "Apresentacao enviada.", date: "2026-07-20" }] },
+    { id: "lead-12", name: "Daniel Borges", contact: "64 99283-8345", owner: "Elvislania Alves da Silva", start_date: "2026-06-30", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "CRISTAL", value: 90, contract: "43509", funnel_id: "funnel-b2b-redes", subfunnel_id: "sub-b2b-redes-fechamento", stage_id: "sub-b2b-redes-fechamento-fechado", referral_name: "Diene", referral_sector: "FUNERARIA", observations: [{ text: "Cliente convertido apos reuniao.", date: "2026-07-01" }] },
+    { id: "lead-13", name: "Rafael", contact: "64 99279-3382", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-acao", subfunnel_id: "sub-b2c-acao-contato", stage_id: "sub-b2c-acao-contato-novo", referral_name: "", referral_sector: "", observations: [{ text: "Lead novo em abordagem externa.", date: "2026-07-14" }] },
+    { id: "lead-14", name: "Silvio", contact: "64 98401-5058", owner: "Leidimar Correa Martins", start_date: "2026-07-14", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-acao", subfunnel_id: "sub-b2c-acao-qualificacao", stage_id: "sub-b2c-acao-qualificacao-novo", referral_name: "", referral_sector: "", observations: [{ text: "Aguardando segunda tentativa.", date: "2026-07-17" }] },
+    { id: "lead-15", name: "Geraldo Nelore", contact: "64 9232-1024", owner: "Leidimar Correa Martins", start_date: "2026-07-21", traffic_type: "Acao Externa", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-acao", subfunnel_id: "sub-b2b-acao-apresentacao", stage_id: "sub-b2b-acao-apresentacao-apresentacao", referral_name: "", referral_sector: "", observations: [{ text: "Contato evoluiu para apresentacao.", date: "2026-07-22" }] },
+    { id: "lead-16", name: "Maria Tereza", contact: "64 99321-6279", owner: "Elvislania Alves da Silva", start_date: "2026-07-20", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-apresentacao", stage_id: "sub-b2c-indicacao-apresentacao-apresentacao", referral_name: "Eduarda", referral_sector: "CONVENIOS", observations: [{ text: "Negociacao em andamento.", date: "2026-07-20" }] },
+    { id: "lead-17", name: "Maria das Dores", contact: "64 99915-4408", owner: "Willyan Kayke Borges dos Santos", start_date: "2026-07-11", traffic_type: "Pago", social_source: "Facebook", plan_name: "Premium I", value: 120, contract: "43112", funnel_id: "funnel-b2c-redes", subfunnel_id: "sub-b2c-redes-fechamento", stage_id: "sub-b2c-redes-fechamento-fechado", referral_name: "", referral_sector: "", observations: [{ text: "Conversao via campanha digital.", date: "2026-07-12" }] },
+    { id: "lead-18", name: "Jose Correia", contact: "64 99812-8801", owner: "Elvislania Alves da Silva", start_date: "2026-07-10", traffic_type: "Indicacao", social_source: "Indicacao", plan_name: "CRISTAL", value: 90, contract: "43010", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-fechamento", stage_id: "sub-b2c-indicacao-fechamento-fechado", referral_name: "Natalia Arantes", referral_sector: "MARKETING", observations: [{ text: "Indicacao convertida sem objecoes.", date: "2026-07-10" }] },
+    { id: "lead-19", name: "Bruna Nathiely", contact: "64 99911-8732", owner: "Maria Clara Nicacio Martins", start_date: "2026-07-18", traffic_type: "Indicacao", social_source: "Prospeccao", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2c-indicacao", subfunnel_id: "sub-b2c-indicacao-continuar", stage_id: "sub-b2c-indicacao-continuar-apresentacao", referral_name: "Bruna Nathiely", referral_sector: "MARKETING", observations: [{ text: "Em acompanhamento para retorno.", date: "2026-07-19" }] },
+    { id: "lead-20", name: "Luiz Carlos", contact: "64 99410-7105", owner: "Elvislania Alves da Silva", start_date: "2026-07-09", traffic_type: "Pago", social_source: "Instagram", plan_name: "Nao fechou ainda", value: 0, contract: "", funnel_id: "funnel-b2b-redes", subfunnel_id: "sub-b2b-redes-captacao", stage_id: "sub-b2b-redes-captacao-novo", referral_name: "", referral_sector: "", observations: [{ text: "Lead B2B de campanha social.", date: "2026-07-09" }] },
   ];
 
   const teamMembers = [
@@ -207,13 +250,14 @@
   const state = {
     shellView: "crm",
     activeView: "funil",
-    activeFunnelId: "funnel-b2c-vendas",
+    activeFunnelId: "funnel-b2c-indicacao",
     activeSubfunnelId: null,
     sidebarCollapsed: false,
     funnelSidebarOpen: true,
     desktopFiltersOpen: false,
     mobileFiltersOpen: false,
     openFilterKey: null,
+    funnelContextMenuState: null,
     selectedLeadIds: new Set(),
     search: "",
     filters: Object.fromEntries(filterConfigs.map((item) => [item.key, ""])),
@@ -263,6 +307,10 @@
 
   function getGroupById(id) {
     return groups.find((item) => item.id === id) || null;
+  }
+
+  function getFunnelsForGroup(groupId) {
+    return funnels.filter((item) => item.groupId === groupId);
   }
 
   function getSubfunnelById(id) {
