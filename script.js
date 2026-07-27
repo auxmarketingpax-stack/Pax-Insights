@@ -1,4 +1,4 @@
-(() => {
+﻿(() => {
   const $ = (id) => document.getElementById(id);
 
   const els = {
@@ -10232,12 +10232,13 @@
     state.highlightedLeadId = lead.id;
     state.activeFunnelId = funnelId;
     state.activeSubfunnelId = subfunnelId;
+    state.funnelSidebarOpen = false;
     setNotificationsPanelOpen(false);
     setShellTab("crm");
     bindView("funil", {
       resetFunnelDetail: false,
-      keepFunnelSidebarOpen: true,
-      preserveFunnelSidebarState: true
+      keepFunnelSidebarOpen: false,
+      preserveFunnelSidebarState: false
     });
     renderAll();
   }
