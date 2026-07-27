@@ -37,6 +37,11 @@
     shellViewCrm: $("shellViewCrm"),
     shellViewIntel: $("shellViewIntel"),
     shellBrandLogo: $("shellBrandLogo"),
+    notificationsBtn: $("notificationsBtn"),
+    notificationsCount: $("notificationsCount"),
+    notificationsPanel: $("notificationsPanel"),
+    notificationsPanelMeta: $("notificationsPanelMeta"),
+    notificationsList: $("notificationsList"),
     profileMenuBtn: $("profileMenuBtn"),
     profileMenu: $("profileMenu"),
     profileMenuAvatar: $("profileMenuAvatar"),
@@ -249,6 +254,14 @@
     leadFunnelSelect: $("leadFunnelSelect"),
     leadSubfunnelSelect: $("leadSubfunnelSelect"),
     stage: $("stage"),
+    leadReminderEnabled: $("leadReminderEnabled"),
+    leadReminderFields: $("leadReminderFields"),
+    leadReminderType: $("leadReminderType"),
+    leadReminderDateGroup: $("leadReminderDateGroup"),
+    leadReminderDate: $("leadReminderDate"),
+    leadReminderDaysGroup: $("leadReminderDaysGroup"),
+    leadReminderDays: $("leadReminderDays"),
+    leadReminderMessage: $("leadReminderMessage"),
     contractNumberGroup: $("contractNumberGroup"),
     contractNumber: $("contractNumber"),
     socialSource: $("socialSource"),
@@ -419,7 +432,9 @@
     ownerReconciliationDone: false,
     funnelGroupModalContext: null,
     funnelContextMenuState: null,
-    funnelNavDrag: null
+    funnelNavDrag: null,
+    notificationPanelOpen: false,
+    highlightedLeadId: null
   };
 
   const PRESET_STAGE_TYPES = [
@@ -476,6 +491,7 @@
   const SOCIAL_SOURCE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.social-source-catalog-v1`;
   const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
   const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
+  const DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.deleted-funnel-workspace-ids-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
   const LEGACY_CUSTOM_STAGE_TYPES_STORAGE_KEY = "crmPax.customStageTypes";
@@ -3284,6 +3300,21 @@
     return `${String(value).slice(8, 10)}/${String(value).slice(5, 7)}`;
   }
 
+  function getLocalIsoDate(date = new Date()) {
+    const source = date instanceof Date ? new Date(date.getTime()) : new Date(date);
+    if (Number.isNaN(source.getTime())) return "";
+    source.setMinutes(source.getMinutes() - source.getTimezoneOffset());
+    return source.toISOString().slice(0, 10);
+  }
+
+  function diffDaysBetweenDates(startDate, endDate = getLocalIsoDate()) {
+    if (!startDate || !endDate) return 0;
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${endDate}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 0;
+    return Math.floor((end.getTime() - start.getTime()) / 86400000);
+  }
+
   function normalizeDateInput(value) {
     const raw = String(value || "").trim();
     if (!raw) return "";
@@ -3305,6 +3336,38 @@
     }
 
     return "";
+  }
+
+  function normalizeLeadReminder(reminder = null) {
+    if (!reminder || typeof reminder !== "object") return null;
+    const type = String(reminder.type || "").trim();
+    const message = normalizeSpacing(reminder.message || reminder.label || "");
+
+    if (type === "date") {
+      const dueDate = normalizeDateInput(reminder.due_date || reminder.dueDate || "");
+      if (!dueDate) return null;
+      return {
+        type: "date",
+        due_date: dueDate,
+        message
+      };
+    }
+
+    if (type === "stage_days") {
+      const stageId = String(reminder.stage_id || reminder.stageId || "").trim();
+      const days = Math.max(1, Number(reminder.days || 0) || 0);
+      const startDate = normalizeDateInput(reminder.start_date || reminder.startDate || "") || getLocalIsoDate();
+      if (!stageId || !days) return null;
+      return {
+        type: "stage_days",
+        stage_id: stageId,
+        days,
+        start_date: startDate,
+        message
+      };
+    }
+
+    return null;
   }
 
   function cleanObservationList(observations) {
@@ -3494,7 +3557,8 @@
         observations: text ? [{ date: "", text }] : [],
         contract_number: "",
         referral_name: "",
-        referral_sector: ""
+        referral_sector: "",
+        reminder: null
       };
     }
 
@@ -3507,6 +3571,7 @@
       const contractNumber = String(parsed?.contract_number || parsed?.contractNumber || "").trim();
       const referralName = String(parsed?.referral_name || "").trim();
       const referralSector = String(parsed?.referral_sector || "").trim();
+      const reminder = normalizeLeadReminder(parsed?.reminder || null);
       if (!plans.length && legacyPlan) {
         plans.push({ name: legacyPlan, value: Number.isFinite(Number(leadValue)) ? Number(leadValue) : 0 });
       } else if (!plans.length && Number(leadValue || 0) > 0) {
@@ -3524,7 +3589,8 @@
         observations,
         contract_number: contractNumber,
         referral_name: referralName,
-        referral_sector: referralSector
+        referral_sector: referralSector,
+        reminder
       };
     } catch (_error) {
       const text = raw.trim();
@@ -3535,7 +3601,8 @@
         observations: text ? [{ date: "", text }] : [],
         contract_number: "",
         referral_name: "",
-        referral_sector: ""
+        referral_sector: "",
+        reminder: null
       };
     }
   }
@@ -3548,10 +3615,11 @@
     const contractNumber = String(meta.contract_number || meta.contractNumber || "").trim();
     const referralName = String(meta.referral_name || "").trim();
     const referralSector = String(meta.referral_sector || "").trim();
+    const reminder = normalizeLeadReminder(meta.reminder || null);
 
-    if (!plan && !plans.length && !observations.length && !contractNumber && !referralName && !referralSector) return legacyText;
+    if (!plan && !plans.length && !observations.length && !contractNumber && !referralName && !referralSector && !reminder) return legacyText;
 
-    return `__CRM_META__${JSON.stringify({ plan, plans, legacyText, observations, contract_number: contractNumber, referral_name: referralName, referral_sector: referralSector })}`;
+    return `__CRM_META__${JSON.stringify({ plan, plans, legacyText, observations, contract_number: contractNumber, referral_name: referralName, referral_sector: referralSector, reminder })}`;
   }
 
   function normalizeLead(lead, options = {}) {
@@ -3719,6 +3787,68 @@
     return observations[observations.length - 1] || null;
   }
 
+  function getLeadReminder(lead) {
+    return normalizeLeadReminder(lead?._meta?.reminder || null);
+  }
+
+  function isLeadOwnedByCurrentUser(lead) {
+    const currentOwnerKey = normalizeComparisonText(getCurrentLeadOwnerName());
+    const leadOwnerKey = normalizeComparisonText(lead?.owner || lead?.owner_raw || "");
+    return Boolean(currentOwnerKey && leadOwnerKey && currentOwnerKey === leadOwnerKey);
+  }
+
+  function getLeadReminderNotification(lead) {
+    const reminder = getLeadReminder(lead);
+    if (!lead || !reminder || !isLeadOwnedByCurrentUser(lead)) return null;
+
+    if (reminder.type === "date") {
+      if (reminder.due_date > getLocalIsoDate()) return null;
+      return {
+        leadId: lead.id,
+        type: "date",
+        dueLabel: `Venceu em ${formatDate(reminder.due_date)}`,
+        message: reminder.message || "Lembrete do lead",
+        reminder
+      };
+    }
+
+    if (reminder.type === "stage_days") {
+      if (String(lead.stage_id || "") !== String(reminder.stage_id || "")) return null;
+      const elapsedDays = diffDaysBetweenDates(reminder.start_date, getLocalIsoDate());
+      if (elapsedDays < Number(reminder.days || 0)) return null;
+      return {
+        leadId: lead.id,
+        type: "stage_days",
+        dueLabel: `${elapsedDays} dia(s) na pipeline`,
+        message: reminder.message || `Acompanhar lead após ${reminder.days} dia(s)`,
+        reminder
+      };
+    }
+
+    return null;
+  }
+
+  function getActiveLeadNotifications() {
+    return state.leads
+      .map((lead) => {
+        const notification = getLeadReminderNotification(lead);
+        if (!notification) return null;
+        const stage = state.stages.find((item) => item.id === lead.stage_id) || null;
+        const subfunnelId = getLeadSubfunnelId(lead);
+        const subfunnel = getSubfunnelById(subfunnelId);
+        const funnel = getFunnelById(subfunnel?.funnel_id);
+        return {
+          ...notification,
+          lead,
+          stage,
+          subfunnel,
+          funnel
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => String(a.lead?.name || "").localeCompare(String(b.lead?.name || ""), "pt-BR"));
+  }
+
   function getLeadSearchText(lead) {
     return [
       lead?.name,
@@ -3744,6 +3874,20 @@
     if (!shouldShow && clearWhenHidden && els.referralName) {
       els.referralName.value = "";
       if (els.referralSector) els.referralSector.value = "";
+    }
+  }
+
+  function toggleLeadReminderFields({ clearWhenHidden = false } = {}) {
+    const enabled = Boolean(els.leadReminderEnabled?.checked);
+    const type = String(els.leadReminderType?.value || "date").trim();
+    els.leadReminderFields?.classList.toggle("hidden", !enabled);
+    els.leadReminderDateGroup?.classList.toggle("hidden", !enabled || type !== "date");
+    els.leadReminderDaysGroup?.classList.toggle("hidden", !enabled || type !== "stage_days");
+
+    if (!enabled && clearWhenHidden) {
+      if (els.leadReminderDate) els.leadReminderDate.value = "";
+      if (els.leadReminderDays) els.leadReminderDays.value = "";
+      if (els.leadReminderMessage) els.leadReminderMessage.value = "";
     }
   }
 
@@ -4116,6 +4260,39 @@
     const primaryWorkspace = normalizeWorkspace(readJsonStorageValue(FUNNEL_WORKSPACE_STORAGE_KEY));
     const legacyWorkspace = normalizeWorkspace(readJsonStorageValue(LEGACY_FUNNEL_WORKSPACE_STORAGE_KEY));
     return scoreWorkspace(legacyWorkspace) > scoreWorkspace(primaryWorkspace) ? legacyWorkspace : primaryWorkspace;
+  }
+
+  function readDeletedFunnelWorkspaceIds() {
+    const parsed = readJsonStorageValue(DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY);
+    return {
+      groups: normalizeIdList(parsed?.groups || []),
+      funnels: normalizeIdList(parsed?.funnels || []),
+      subfunnels: normalizeIdList(parsed?.subfunnels || [])
+    };
+  }
+
+  function writeDeletedFunnelWorkspaceIds(value = {}) {
+    try {
+      window.localStorage.setItem(
+        DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY,
+        JSON.stringify({
+          groups: normalizeIdList(value.groups || []),
+          funnels: normalizeIdList(value.funnels || []),
+          subfunnels: normalizeIdList(value.subfunnels || [])
+        })
+      );
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
+  function rememberDeletedFunnelWorkspaceIds(partial = {}) {
+    const current = readDeletedFunnelWorkspaceIds();
+    writeDeletedFunnelWorkspaceIds({
+      groups: [...current.groups, ...(partial.groups || [])],
+      funnels: [...current.funnels, ...(partial.funnels || [])],
+      subfunnels: [...current.subfunnels, ...(partial.subfunnels || [])]
+    });
   }
 
   function writeStoredFunnelWorkspace() {
@@ -5372,8 +5549,38 @@
     }, 120);
   }
 
+  function mergeRemoteSubfunnelsWithStored(localSubfunnels = [], remoteSubfunnels = [], deletedSubfunnelIds = new Set()) {
+    const mergedSubfunnels = (Array.isArray(localSubfunnels) ? localSubfunnels : [])
+      .filter((item) => !deletedSubfunnelIds.has(String(item?.id || "")))
+      .map((item) => ({ ...item }));
+
+    (Array.isArray(remoteSubfunnels) ? remoteSubfunnels : [])
+      .filter((item) => !deletedSubfunnelIds.has(String(item?.id || "")))
+      .forEach((remoteSubfunnel) => {
+        const existingIndex = mergedSubfunnels.findIndex((localSubfunnel) => (
+          (localSubfunnel?.id && remoteSubfunnel?.id && String(localSubfunnel.id) === String(remoteSubfunnel.id))
+          || getFunnelLabelCompareKey(localSubfunnel?.name || "") === getFunnelLabelCompareKey(remoteSubfunnel?.name || "")
+        ));
+
+        if (existingIndex === -1) {
+          mergedSubfunnels.push(remoteSubfunnel);
+          return;
+        }
+
+        mergedSubfunnels[existingIndex] = {
+          ...remoteSubfunnel,
+          ...mergedSubfunnels[existingIndex]
+        };
+      });
+
+    return mergedSubfunnels;
+  }
+
   function syncFunnelWorkspaceWithData(workspaceInput = null) {
     const storedWorkspace = readStoredFunnelWorkspace();
+    const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
+    const deletedFunnelIds = new Set(deletedWorkspaceIds.funnels);
+    const deletedSubfunnelIds = new Set(deletedWorkspaceIds.subfunnels);
     const remoteHasContent = Boolean(
       workspaceInput
       && (
@@ -5386,10 +5593,13 @@
       if (!remoteWorkspace) return localWorkspace || null;
       if (!localWorkspace) return remoteWorkspace;
 
-      const localFunnels = Array.isArray(localWorkspace.funnels) ? localWorkspace.funnels : [];
+      const localFunnels = (Array.isArray(localWorkspace.funnels) ? localWorkspace.funnels : [])
+        .filter((item) => !deletedFunnelIds.has(String(item?.id || "")));
       const mergedFunnels = [...localFunnels];
 
-      (Array.isArray(remoteWorkspace.funnels) ? remoteWorkspace.funnels : []).forEach((remoteFunnel) => {
+      (Array.isArray(remoteWorkspace.funnels) ? remoteWorkspace.funnels : [])
+        .filter((item) => !deletedFunnelIds.has(String(item?.id || "")))
+        .forEach((remoteFunnel) => {
         const existingIndex = mergedFunnels.findIndex((localFunnel) => (
           (localFunnel?.id && remoteFunnel?.id && String(localFunnel.id) === String(remoteFunnel.id))
           || (
@@ -5405,14 +5615,16 @@
 
         const localFunnel = mergedFunnels[existingIndex];
         mergedFunnels[existingIndex] = {
-          ...localFunnel,
           ...remoteFunnel,
-          group_id: remoteFunnel?.group_id || remoteFunnel?.groupId || localFunnel?.group_id || localFunnel?.groupId || null
+          ...localFunnel,
+          group_id: localFunnel?.group_id || localFunnel?.groupId || remoteFunnel?.group_id || remoteFunnel?.groupId || null,
+          subfunnels: mergeRemoteSubfunnelsWithStored(localFunnel?.subfunnels || [], remoteFunnel?.subfunnels || [], deletedSubfunnelIds)
         };
       });
 
       return {
-        groups: Array.isArray(localWorkspace.groups) ? localWorkspace.groups : [],
+        groups: (Array.isArray(localWorkspace.groups) ? localWorkspace.groups : [])
+          .filter((item) => !normalizeIdList(deletedWorkspaceIds.groups).includes(String(item?.id || ""))),
         funnels: mergedFunnels,
         stageAssignments: {
           ...(localWorkspace.stageAssignments || {}),
@@ -5619,6 +5831,7 @@
 
     const fallbackSubfunnel = currentSubfunnels.find((item) => item.id !== subfunnelId) || null;
     funnel.subfunnels = currentSubfunnels.filter((item) => item.id !== subfunnelId);
+    rememberDeletedFunnelWorkspaceIds({ subfunnels: [subfunnelId] });
 
     Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
       if (state.funnelWorkspace.stageAssignments[stageId] === subfunnelId && fallbackSubfunnel?.id) {
@@ -5656,6 +5869,10 @@
     const fallbackFunnel = currentFunnels.find((item) => item.id !== funnel.id) || null;
     const fallbackSubfunnelId = fallbackFunnel?.subfunnels?.[0]?.id || null;
     const removedSubfunnelIds = new Set((funnel.subfunnels || []).map((item) => item.id));
+    rememberDeletedFunnelWorkspaceIds({
+      funnels: [funnel.id],
+      subfunnels: [...removedSubfunnelIds]
+    });
 
     state.funnelWorkspace.funnels = currentFunnels.filter((item) => item.id !== funnel.id);
 
@@ -9589,6 +9806,7 @@
     state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((funnel) => (
       funnel.group_id === groupId ? { ...funnel, group_id: null } : funnel
     ));
+    rememberDeletedFunnelWorkspaceIds({ groups: [groupId] });
     writeStoredFunnelWorkspace();
     closeFunnelContextMenu();
     renderAll();
@@ -9765,6 +9983,65 @@
 
     els.funnelCardsGrid.innerHTML = cards.join("");
     renderFunnelDiagram(activeFunnel);
+  }
+
+  function setNotificationsPanelOpen(open) {
+    state.notificationPanelOpen = Boolean(open);
+    els.notificationsPanel?.classList.toggle("hidden", !state.notificationPanelOpen);
+    if (els.notificationsBtn) {
+      els.notificationsBtn.setAttribute("aria-expanded", state.notificationPanelOpen ? "true" : "false");
+    }
+  }
+
+  function openLeadFromNotification(leadId) {
+    const lead = state.leads.find((item) => item.id === leadId);
+    if (!lead) return;
+    const subfunnelId = getLeadSubfunnelId(lead);
+    const funnelId = getLeadFunnelId(lead);
+    if (!subfunnelId || !funnelId) return;
+
+    state.highlightedLeadId = lead.id;
+    state.activeFunnelId = funnelId;
+    state.activeSubfunnelId = subfunnelId;
+    setNotificationsPanelOpen(false);
+    setShellTab("crm");
+    bindView("funil", {
+      resetFunnelDetail: false,
+      keepFunnelSidebarOpen: true,
+      preserveFunnelSidebarState: true
+    });
+    renderAll();
+  }
+
+  function renderNotifications() {
+    const notifications = getActiveLeadNotifications();
+    if (els.notificationsCount) {
+      els.notificationsCount.textContent = String(notifications.length);
+      els.notificationsCount.classList.toggle("hidden", notifications.length === 0);
+    }
+    if (els.notificationsPanelMeta) {
+      els.notificationsPanelMeta.textContent = notifications.length
+        ? `${notifications.length} pendência(s)`
+        : "Nenhuma pendência";
+    }
+    if (!els.notificationsList) return;
+    if (!notifications.length) {
+      els.notificationsList.innerHTML = '<div class="notifications-empty">Nenhuma notificação pendente.</div>';
+      return;
+    }
+
+    els.notificationsList.innerHTML = notifications.map((item) => `
+      <button type="button" class="notifications-item" data-notification-lead-id="${escapeHtml(item.leadId)}">
+        <div class="notifications-item-head">
+          <span class="notifications-item-title">${escapeHtml(item.lead?.name || "Lead")}</span>
+          <span class="notifications-item-badge">${escapeHtml(item.dueLabel)}</span>
+        </div>
+        <div class="notifications-item-copy">${escapeHtml(item.message)}</div>
+        <div class="notifications-item-meta">
+          ${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.subfunnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}
+        </div>
+      </button>
+    `).join("");
   }
 
   function renderFunnelSubfields(names = []) {
@@ -9981,6 +10258,12 @@
     }));
 
     if (existingFunnel) {
+      const removedSubfunnelIds = previousSubfunnels
+        .filter((item) => !nextSubfunnels.some((nextItem) => nextItem.id === item.id))
+        .map((item) => item.id);
+      if (removedSubfunnelIds.length) {
+        rememberDeletedFunnelWorkspaceIds({ subfunnels: removedSubfunnelIds });
+      }
       existingFunnel.name = name;
       existingFunnel.category = category;
       existingFunnel.visibility_scope = visibilityScope;
@@ -10059,11 +10342,23 @@
     renderDepartmentsConfig();
     renderRequests();
     renderHistoryText();
+    renderNotifications();
     if (state.activeView === "relatorios" && typeof window.Chart !== "undefined") {
       renderCharts();
     }
     bindGeneralActionEvents();
-    requestAnimationFrame(updateStickyLayout);
+    requestAnimationFrame(() => {
+      updateStickyLayout();
+      if (state.highlightedLeadId && isFunnelDetailActive()) {
+        const highlightedCard = document.querySelector(`#pipeline [data-lead-id="${CSS.escape(state.highlightedLeadId)}"]`);
+        if (highlightedCard) {
+          highlightedCard.classList.add("card-highlighted");
+          highlightedCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+          window.setTimeout(() => highlightedCard.classList.remove("card-highlighted"), 2600);
+          state.highlightedLeadId = null;
+        }
+      }
+    });
   }
 
   function openLeadModal(lead = null) {
@@ -10098,6 +10393,13 @@
     if (els.contractNumber) els.contractNumber.value = getLeadPrimaryContractNumber(lead);
     els.referralName.value = getLeadReferralName(lead);
     els.referralSector.value = getLeadReferralSector(lead);
+    const leadReminder = getLeadReminder(lead);
+    if (els.leadReminderEnabled) els.leadReminderEnabled.checked = Boolean(leadReminder);
+    if (els.leadReminderType) els.leadReminderType.value = leadReminder?.type || "date";
+    if (els.leadReminderDate) els.leadReminderDate.value = leadReminder?.type === "date" ? (leadReminder.due_date || "") : "";
+    if (els.leadReminderDays) els.leadReminderDays.value = leadReminder?.type === "stage_days" ? String(leadReminder.days || "") : "";
+    if (els.leadReminderMessage) els.leadReminderMessage.value = leadReminder?.message || "";
+    toggleLeadReminderFields({ clearWhenHidden: !leadReminder });
     toggleReferralNameField();
     state.modalPlans = getLeadPlans(lead).map((item) => ({ ...item }));
     if (lead && !state.modalPlans.length && Number(lead?.value || 0) > 0) {
@@ -10995,6 +11297,8 @@
     const contractNumber = isClosedStageId(selectedStageId)
       ? String(els.contractNumber?.value || "").trim()
       : String(existingMeta.contract_number || "").trim();
+    const reminderEnabled = Boolean(els.leadReminderEnabled?.checked);
+    let nextReminder = null;
 
     if (contractNumber && draftPlans.length) {
       const targetPlan = draftPlans.find((item) => !isNoPlanName(item.name)) || draftPlans[0];
@@ -11039,6 +11343,45 @@
     if (isReferralLeadSource(payload.traffic_type) && !referralName) {
       return alert("Informe o nome de quem indicou.");
     }
+
+    if (reminderEnabled) {
+      const reminderType = String(els.leadReminderType?.value || "date").trim();
+      if (reminderType === "date") {
+        const dueDate = normalizeDateInput(els.leadReminderDate?.value || "");
+        if (!dueDate) return alert("Informe a data da notificação.");
+        nextReminder = normalizeLeadReminder({
+          type: "date",
+          due_date: dueDate,
+          message: els.leadReminderMessage?.value || ""
+        });
+      } else {
+        const reminderDays = Math.max(1, Number(els.leadReminderDays?.value || 0) || 0);
+        if (!reminderDays) return alert("Informe em quantos dias a notificação deve aparecer.");
+        nextReminder = normalizeLeadReminder({
+          type: "stage_days",
+          stage_id: selectedStageId,
+          days: reminderDays,
+          start_date:
+            existingMeta?.reminder?.type === "stage_days"
+            && String(existingMeta.reminder.stage_id || "") === selectedStageId
+              ? (existingMeta.reminder.start_date || getLocalIsoDate())
+              : getLocalIsoDate(),
+          message: els.leadReminderMessage?.value || ""
+        });
+      }
+    }
+
+    payload.notes = serializeLeadMeta({
+      ...existingMeta,
+      plans: draftPlans,
+      plan: draftPlans[0]?.name || "",
+      legacyText: existingMeta.legacyText,
+      observations: draftObservations,
+      contract_number: contractNumber,
+      referral_name: referralName,
+      referral_sector: referralSector,
+      reminder: nextReminder
+    });
 
     let error;
     let savedLeadId = els.leadId.value || null;
@@ -11557,7 +11900,14 @@
 
     els.profileMenuBtn?.addEventListener("click", (event) => {
       event.stopPropagation();
+      setNotificationsPanelOpen(false);
       toggleProfileMenu();
+    });
+
+    els.notificationsBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeProfileMenu();
+      setNotificationsPanelOpen(!state.notificationPanelOpen);
     });
 
     els.openAccountBtn?.addEventListener("click", openAccountModal);
@@ -12060,6 +12410,8 @@
     els.closeModalBtn.addEventListener("click", closeLeadModal);
     els.cancelBtn.addEventListener("click", closeLeadModal);
     els.leadForm.addEventListener("submit", submitLead);
+    els.leadReminderEnabled?.addEventListener("change", () => toggleLeadReminderFields({ clearWhenHidden: !els.leadReminderEnabled.checked }));
+    els.leadReminderType?.addEventListener("change", () => toggleLeadReminderFields());
     els.leadFunnelSelect?.addEventListener("change", () => {
       renderLeadTargetSelectors({
         selectedFunnelId: els.leadFunnelSelect?.value || "",
@@ -12149,6 +12501,9 @@
     });
 
     document.addEventListener("click", (event) => {
+      if (!els.notificationsBtn?.contains(event.target) && !els.notificationsPanel?.contains(event.target)) {
+        setNotificationsPanelOpen(false);
+      }
       const departmentAccessBtn = event.target.closest("[data-department-access-toggle]");
       if (departmentAccessBtn) {
         const item = departmentAccessBtn.closest("[data-department-check-item]");
@@ -12166,6 +12521,12 @@
           if (lead) openLeadModal(lead);
         }
         if (leadBtn.dataset.action === "delete-lead") deleteLead(leadBtn.dataset.id);
+      }
+
+      const notificationBtn = event.target.closest("[data-notification-lead-id]");
+      if (notificationBtn) {
+        openLeadFromNotification(notificationBtn.dataset.notificationLeadId);
+        return;
       }
 
       const stageBtn = event.target.closest("[data-stage-action]");

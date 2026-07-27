@@ -1,4 +1,4 @@
-Ôªø<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
@@ -10,7 +10,7 @@
   <title>Pax Insights</title>
   <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
-  <link rel="stylesheet" href="style.css?v=20260724-31" />
+  <link rel="stylesheet" href="style.css?v=20260727-03" />
 </head>
 <body>
   <div id="bootScreen" class="boot-screen">Carregando sistema...</div>
@@ -21,7 +21,7 @@
         <div class="auth-brand">
           <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="auth-brand-logo" id="authBrandLogo" />
         </div>
-        <p>CRM e intelig√™ncia comercial em um ambiente controlado por perfis, solicita√ß√µes e auditoria centralizada.</p>
+        <p>CRM e inteligÍncia comercial em um ambiente controlado por perfis, solicitaÁıes e auditoria centralizada.</p>
 
         <div class="tabs">
           <button class="tab-btn active" data-tab="login" type="button">Entrar</button>
@@ -85,7 +85,7 @@
       </div>
       <nav class="mobile-nav" aria-label="Menu principal no celular">
         <button class="menu-item mobile-nav-item" data-view="funil" type="button">Funil</button>
-        <button class="menu-item mobile-nav-item active" data-view="relatorios" type="button">Relat√≥rios</button>
+        <button class="menu-item mobile-nav-item active" data-view="relatorios" type="button">RelatÛrios</button>
         <button class="menu-item mobile-nav-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
         <button class="menu-item mobile-nav-item" data-view="leads" type="button">Leads</button>
         <button class="menu-item mobile-nav-item" data-view="equipe" type="button">Acessos</button>
@@ -120,13 +120,13 @@
           </select>
         </div>
         <div class="form-group">
-          <label for="mobileOwnerFilter">Respons√°vel</label>
+          <label for="mobileOwnerFilter">Respons·vel</label>
           <select id="mobileOwnerFilter">
-            <option value="">Todos os respons√°veis</option>
+            <option value="">Todos os respons·veis</option>
           </select>
         </div>
         <div class="form-group">
-          <label for="mobileMonthFilter">M√™s</label>
+          <label for="mobileMonthFilter">MÍs</label>
           <select id="mobileMonthFilter">
             <option value="">Todos os meses</option>
           </select>
@@ -152,7 +152,7 @@
         <div class="form-group">
           <label for="mobileIndicatorFilter">Indicado por</label>
           <select id="mobileIndicatorFilter">
-            <option value="">Todas as indica√ß√µes</option>
+            <option value="">Todas as indicaÁıes</option>
           </select>
         </div>
         <div class="form-group">
@@ -172,32 +172,56 @@
         <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="shell-brand-logo" id="shellBrandLogo" />
       </div>
 
-      <nav class="shell-tabs" aria-label="Navega√ß√£o principal">
+      <nav class="shell-tabs" aria-label="NavegaÁ„o principal">
         <button type="button" id="shellTabCrm" class="shell-tab active">CRM</button>
-        <button type="button" id="shellTabIntel" class="shell-tab">Central de Intelig√™ncia</button>
+        <button type="button" id="shellTabIntel" class="shell-tab">Central de InteligÍncia</button>
       </nav>
 
       <div class="shell-profile">
-        <button type="button" id="profileMenuBtn" class="profile-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Abrir menu do usu√°rio">
+        <div class="shell-notifications">
+          <button
+            type="button"
+            id="notificationsBtn"
+            class="notifications-btn"
+            aria-haspopup="true"
+            aria-expanded="false"
+            aria-label="Abrir notificaÁıes"
+          >
+            <span class="notifications-btn-icon" aria-hidden="true">??</span>
+            <span id="notificationsCount" class="notifications-count hidden">0</span>
+          </button>
+
+          <div id="notificationsPanel" class="notifications-panel hidden">
+            <div class="notifications-panel-header">
+              <strong>NotificaÁıes</strong>
+              <span id="notificationsPanelMeta" class="notifications-panel-meta">Nenhuma pendÍncia</span>
+            </div>
+            <div id="notificationsList" class="notifications-list">
+              <div class="notifications-empty">Nenhuma notificaÁ„o pendente.</div>
+            </div>
+          </div>
+        </div>
+
+        <button type="button" id="profileMenuBtn" class="profile-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Abrir menu do usu·rio">
           <span class="profile-menu-avatar" id="profileMenuAvatar">PI</span>
         </button>
 
         <div id="profileMenu" class="profile-menu hidden">
           <div class="profile-menu-summary">
             <span class="profile-menu-label">Conta</span>
-            <strong id="profileMenuName">Usu√°rio</strong>
+            <strong id="profileMenuName">Usu·rio</strong>
             <small id="profileMenuRole">Carregando...</small>
           </div>
           <button type="button" id="openAccountBtn" class="profile-menu-item">Minha conta</button>
           <button type="button" id="profileTeamBtn" class="profile-menu-item menu-item" data-view="equipe">Acessos</button>
-          <button type="button" id="profileSettingsBtn" class="profile-menu-item menu-item hidden" data-admin-only="true" data-view="configuracoes">Configura√ß√µes</button>
+          <button type="button" id="profileSettingsBtn" class="profile-menu-item menu-item hidden" data-admin-only="true" data-view="configuracoes">ConfiguraÁıes</button>
           <button type="button" id="themeToggleBtn" class="profile-menu-item profile-theme-switch" aria-label="Alternar entre tema white e dark">
             <span class="profile-theme-switch-copy">Tema</span>
             <span class="profile-theme-switch-track" aria-hidden="true">
-              <span class="profile-theme-switch-side profile-theme-switch-side-light">‚òº</span>
-              <span class="profile-theme-switch-side profile-theme-switch-side-dark">‚òæ</span>
+              <span class="profile-theme-switch-side profile-theme-switch-side-light">§</span>
+              <span class="profile-theme-switch-side profile-theme-switch-side-dark">?</span>
               <span class="profile-theme-switch-thumb">
-                <span id="themeToggleThumbIcon">‚òº</span>
+                <span id="themeToggleThumbIcon">§</span>
               </span>
             </span>
           </button>
@@ -213,17 +237,17 @@
           <div class="brand-logo"><img src="assets/pax-insights-symbol-white.png" alt="Pax Insights" class="brand-logo-img" /></div>
           <div>
             <h1 id="orgNameLabel">Pax Insights</h1>
-            <p id="userWelcome">Usu√°rio</p>
+            <p id="userWelcome">Usu·rio</p>
           </div>
         </div>
 
         <nav class="menu">
           <button class="menu-item" data-view="funil" type="button">Funil</button>
-          <button class="menu-item active" data-view="relatorios" type="button">Relat√≥rios</button>
+          <button class="menu-item active" data-view="relatorios" type="button">RelatÛrios</button>
           <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
           <button class="menu-item" data-view="leads" type="button">Leads</button>
           <button class="menu-item" data-view="equipe" type="button">Acessos</button>
-          <button class="menu-item hidden" data-admin-only="true" data-view="configuracoes" type="button">Configura√ß√µes</button>
+          <button class="menu-item hidden" data-admin-only="true" data-view="configuracoes" type="button">ConfiguraÁıes</button>
         </nav>
 
         <div class="sidebar-footer">
@@ -239,10 +263,10 @@
 
       <main class="main">
         <div class="crm-workspace">
-          <aside id="crmNavbar" class="crm-navbar" aria-label="Navega√ß√£o do CRM">
+          <aside id="crmNavbar" class="crm-navbar" aria-label="NavegaÁ„o do CRM">
             <div class="crm-navbar-links">
               <button class="menu-item" data-view="funil" type="button">Funil</button>
-              <button class="menu-item active" data-view="relatorios" type="button">Relat√≥rios</button>
+              <button class="menu-item active" data-view="relatorios" type="button">RelatÛrios</button>
               <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
               <button class="menu-item" data-view="leads" type="button">Leads</button>
             </div>
@@ -275,11 +299,11 @@
           <div>
             <div class="topbar-title-row">
               <h2 id="pageTitle">Pipeline</h2>
-              <button type="button" id="editCurrentFunnelBtn" class="funnel-inline-action hidden" aria-label="Configurar funil">‚öô</button>
-              <button type="button" id="deleteCurrentFunnelBtn" class="funnel-inline-action funnel-inline-action-danger hidden" aria-label="Excluir funil">üóë</button>
+              <button type="button" id="editCurrentFunnelBtn" class="funnel-inline-action hidden" aria-label="Configurar funil">?</button>
+              <button type="button" id="deleteCurrentFunnelBtn" class="funnel-inline-action funnel-inline-action-danger hidden" aria-label="Excluir funil">??</button>
             </div>
             <p id="pageSubtitle">Gerencie os leads do CRM compartilhado.</p>
-            <button type="button" id="funnelBackBtn" class="funnel-back-inline hidden" aria-label="Voltar para o funil">‚Üê Funil</button>
+            <button type="button" id="funnelBackBtn" class="funnel-back-inline hidden" aria-label="Voltar para o funil">? Funil</button>
           </div>
 
           <div class="topbar-actions">
@@ -303,7 +327,7 @@
                 <strong>Filtros</strong>
                 <p>Refine rapidamente os dados do CRM.</p>
               </div>
-              <button type="button" id="desktopFiltersCloseBtn" class="desktop-filters-close" aria-label="Fechar filtros">√ó</button>
+              <button type="button" id="desktopFiltersCloseBtn" class="desktop-filters-close" aria-label="Fechar filtros">◊</button>
             </div>
             <div id="desktopFiltersSummary" class="desktop-filters-summary">
               <span class="filter-summary-empty">Nenhum filtro aplicado</span>
@@ -410,12 +434,12 @@
 
               <div class="filter-dropdown" id="indicatorFilterDropdown">
                 <button type="button" class="filter-btn" id="indicatorFilterBtn" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="filter-btn-label" id="indicatorFilterLabel">Todas as indica√ß√µes</span>
+                  <span class="filter-btn-label" id="indicatorFilterLabel">Todas as indicaÁıes</span>
                   <span class="filter-btn-arrow">&#9662;</span>
                 </button>
                 <div class="filter-menu hidden" id="indicatorFilterMenu" role="listbox" aria-label="Filtro de indicado por"></div>
                 <select id="indicatorFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
-                  <option value="">Todas as indica√ß√µes</option>
+                  <option value="">Todas as indicaÁıes</option>
                 </select>
               </div>
 
@@ -505,7 +529,7 @@
               <div class="report-card"><span>Leads em espera</span><strong id="reportWaitingCount">0</strong></div>
               <div class="report-card"><span>Maior pipeline</span><strong id="reportTopStage">-</strong></div>
               <div class="report-card"><span>Maior responsavel</span><strong id="reportTopOwner">-</strong></div>
-              <div class="report-card"><span>Maior indica√ß√£o</span><strong id="reportTopReferral">-</strong></div>
+              <div class="report-card"><span>Maior indicaÁ„o</span><strong id="reportTopReferral">-</strong></div>
               <div class="report-card"><span>Mes com mais leads</span><strong id="reportBestMonth">-</strong></div>
               <div class="report-card"><span>Planos fechados</span><strong id="reportClosedPlans">0</strong></div>
             </div>
@@ -536,7 +560,7 @@
                 <canvas id="socialChart"></canvas>
               </div>
               <div class="chart-card">
-                <h4>Indica√ß√µes por pessoa e setor</h4>
+                <h4>IndicaÁıes por pessoa e setor</h4>
                 <canvas id="referralSectorChart"></canvas>
               </div>
               <div class="chart-card">
@@ -576,7 +600,7 @@
               <div>
                 <span class="admin-overlay-kicker">Acessos</span>
                 <h3>Pessoas e Acessos</h3>
-                <p class="section-note">Gerencie solicita√ß√µes de acesso, altera√ß√µes administrativas e a equipe ativa no CRM.</p>
+                <p class="section-note">Gerencie solicitaÁıes de acesso, alteraÁıes administrativas e a equipe ativa no CRM.</p>
               </div>
               <button type="button" id="closeTeamViewBtn" class="admin-overlay-close" aria-label="Fechar acessos">&times;</button>
             </div>
@@ -671,11 +695,11 @@
           <div class="admin-overlay-frame">
             <div class="admin-overlay-head">
               <div>
-                <span class="admin-overlay-kicker">Configura√ß√£o</span>
+                <span class="admin-overlay-kicker">ConfiguraÁ„o</span>
                 <h3>Configuracao</h3>
-                <p class="section-note">Consulte o hist√≥rico administrativo do CRM.</p>
+                <p class="section-note">Consulte o histÛrico administrativo do CRM.</p>
               </div>
-              <button type="button" id="closeSettingsViewBtn" class="admin-overlay-close" aria-label="Fechar configura√ß√£o">&times;</button>
+              <button type="button" id="closeSettingsViewBtn" class="admin-overlay-close" aria-label="Fechar configuraÁ„o">&times;</button>
             </div>
 
             <div class="admin-overlay-body">
@@ -705,9 +729,9 @@
       <div class="intel-placeholder">
         <div class="intel-placeholder-card">
           <img src="assets/pax-insights-symbol-white.png" alt="" class="intel-placeholder-symbol" />
-          <span class="intel-placeholder-kicker">Central de Intelig√™ncia</span>
+          <span class="intel-placeholder-kicker">Central de InteligÍncia</span>
           <h2>Estrutura preparada</h2>
-          <p>Esta √°rea j√° est√° reservada no shell do Pax Insights. O conte√∫do anal√≠tico entra na pr√≥xima etapa.</p>
+          <p>Esta ·rea j· est· reservada no shell do Pax Insights. O conte˙do analÌtico entra na prÛxima etapa.</p>
         </div>
       </div>
     </section>
@@ -744,7 +768,7 @@
         </div>
 
         <div class="form-group">
-          <label for="accountRole">N√≠vel de acesso</label>
+          <label for="accountRole">NÌvel de acesso</label>
           <input type="text" id="accountRole" readonly />
         </div>
 
@@ -781,24 +805,24 @@
         </div>
 
         <div class="form-group" id="funnelOfficialDepartmentGroup">
-          <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com edi√ß√£o</label>
+          <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com ediÁ„o</label>
           <select id="funnelOfficialDepartmentSelect"></select>
-          <p class="helper-text" id="funnelOfficialDepartmentHelper">Quando o funil estiver em "Todos", este departamento pode editar mesmo se os demais s√≥ visualizarem.</p>
+          <p class="helper-text" id="funnelOfficialDepartmentHelper">Quando o funil estiver em "Todos", este departamento pode editar mesmo se os demais sÛ visualizarem.</p>
         </div>
 
         <div class="form-group">
           <label for="funnelVisibilityScope">Quem pode ver esse funil</label>
           <select id="funnelVisibilityScope">
             <option value="all">Todos</option>
-            <option value="owner">S√≥ eu</option>
-            <option value="departments">Departamentos espec√≠ficos</option>
+            <option value="owner">SÛ eu</option>
+            <option value="departments">Departamentos especÌficos</option>
           </select>
         </div>
 
         <div class="form-group" id="funnelGlobalAccessGroup">
           <label for="funnelGlobalAccessLevel">Quando estiver em "Todos"</label>
           <select id="funnelGlobalAccessLevel">
-            <option value="view">Todos s√≥ visualizam</option>
+            <option value="view">Todos sÛ visualizam</option>
             <option value="edit">Todos podem editar</option>
           </select>
         </div>
@@ -806,7 +830,7 @@
         <div class="form-group" id="funnelDepartmentsGroup">
           <label>Departamentos com acesso</label>
           <div id="funnelDepartmentsChecklist" class="department-checklist"></div>
-          <p class="helper-text">Use o olho para liberar s√≥ visualiza√ß√£o e o l√°pis para permitir edi√ß√£o dentro do funil.</p>
+          <p class="helper-text">Use o olho para liberar sÛ visualizaÁ„o e o l·pis para permitir ediÁ„o dentro do funil.</p>
         </div>
 
         <div class="form-group">
@@ -853,10 +877,10 @@
             <label for="owner">Responsavel</label>
             <select id="owner" required></select>
             <div id="ownerCreateBox" class="lead-inline-form hidden">
-              <input type="text" id="ownerCreateInput" placeholder="Novo respons√°vel" />
+              <input type="text" id="ownerCreateInput" placeholder="Novo respons·vel" />
               <button type="button" id="ownerCreateBtn" class="btn btn-secondary">Criar e selecionar</button>
             </div>
-            <p class="helper-text">Selecione um respons√°vel existente ou crie um novo.</p>
+            <p class="helper-text">Selecione um respons·vel existente ou crie um novo.</p>
           </div>
 
           <div class="form-group">
@@ -877,6 +901,45 @@
           <div class="form-group">
             <label for="stage">Pipeline</label>
             <select id="stage" required></select>
+          </div>
+
+          <div class="form-group form-group-full lead-reminder-group">
+            <div class="lead-reminder-head">
+              <label for="leadReminderEnabled">NotificaÁ„o do lead</label>
+              <label class="lead-reminder-toggle">
+                <input type="checkbox" id="leadReminderEnabled" />
+                <span>Ativar</span>
+              </label>
+            </div>
+
+            <div id="leadReminderFields" class="lead-reminder-fields hidden">
+              <div class="form-grid">
+                <div class="form-group">
+                  <label for="leadReminderType">Tipo de notificaÁ„o</label>
+                  <select id="leadReminderType">
+                    <option value="date">Em uma data especÌfica</option>
+                    <option value="stage_days">Tempo na pipeline atual</option>
+                  </select>
+                </div>
+
+                <div class="form-group" id="leadReminderDateGroup">
+                  <label for="leadReminderDate">Data da notificaÁ„o</label>
+                  <input type="date" id="leadReminderDate" />
+                </div>
+
+                <div class="form-group hidden" id="leadReminderDaysGroup">
+                  <label for="leadReminderDays">Avisar apÛs quantos dias nesta pipeline</label>
+                  <input type="number" id="leadReminderDays" min="1" step="1" placeholder="Ex.: 5" />
+                </div>
+
+                <div class="form-group form-group-full">
+                  <label for="leadReminderMessage">ObservaÁ„o da notificaÁ„o</label>
+                  <input type="text" id="leadReminderMessage" placeholder="Ex.: Retornar cliente sobre proposta" />
+                </div>
+              </div>
+
+              <p class="helper-text">A notificaÁ„o aparece para o respons·vel do lead quando vencer.</p>
+            </div>
           </div>
 
           <div class="form-group hidden" id="contractNumberGroup">
@@ -1065,13 +1128,13 @@
         <div class="form-group">
           <label for="funnelGroupOwnerDepartment">Departamento dono do grupo</label>
           <select id="funnelGroupOwnerDepartment"></select>
-          <p class="helper-text">O departamento de quem criou j√° entra aqui por padr√£o. A diretoria tamb√©m pode come√ßar com visualiza√ß√£o, e o administrador pode ajustar depois.</p>
+          <p class="helper-text">O departamento de quem criou j· entra aqui por padr„o. A diretoria tambÈm pode comeÁar com visualizaÁ„o, e o administrador pode ajustar depois.</p>
         </div>
 
         <div class="form-group">
           <label>Departamentos com acesso ao grupo</label>
           <div id="funnelGroupDepartmentsChecklist" class="department-checklist"></div>
-          <p class="helper-text">Esse acesso vale s√≥ para o grupo. Os funis dentro dele continuam particulares.</p>
+          <p class="helper-text">Esse acesso vale sÛ para o grupo. Os funis dentro dele continuam particulares.</p>
         </div>
 
         <div class="form-actions">
@@ -1087,6 +1150,6 @@
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="config.js?v=20260415-02"></script>
-  <script src="script.js?v=20260727-02"></script>
+  <script src="script.js?v=20260727-03"></script>
 </body>
 </html>
