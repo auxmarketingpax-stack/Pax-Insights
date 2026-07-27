@@ -474,6 +474,7 @@
   };
   const CHART_JS_URL = "https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js";
   const ALLOWED_EXTERNAL_SCRIPT_URLS = new Set([CHART_JS_URL]);
+  const deletingLeadIds = new Set();
   const CHART_GREEN_PALETTE = [
     "#14532D",
     "#166534",
@@ -12002,6 +12003,7 @@
     const normalizedId = normalizeIdList([id])[0] || "";
     const lead = state.leads.find((x) => x.id === normalizedId);
     if (!lead) return;
+    if (deletingLeadIds.has(normalizedId)) return;
     if (!confirm(`Excluir o lead "${lead.name}"?`)) return;
     if (!canDeleteLeads(lead)) {
       requestAdminAuthorization({
@@ -12019,7 +12021,13 @@
       return;
     }
 
-    const { error } = await deleteLeadsByIds([normalizedId]);
+    deletingLeadIds.add(normalizedId);
+    let error = null;
+    try {
+      ({ error } = await deleteLeadsByIds([normalizedId]));
+    } finally {
+      deletingLeadIds.delete(normalizedId);
+    }
 
     if (error) return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
 
@@ -12361,29 +12369,9 @@
       };
     });
 
-    document.querySelectorAll('#view-funil [data-action="edit-lead"]').forEach((btn) => {
-      btn.onclick = () => {
-        openLeadEditorById(btn.dataset.id);
-      };
-    });
-
-    document.querySelectorAll('#view-funil [data-action="delete-lead"]').forEach((btn) => {
-      btn.onclick = () => deleteLead(btn.dataset.id);
-    });
   }
 
   function bindGeneralActionEvents() {
-    document.querySelectorAll('#view-leads [data-action="edit-lead"]').forEach((btn) => {
-      btn.onclick = () => {
-        const lead = state.leads.find((x) => x.id === btn.dataset.id);
-        if (lead) openLeadModal(lead);
-      };
-    });
-
-    document.querySelectorAll('#view-leads [data-action="delete-lead"]').forEach((btn) => {
-      btn.onclick = () => deleteLead(btn.dataset.id);
-    });
-
     document.querySelectorAll('[data-stage-action="edit"]').forEach((btn) => {
       btn.onclick = () => editStage(btn.dataset.id);
     });
@@ -13024,10 +13012,15 @@
       const leadBtn = event.target.closest("[data-action]");
       if (leadBtn) {
         if (leadBtn.dataset.action === "edit-lead") {
-          const lead = state.leads.find((x) => x.id === leadBtn.dataset.id);
-          if (lead) openLeadModal(lead);
+          if (leadBtn.closest("#view-funil")) {
+            openLeadEditorById(leadBtn.dataset.id);
+          } else {
+            const lead = state.leads.find((x) => x.id === leadBtn.dataset.id);
+            if (lead) openLeadModal(lead);
+          }
         }
         if (leadBtn.dataset.action === "delete-lead") deleteLead(leadBtn.dataset.id);
+        return;
       }
 
       const dismissNotificationBtn = event.target.closest("[data-dismiss-notification]");
