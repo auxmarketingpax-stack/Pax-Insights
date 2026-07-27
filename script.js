@@ -474,7 +474,8 @@
   const FUNNEL_UI_STATE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-ui-state`;
   const OWNER_RECONCILIATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.owner-reconciliation-v6`;
   const SOCIAL_SOURCE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.social-source-catalog-v1`;
-  const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v3`;
+  const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
+  const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
   const LEGACY_CUSTOM_STAGE_TYPES_STORAGE_KEY = "crmPax.customStageTypes";
@@ -4150,6 +4151,22 @@
     }
   }
 
+  function readStoredExternalActionsFunnelMergeDone() {
+    try {
+      return window.localStorage.getItem(EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY) === "true";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function writeStoredExternalActionsFunnelMergeDone(value) {
+    try {
+      window.localStorage.setItem(EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY, value ? "true" : "false");
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
   function readStoredFunnelUiState() {
     const parsed = readJsonStorageValue(FUNNEL_UI_STATE_STORAGE_KEY, LEGACY_FUNNEL_UI_STATE_STORAGE_KEY);
     if (!parsed) return null;
@@ -5178,6 +5195,56 @@
       );
     } catch (error) {
       console.warn("Não foi possível registrar a migração no histórico:", error);
+    }
+
+    return true;
+  }
+
+  function hasExternalActionsFunnelMergeCandidate() {
+    const externalActionsKey = getFunnelLabelCompareKey("Ações Externas");
+    return (state.funnelWorkspace?.funnels || []).some((funnel) => (
+      getFunnelLabelCompareKey(funnel?.name || "") === externalActionsKey
+    ));
+  }
+
+  async function ensureExternalActionsFunnelMerge() {
+    if (readStoredExternalActionsFunnelMergeDone()) return false;
+    if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
+    if (!canManageStages()) return false;
+    if (!hasExternalActionsFunnelMergeCandidate()) {
+      writeStoredExternalActionsFunnelMergeDone(true);
+      return false;
+    }
+
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+
+    try {
+      await persistFunnelWorkspaceToSupabase();
+    } catch (error) {
+      if (/row-level security policy/i.test(String(error?.message || ""))) {
+        console.warn("Consolidação de Ações Externas bloqueada por RLS. Mantendo ajuste apenas no workspace local.");
+        state.funnelDataLoadedFromSupabase = false;
+      } else {
+        throw error;
+      }
+    }
+
+    writeStoredExternalActionsFunnelMergeDone(true);
+
+    try {
+      await logChange(
+        "merge_external_actions_funnel",
+        "funnel_workspace",
+        null,
+        `Funis "Eventos Externos" e "Ações Externas" foram consolidados mantendo as pipelines atuais por ${getUserDisplayName()}.`,
+        {
+          target_funnel: "Ações Externas",
+          preserve_stage_ids: true
+        }
+      );
+    } catch (error) {
+      console.warn("Não foi possível registrar a consolidação de Ações Externas no histórico:", error);
     }
 
     return true;
@@ -7428,6 +7495,23 @@
         if (!/row-level security policy/i.test(message)) {
           alert(`Não foi possível concluir a migração automática dos funis: ${message}`);
         }
+      }
+    }
+
+    try {
+      const mergedExternalActions = await ensureExternalActionsFunnelMerge();
+      if (mergedExternalActions) {
+        return loadAppData({
+          includeProfiles,
+          includeAdminData,
+          runRouteMigration: false
+        });
+      }
+    } catch (mergeError) {
+      console.error("Erro ao consolidar funis de Ações Externas:", mergeError);
+      const message = String(mergeError?.message || "");
+      if (!/row-level security policy/i.test(message)) {
+        alert(`Não foi possível consolidar os funis de Ações Externas: ${message}`);
       }
     }
 
