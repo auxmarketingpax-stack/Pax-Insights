@@ -514,8 +514,13 @@
   const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
   const DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.deleted-funnel-workspace-ids-v1`;
   const NOTIFICATION_DISMISSALS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.notification-dismissals-v1`;
+  const DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY = `${APP_STORAGE_PREFIX}.demo-pipeline-reminder-seeded-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
+  const DEMO_PIPELINE_REMINDER_LEAD_NAME = "Lead demonstracao notificacao";
+  const DEMO_PIPELINE_REMINDER_OWNER = "Wendller";
+  const DEMO_PIPELINE_REMINDER_DAYS = 1;
+  const DEMO_PIPELINE_REMINDER_MESSAGE = "Demonstracao de notificacao da pipeline para hoje.";
   const LEGACY_CUSTOM_STAGE_TYPES_STORAGE_KEY = "crmPax.customStageTypes";
   const LEGACY_HIDDEN_PRESET_STAGE_TYPES_STORAGE_KEY = "crmPax.hiddenPresetStageTypes";
   const LEGACY_STORAGE_CLEANUP_KEY = "crmPax.storageCleanupAt";
@@ -4493,6 +4498,58 @@
     } catch (_error) {
       // ignore local storage failures
     }
+  }
+
+  function readStorageFlag(key) {
+    try {
+      return window.localStorage.getItem(key) === "1";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function writeStorageFlag(key, active = true) {
+    try {
+      if (active) {
+        window.localStorage.setItem(key, "1");
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
+  function ensureDemoPipelineReminderSeed() {
+    if (readStorageFlag(DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY)) return;
+
+    const lead = state.leads.find((item) =>
+      normalizeComparisonText(item?.name || "") === normalizeComparisonText(DEMO_PIPELINE_REMINDER_LEAD_NAME)
+      && normalizeComparisonText(item?.owner || item?.owner_raw || "") === normalizeComparisonText(DEMO_PIPELINE_REMINDER_OWNER)
+    );
+    if (!lead || !isLeadOwnedByCurrentUser(lead)) return;
+
+    const stageId = String(lead.stage_id || "").trim();
+    if (!stageId) return;
+
+    state.funnelWorkspace = state.funnelWorkspace || getDefaultFunnelWorkspace();
+    state.funnelWorkspace.stageReminderConfigs = {
+      ...(state.funnelWorkspace.stageReminderConfigs || {}),
+      [stageId]: {
+        days: DEMO_PIPELINE_REMINDER_DAYS,
+        message: DEMO_PIPELINE_REMINDER_MESSAGE
+      }
+    };
+    writeStoredFunnelWorkspace();
+
+    const dismissals = readNotificationDismissals();
+    const dismissKey = `${lead.id}:pipeline_days:${stageId}:${DEMO_PIPELINE_REMINDER_DAYS}:${getLeadStageEntryDate(lead, stageId)}`;
+    if (dismissals[dismissKey]) {
+      delete dismissals[dismissKey];
+      writeNotificationDismissals(dismissals);
+    }
+
+    writeStorageFlag(DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY, true);
   }
 
   function buildNotificationDismissKey(notification) {
@@ -10244,6 +10301,7 @@
   }
 
   function renderNotifications() {
+    ensureDemoPipelineReminderSeed();
     const notifications = getActiveLeadNotifications();
     if (els.notificationsCount) {
       els.notificationsCount.textContent = String(notifications.length);
