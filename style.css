@@ -513,7 +513,7 @@ input:focus,select:focus,textarea:focus{
 .topbar-title-row{
   display:flex;
   align-items:center;
-  gap:10px;
+  gap:6px;
 }
 
 .topbar-funnel-group-note{
@@ -2874,10 +2874,15 @@ input,select,textarea{
   cursor:pointer;
   padding:0;
   margin:0;
+  width:46px;
+  height:46px;
+  min-width:46px;
+  min-height:46px;
   border-radius:50%;
   display:grid;
   place-items:center;
   line-height:0;
+  overflow:hidden;
   box-shadow:none;
   outline:none;
 }
@@ -2888,7 +2893,12 @@ input,select,textarea{
 
 .profile-menu-btn:focus-visible{
   outline:none;
-  box-shadow:0 0 0 3px rgba(111,173,43,.22);
+  box-shadow:none;
+}
+
+.profile-menu-btn::-moz-focus-inner{
+  border:0;
+  padding:0;
 }
 
 .profile-menu-avatar{
@@ -2906,8 +2916,9 @@ input,select,textarea{
 }
 
 .profile-menu-avatar.has-image{
-  background:#eef3ef;
+  background:transparent;
   color:transparent;
+  box-shadow:none;
 }
 
 .avatar-image{
@@ -2916,6 +2927,8 @@ input,select,textarea{
   object-fit:cover;
   display:block;
   border:0;
+  border-radius:50%;
+  clip-path:circle(50% at 50% 50%);
 }
 
 .account-avatar-section{
