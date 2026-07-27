@@ -5037,9 +5037,9 @@
   function renderStageModalScopeSelectors(selectedSubfunnelId = null) {
     if (!els.stageFunnelSelect || !els.stageSubfunnelSelect) return;
 
-    const fallbackSubfunnelId = selectedSubfunnelId || state.structureSubfunnelId || state.activeSubfunnelId || getFallbackSubfunnelId();
+    const fallbackSubfunnelId = selectedSubfunnelId || state.activeSubfunnelId || state.structureSubfunnelId || getFallbackSubfunnelId();
     const fallbackSubfunnel = getSubfunnelById(fallbackSubfunnelId);
-    const fallbackFunnelId = fallbackSubfunnel?.funnel_id || state.structureFunnelId || state.activeFunnelId || getAvailableFunnels()[0]?.id || null;
+    const fallbackFunnelId = fallbackSubfunnel?.funnel_id || state.activeFunnelId || state.structureFunnelId || getAvailableFunnels()[0]?.id || null;
 
     const funnels = getAvailableFunnels();
     els.stageFunnelSelect.innerHTML = funnels.map((funnel) => `
@@ -10758,7 +10758,9 @@
     els.stageModalTitle.textContent = stage ? "Editar pipeline" : "Adicionar pipeline";
     els.saveStageBtn.textContent = stage ? "Salvar alterações" : "Adicionar";
     els.stageName.value = stage?.name || "";
-    const assignedSubfunnelId = stage ? state.funnelWorkspace?.stageAssignments?.[stage.id] : state.structureSubfunnelId;
+    const assignedSubfunnelId = stage
+      ? state.funnelWorkspace?.stageAssignments?.[stage.id]
+      : (state.activeSubfunnelId || state.structureSubfunnelId);
     const assignedSubfunnel = getSubfunnelById(assignedSubfunnelId);
     renderStageModalScopeSelectors(assignedSubfunnelId);
     if (assignedSubfunnel?.funnel_id && els.stageFunnelSelect) {
