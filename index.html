@@ -10,7 +10,7 @@
   <title>Pax Insights</title>
   <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
-  <link rel="stylesheet" href="style.css?v=20260727-11" />
+  <link rel="stylesheet" href="style.css?v=20260727-13" />
 </head>
 <body>
   <div id="bootScreen" class="boot-screen">Carregando sistema...</div>
@@ -894,6 +894,7 @@
         <input type="hidden" id="value" />
 
         <div class="form-grid">
+          <div id="leadReminderSummary" class="form-group form-group-full notification-summary hidden"></div>
           <div class="form-group">
             <label for="name">Nome</label>
             <input type="text" id="name" required />
@@ -934,7 +935,7 @@
             <select id="stage" required></select>
           </div>
 
-          <div class="form-group form-group-full lead-reminder-group">
+          <div class="form-group form-group-full lead-reminder-group hidden" aria-hidden="true">
             <div class="lead-reminder-head">
               <label for="leadReminderEnabled">Notificação do lead</label>
               <label class="lead-reminder-toggle">
@@ -1038,6 +1039,7 @@
 
       <form id="stageForm" class="lead-form">
         <input type="hidden" id="stageId" />
+        <div id="stageReminderSummary" class="form-group form-group-full notification-summary hidden"></div>
         <div class="form-group">
           <label for="stageName">Nome da etapa</label>
           <input type="text" id="stageName" required />
@@ -1088,7 +1090,7 @@
           </div>
         </div>
 
-        <div class="form-group form-group-full lead-reminder-group">
+        <div class="form-group form-group-full lead-reminder-group hidden" aria-hidden="true">
           <div class="lead-reminder-head">
             <label for="stageReminderEnabled">Notificação da pipeline</label>
             <label class="lead-reminder-toggle">
@@ -1113,6 +1115,70 @@
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" id="cancelStageBtn">Cancelar</button>
           <button type="submit" class="btn btn-primary" id="saveStageBtn">Adicionar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="notificationModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="notificationModalTitle">Notificação</h3>
+        <button class="close-btn" id="closeNotificationModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="notificationForm" class="lead-form">
+        <input type="hidden" id="notificationTargetType" />
+        <input type="hidden" id="notificationTargetId" />
+        <p id="notificationModalDescription" class="helper-text"></p>
+
+        <div id="leadNotificationEditor" class="form-group form-group-full lead-reminder-group hidden">
+          <div class="lead-reminder-head">
+            <label for="leadNotificationEnabled">Notificação do lead</label>
+            <label class="lead-reminder-toggle">
+              <input type="checkbox" id="leadNotificationEnabled" />
+              <span>Ativar</span>
+            </label>
+          </div>
+
+          <div id="leadNotificationFields" class="lead-reminder-fields hidden">
+            <div class="form-group">
+              <label for="leadNotificationDate">Data da notificação</label>
+              <input type="date" id="leadNotificationDate" />
+            </div>
+
+            <div class="form-group">
+              <label for="leadNotificationMessage">Observação da notificação</label>
+              <input type="text" id="leadNotificationMessage" placeholder="Ex.: Retornar cliente sobre proposta" />
+            </div>
+          </div>
+        </div>
+
+        <div id="stageNotificationEditor" class="form-group form-group-full lead-reminder-group hidden">
+          <div class="lead-reminder-head">
+            <label for="stageNotificationEnabled">Notificação da pipeline</label>
+            <label class="lead-reminder-toggle">
+              <input type="checkbox" id="stageNotificationEnabled" />
+              <span>Ativar</span>
+            </label>
+          </div>
+
+          <div id="stageNotificationFields" class="lead-reminder-fields hidden">
+            <div class="form-group">
+              <label for="stageNotificationDays">Avisar após quantos dias nesta pipeline</label>
+              <input type="number" id="stageNotificationDays" min="1" step="1" placeholder="Ex.: 5" />
+            </div>
+
+            <div class="form-group">
+              <label for="stageNotificationMessage">Observação da notificação</label>
+              <input type="text" id="stageNotificationMessage" placeholder="Ex.: Retornar cliente parado nesta etapa" />
+            </div>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelNotificationBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="saveNotificationBtn">Salvar notificação</button>
         </div>
       </form>
     </div>
@@ -1203,6 +1269,6 @@
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="config.js?v=20260415-02"></script>
-  <script src="script.js?v=20260727-12"></script>
+  <script src="script.js?v=20260727-13"></script>
 </body>
 </html>

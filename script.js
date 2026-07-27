@@ -254,14 +254,7 @@
     leadFunnelSelect: $("leadFunnelSelect"),
     leadSubfunnelSelect: $("leadSubfunnelSelect"),
     stage: $("stage"),
-    leadReminderEnabled: $("leadReminderEnabled"),
-    leadReminderFields: $("leadReminderFields"),
-    leadReminderType: $("leadReminderType"),
-    leadReminderDateGroup: $("leadReminderDateGroup"),
-    leadReminderDate: $("leadReminderDate"),
-    leadReminderDaysGroup: $("leadReminderDaysGroup"),
-    leadReminderDays: $("leadReminderDays"),
-    leadReminderMessage: $("leadReminderMessage"),
+    leadReminderSummary: $("leadReminderSummary"),
     contractNumberGroup: $("contractNumberGroup"),
     contractNumber: $("contractNumber"),
     socialSource: $("socialSource"),
@@ -304,10 +297,7 @@
     savedStageTypes: $("savedStageTypes"),
     savedStageTypeActions: $("savedStageTypeActions"),
     removeSelectedStageTypeBtn: $("removeSelectedStageTypeBtn"),
-    stageReminderEnabled: $("stageReminderEnabled"),
-    stageReminderFields: $("stageReminderFields"),
-    stageReminderDays: $("stageReminderDays"),
-    stageReminderMessage: $("stageReminderMessage"),
+    stageReminderSummary: $("stageReminderSummary"),
     addLeadSourceBtn: $("addLeadSourceBtn"),
     leadSourceName: $("leadSourceName"),
     leadSourcesConfigList: $("leadSourcesConfigList"),
@@ -330,6 +320,25 @@
     permissionRequestReason: $("permissionRequestReason"),
     permissionModalTitle: $("permissionModalTitle"),
     permissionModalText: $("permissionModalText"),
+
+    notificationModalOverlay: $("notificationModalOverlay"),
+    closeNotificationModalBtn: $("closeNotificationModalBtn"),
+    cancelNotificationBtn: $("cancelNotificationBtn"),
+    notificationForm: $("notificationForm"),
+    notificationModalTitle: $("notificationModalTitle"),
+    notificationModalDescription: $("notificationModalDescription"),
+    notificationTargetType: $("notificationTargetType"),
+    notificationTargetId: $("notificationTargetId"),
+    leadNotificationEditor: $("leadNotificationEditor"),
+    leadNotificationEnabled: $("leadNotificationEnabled"),
+    leadNotificationFields: $("leadNotificationFields"),
+    leadNotificationDate: $("leadNotificationDate"),
+    leadNotificationMessage: $("leadNotificationMessage"),
+    stageNotificationEditor: $("stageNotificationEditor"),
+    stageNotificationEnabled: $("stageNotificationEnabled"),
+    stageNotificationFields: $("stageNotificationFields"),
+    stageNotificationDays: $("stageNotificationDays"),
+    stageNotificationMessage: $("stageNotificationMessage"),
 
     funnelGroupModalOverlay: $("funnelGroupModalOverlay"),
     closeFunnelGroupModalBtn: $("closeFunnelGroupModalBtn"),
@@ -3040,7 +3049,7 @@
   }
 
   function closeAllModals() {
-    [els.modalOverlay, els.stageModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay].forEach((overlay) => {
+    [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay].forEach((overlay) => {
       overlay?.classList.add("hidden");
     });
     document.body.classList.remove("modal-open");
@@ -3067,7 +3076,7 @@
     if (!overlay) return;
     overlay.classList.add("hidden");
     overlay.scrollTop = 0;
-    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.historyModalOverlay, els.permissionModalOverlay]
+    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay]
       .some((item) => item && !item.classList.contains("hidden"));
     if (!hasOpenOverlay) document.body.classList.remove("modal-open");
   }
@@ -3956,27 +3965,72 @@
   }
 
   function toggleLeadReminderFields({ clearWhenHidden = false } = {}) {
-    const enabled = Boolean(els.leadReminderEnabled?.checked);
-    const type = String(els.leadReminderType?.value || "date").trim();
-    els.leadReminderFields?.classList.toggle("hidden", !enabled);
-    els.leadReminderDateGroup?.classList.toggle("hidden", !enabled || type !== "date");
-    els.leadReminderDaysGroup?.classList.toggle("hidden", !enabled || type !== "stage_days");
+    const enabled = Boolean(els.leadNotificationEnabled?.checked);
+    els.leadNotificationFields?.classList.toggle("hidden", !enabled);
 
     if (!enabled && clearWhenHidden) {
-      if (els.leadReminderDate) els.leadReminderDate.value = "";
-      if (els.leadReminderDays) els.leadReminderDays.value = "";
-      if (els.leadReminderMessage) els.leadReminderMessage.value = "";
+      if (els.leadNotificationDate) els.leadNotificationDate.value = "";
+      if (els.leadNotificationMessage) els.leadNotificationMessage.value = "";
     }
   }
 
   function toggleStageReminderFields({ clearWhenHidden = false } = {}) {
-    const enabled = Boolean(els.stageReminderEnabled?.checked);
-    els.stageReminderFields?.classList.toggle("hidden", !enabled);
+    const enabled = Boolean(els.stageNotificationEnabled?.checked);
+    els.stageNotificationFields?.classList.toggle("hidden", !enabled);
 
     if (!enabled && clearWhenHidden) {
-      if (els.stageReminderDays) els.stageReminderDays.value = "";
-      if (els.stageReminderMessage) els.stageReminderMessage.value = "";
+      if (els.stageNotificationDays) els.stageNotificationDays.value = "";
+      if (els.stageNotificationMessage) els.stageNotificationMessage.value = "";
     }
+  }
+
+  function buildReminderSummaryMarkup(title, lines = []) {
+    const safeLines = (Array.isArray(lines) ? lines : []).filter(Boolean);
+    if (!safeLines.length) return "";
+
+    return `
+      <div class="notification-summary-card">
+        <strong>${escapeHtml(title)}</strong>
+        ${safeLines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}
+      </div>
+    `;
+  }
+
+  function renderLeadReminderSummary(lead = null) {
+    if (!els.leadReminderSummary) return;
+    const reminder = getLeadReminder(lead);
+    if (!lead || !reminder) {
+      els.leadReminderSummary.classList.add("hidden");
+      els.leadReminderSummary.innerHTML = "";
+      return;
+    }
+
+    const lines = [];
+    if (reminder.type === "date" && reminder.due_date) {
+      lines.push(`Data: ${formatDate(reminder.due_date)}`);
+    } else if (reminder.type === "stage_days" && reminder.days) {
+      lines.push(`Pipeline atual: ${reminder.days} dia${reminder.days > 1 ? "s" : ""}`);
+    }
+    if (reminder.message) lines.push(reminder.message);
+
+    els.leadReminderSummary.innerHTML = buildReminderSummaryMarkup("Notificação salva", lines);
+    els.leadReminderSummary.classList.remove("hidden");
+  }
+
+  function renderStageReminderSummary(stage = null) {
+    if (!els.stageReminderSummary) return;
+    const reminder = getStageReminderConfig(stage?.id);
+    if (!stage || !reminder) {
+      els.stageReminderSummary.classList.add("hidden");
+      els.stageReminderSummary.innerHTML = "";
+      return;
+    }
+
+    const lines = [`Avisar após ${reminder.days} dia${reminder.days > 1 ? "s" : ""} nesta pipeline`];
+    if (reminder.message) lines.push(reminder.message);
+
+    els.stageReminderSummary.innerHTML = buildReminderSummaryMarkup("Notificação salva", lines);
+    els.stageReminderSummary.classList.remove("hidden");
   }
 
   function getLeadMonthKey(lead) {
@@ -10545,13 +10599,7 @@
     if (els.contractNumber) els.contractNumber.value = getLeadPrimaryContractNumber(lead);
     els.referralName.value = getLeadReferralName(lead);
     els.referralSector.value = getLeadReferralSector(lead);
-    const leadReminder = getLeadReminder(lead);
-    if (els.leadReminderEnabled) els.leadReminderEnabled.checked = Boolean(leadReminder);
-    if (els.leadReminderType) els.leadReminderType.value = leadReminder?.type || "date";
-    if (els.leadReminderDate) els.leadReminderDate.value = leadReminder?.type === "date" ? (leadReminder.due_date || "") : "";
-    if (els.leadReminderDays) els.leadReminderDays.value = leadReminder?.type === "stage_days" ? String(leadReminder.days || "") : "";
-    if (els.leadReminderMessage) els.leadReminderMessage.value = leadReminder?.message || "";
-    toggleLeadReminderFields({ clearWhenHidden: !leadReminder });
+    renderLeadReminderSummary(lead);
     toggleReferralNameField();
     state.modalPlans = getLeadPlans(lead).map((item) => ({ ...item }));
     if (lead && !state.modalPlans.length && Number(lead?.value || 0) > 0) {
@@ -10581,21 +10629,27 @@
 
   function openLeadNotificationEditor(lead) {
     if (!lead) return;
-    openLeadModal(lead);
-    if (els.leadReminderEnabled) els.leadReminderEnabled.checked = true;
-    if (els.leadReminderType) els.leadReminderType.value = "date";
-    toggleLeadReminderFields();
-    requestAnimationFrame(() => {
-      els.leadReminderDate?.focus();
-      els.leadReminderFields?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    });
+    const reminder = getLeadReminder(lead);
+    closeAllModals();
+    els.notificationForm?.reset();
+    if (els.notificationTargetType) els.notificationTargetType.value = "lead";
+    if (els.notificationTargetId) els.notificationTargetId.value = lead.id || "";
+    if (els.notificationModalTitle) els.notificationModalTitle.textContent = "Notificação do lead";
+    if (els.notificationModalDescription) els.notificationModalDescription.textContent = `Configure a notificação do lead ${lead.name || "sem nome"}.`;
+    els.leadNotificationEditor?.classList.remove("hidden");
+    els.stageNotificationEditor?.classList.add("hidden");
+    if (els.leadNotificationEnabled) els.leadNotificationEnabled.checked = Boolean(reminder);
+    if (els.leadNotificationDate) els.leadNotificationDate.value = reminder?.type === "date" ? (reminder.due_date || "") : "";
+    if (els.leadNotificationMessage) els.leadNotificationMessage.value = reminder?.message || "";
+    toggleLeadReminderFields({ clearWhenHidden: !reminder });
+    openModalOverlay(els.notificationModalOverlay, "#leadNotificationEnabled");
   }
 
   function closeLeadModal() {
     closeModalOverlay(els.modalOverlay);
   }
 
-  function openStageModal(stage = null, options = {}) {
+  function openStageModal(stage = null) {
     closeAllModals();
     els.stageForm.reset();
     els.stageId.value = stage?.id || "";
@@ -10613,33 +10667,36 @@
     }
     els.stageColor.value = sanitizeHexColor(stage?.color);
     refreshStageTypeOptions(stage?.custom_stage_type ? `custom:${stage.custom_stage_type}` : (stage?.stage_type || "andamento"), stage?.custom_stage_type || "");
-    const stageReminder = getStageReminderConfig(stage?.id);
-    if (els.stageReminderEnabled) els.stageReminderEnabled.checked = Boolean(stageReminder);
-    if (els.stageReminderDays) els.stageReminderDays.value = stageReminder?.days ? String(stageReminder.days) : "";
-    if (els.stageReminderMessage) els.stageReminderMessage.value = stageReminder?.message || "";
-    toggleStageReminderFields({ clearWhenHidden: !stageReminder });
+    renderStageReminderSummary(stage);
     updateStageColorPreview(els.stageColor.value);
     syncBrandedSelects();
     openModalOverlay(els.stageModalOverlay, "#stageName");
-    if (options.openReminder) {
-      if (els.stageReminderEnabled && !els.stageReminderEnabled.checked) {
-        els.stageReminderEnabled.checked = true;
-      }
-      toggleStageReminderFields();
-      requestAnimationFrame(() => {
-        els.stageReminderDays?.focus();
-        els.stageReminderFields?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      });
-    }
   }
 
   function openStageNotificationEditor(stage) {
     if (!stage) return;
-    openStageModal(stage, { openReminder: true });
+    const reminder = getStageReminderConfig(stage.id);
+    closeAllModals();
+    els.notificationForm?.reset();
+    if (els.notificationTargetType) els.notificationTargetType.value = "stage";
+    if (els.notificationTargetId) els.notificationTargetId.value = stage.id || "";
+    if (els.notificationModalTitle) els.notificationModalTitle.textContent = "Notificação da pipeline";
+    if (els.notificationModalDescription) els.notificationModalDescription.textContent = `Configure a notificação da pipeline ${stage.name || "sem nome"}.`;
+    els.leadNotificationEditor?.classList.add("hidden");
+    els.stageNotificationEditor?.classList.remove("hidden");
+    if (els.stageNotificationEnabled) els.stageNotificationEnabled.checked = Boolean(reminder);
+    if (els.stageNotificationDays) els.stageNotificationDays.value = reminder?.days ? String(reminder.days) : "";
+    if (els.stageNotificationMessage) els.stageNotificationMessage.value = reminder?.message || "";
+    toggleStageReminderFields({ clearWhenHidden: !reminder });
+    openModalOverlay(els.notificationModalOverlay, "#stageNotificationEnabled");
   }
 
   function closeStageModal() {
     closeModalOverlay(els.stageModalOverlay);
+  }
+
+  function closeNotificationModal() {
+    closeModalOverlay(els.notificationModalOverlay);
   }
 
   async function openHistoryModal() {
@@ -11481,8 +11538,6 @@
     const contractNumber = isClosedStageId(selectedStageId)
       ? String(els.contractNumber?.value || "").trim()
       : String(existingMeta.contract_number || "").trim();
-    const reminderEnabled = Boolean(els.leadReminderEnabled?.checked);
-    let nextReminder = null;
 
     if (contractNumber && draftPlans.length) {
       const targetPlan = draftPlans.find((item) => !isNoPlanName(item.name)) || draftPlans[0];
@@ -11528,33 +11583,6 @@
       return alert("Informe o nome de quem indicou.");
     }
 
-    if (reminderEnabled) {
-      const reminderType = String(els.leadReminderType?.value || "date").trim();
-      if (reminderType === "date") {
-        const dueDate = normalizeDateInput(els.leadReminderDate?.value || "");
-        if (!dueDate) return alert("Informe a data da notificação.");
-        nextReminder = normalizeLeadReminder({
-          type: "date",
-          due_date: dueDate,
-          message: els.leadReminderMessage?.value || ""
-        });
-      } else {
-        const reminderDays = Math.max(1, Number(els.leadReminderDays?.value || 0) || 0);
-        if (!reminderDays) return alert("Informe em quantos dias a notificação deve aparecer.");
-        nextReminder = normalizeLeadReminder({
-          type: "stage_days",
-          stage_id: selectedStageId,
-          days: reminderDays,
-          start_date:
-            existingMeta?.reminder?.type === "stage_days"
-            && String(existingMeta.reminder.stage_id || "") === selectedStageId
-              ? (existingMeta.reminder.start_date || getLocalIsoDate())
-              : getLocalIsoDate(),
-          message: els.leadReminderMessage?.value || ""
-        });
-      }
-    }
-
     const nextStageTracking = normalizeLeadStageTracking(existingMeta.stage_tracking || {});
     if (selectedStageId) {
       const stageStartDate = normalizeDateInput(payload.start_date || "") || getLocalIsoDate();
@@ -11573,7 +11601,7 @@
       contract_number: contractNumber,
       referral_name: referralName,
       referral_sector: referralSector,
-      reminder: nextReminder,
+      reminder: existingMeta.reminder || null,
       stage_tracking: nextStageTracking
     });
 
@@ -11656,17 +11684,10 @@
       position: els.stageId.value ? (state.stages.find((s) => s.id === els.stageId.value)?.position ?? state.stages.length) : state.stages.length,
       created_by: state.currentUser.id
     };
-    const nextStageReminder = els.stageReminderEnabled?.checked
-      ? normalizeStageReminderConfig({
-          days: els.stageReminderDays?.value || 0,
-          message: els.stageReminderMessage?.value || ""
-        })
-      : null;
 
     if (!payload.name) return alert("Informe o nome da etapa.");
     if (!selectedSubfunnelId) return alert("Selecione o subfunil desta pipeline.");
     if (payload.stage_type === "personalizado" && !payload.custom_stage_type) return alert("Informe o tipo personalizado.");
-    if (els.stageReminderEnabled?.checked && !nextStageReminder) return alert("Informe em quantos dias a notificação da pipeline deve aparecer.");
 
     if (false && payload.stage_type === "personalizado") {
       const savedType = await saveCustomStageType(payload.custom_stage_type);
@@ -11697,17 +11718,6 @@
       const { error } = await state.supabase.from("stages").update({ name: payload.name, color: payload.color, stage_type: payload.stage_type, custom_stage_type: payload.custom_stage_type, position: payload.position }).eq("id", els.stageId.value);
       if (error) return alert(`Erro no Supabase: ${error.message}`);
       assignStageToSubfunnel(els.stageId.value, selectedSubfunnelId);
-      if (state.funnelWorkspace) {
-        if (nextStageReminder) {
-          state.funnelWorkspace.stageReminderConfigs = {
-            ...(state.funnelWorkspace.stageReminderConfigs || {}),
-            [els.stageId.value]: nextStageReminder
-          };
-        } else if (state.funnelWorkspace.stageReminderConfigs) {
-          delete state.funnelWorkspace.stageReminderConfigs[els.stageId.value];
-        }
-        writeStoredFunnelWorkspace();
-      }
       await logChange("update", "stage", els.stageId.value, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, { before, after: payload });
     } else {
       const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
@@ -11715,17 +11725,108 @@
       await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
       if (data?.id) {
         assignStageToSubfunnel(data.id, selectedSubfunnelId);
-        if (state.funnelWorkspace && nextStageReminder) {
-          state.funnelWorkspace.stageReminderConfigs = {
-            ...(state.funnelWorkspace.stageReminderConfigs || {}),
-            [data.id]: nextStageReminder
-          };
-          writeStoredFunnelWorkspace();
-        }
       }
     }
 
     closeStageModal();
+    await loadAppData({ includeProfiles: state.profilesLoaded });
+  }
+
+  async function submitNotification(event) {
+    event.preventDefault();
+
+    const targetType = String(els.notificationTargetType?.value || "").trim();
+    const targetId = String(els.notificationTargetId?.value || "").trim();
+    if (!targetType || !targetId) return;
+
+    if (targetType === "lead") {
+      const lead = state.leads.find((item) => item.id === targetId) || null;
+      if (!lead || !canEditLeads(lead)) {
+        alert("Seu perfil não tem permissão para alterar esta notificação.");
+        return;
+      }
+
+      const existingMeta = getLeadMeta(lead.notes || "", lead.value || 0);
+      const enabled = Boolean(els.leadNotificationEnabled?.checked);
+      const nextReminder = enabled
+        ? normalizeLeadReminder({
+            type: "date",
+            due_date: els.leadNotificationDate?.value || "",
+            message: els.leadNotificationMessage?.value || ""
+          })
+        : null;
+
+      if (enabled && !nextReminder) {
+        alert("Informe a data da notificação.");
+        return;
+      }
+
+      const nextNotes = serializeLeadMeta({
+        ...existingMeta,
+        reminder: nextReminder
+      });
+
+      const { error } = await state.supabase
+        .from("leads")
+        .update({ notes: nextNotes })
+        .eq("id", targetId);
+
+      if (error) return alert(`Erro no Supabase: ${error.message}`);
+
+      await logChange(
+        "update",
+        "lead_notification",
+        targetId,
+        `Notificação do lead "${lead.name || "sem nome"}" foi ${nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+        { before: existingMeta.reminder || null, after: nextReminder }
+      );
+    }
+
+    if (targetType === "stage") {
+      const stage = getStageById(targetId);
+      if (!stage || !canManageStages()) {
+        alert("Somente administradores podem alterar esta notificação.");
+        return;
+      }
+
+      const previousReminder = getStageReminderConfig(targetId);
+      const enabled = Boolean(els.stageNotificationEnabled?.checked);
+      const nextReminder = enabled
+        ? normalizeStageReminderConfig({
+            days: els.stageNotificationDays?.value || 0,
+            message: els.stageNotificationMessage?.value || ""
+          })
+        : null;
+
+      if (enabled && !nextReminder) {
+        alert("Informe em quantos dias a notificação da pipeline deve aparecer.");
+        return;
+      }
+
+      if (state.funnelWorkspace) {
+        state.funnelWorkspace.stageReminderConfigs = {
+          ...(state.funnelWorkspace.stageReminderConfigs || {})
+        };
+
+        if (nextReminder) {
+          state.funnelWorkspace.stageReminderConfigs[targetId] = nextReminder;
+        } else {
+          delete state.funnelWorkspace.stageReminderConfigs[targetId];
+        }
+
+        writeStoredFunnelWorkspace();
+      }
+
+      await logChange(
+        "update",
+        "stage_notification",
+        targetId,
+        `Notificação da pipeline "${stage?.name || "sem nome"}" foi ${nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+        { before: previousReminder, after: nextReminder }
+      );
+    }
+
+    closeNotificationModal();
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
@@ -12689,8 +12790,6 @@
     els.closeModalBtn.addEventListener("click", closeLeadModal);
     els.cancelBtn.addEventListener("click", closeLeadModal);
     els.leadForm.addEventListener("submit", submitLead);
-    els.leadReminderEnabled?.addEventListener("change", () => toggleLeadReminderFields({ clearWhenHidden: !els.leadReminderEnabled.checked }));
-    els.leadReminderType?.addEventListener("change", () => toggleLeadReminderFields());
     els.leadFunnelSelect?.addEventListener("change", () => {
       renderLeadTargetSelectors({
         selectedFunnelId: els.leadFunnelSelect?.value || "",
@@ -12731,9 +12830,13 @@
     els.closeStageModalBtn.addEventListener("click", closeStageModal);
     els.cancelStageBtn.addEventListener("click", closeStageModal);
     els.stageForm.addEventListener("submit", submitStage);
-    els.stageReminderEnabled?.addEventListener("change", () => toggleStageReminderFields({ clearWhenHidden: !els.stageReminderEnabled.checked }));
     els.stageColor.addEventListener("input", (e) => updateStageColorPreview(e.target.value));
     els.stageType.addEventListener("change", toggleCustomStageTypeField);
+    els.closeNotificationModalBtn?.addEventListener("click", closeNotificationModal);
+    els.cancelNotificationBtn?.addEventListener("click", closeNotificationModal);
+    els.notificationForm?.addEventListener("submit", submitNotification);
+    els.leadNotificationEnabled?.addEventListener("change", () => toggleLeadReminderFields({ clearWhenHidden: !els.leadNotificationEnabled.checked }));
+    els.stageNotificationEnabled?.addEventListener("change", () => toggleStageReminderFields({ clearWhenHidden: !els.stageNotificationEnabled.checked }));
     els.structureFunnelSelect?.addEventListener("change", () => {
       state.structureFunnelId = String(els.structureFunnelSelect.value || "").trim() || null;
       state.structureSubfunnelId = getSubfunnelsForFunnel(state.structureFunnelId)[0]?.id || null;
@@ -12922,6 +13025,7 @@
 
     bindOverlayDismiss(els.modalOverlay, closeLeadModal);
     bindOverlayDismiss(els.stageModalOverlay, closeStageModal);
+    bindOverlayDismiss(els.notificationModalOverlay, closeNotificationModal);
     bindOverlayDismiss(els.historyModalOverlay, closeHistoryModal);
     bindOverlayDismiss(els.permissionModalOverlay, closePermissionRequestModal);
     bindOverlayDismiss(els.accountModalOverlay, closeAccountModal);

@@ -2911,30 +2911,19 @@ input,select,textarea{
   border-radius:999px;
   border:2px solid #cfe3d3;
   background:#ffffff;
-  display:grid;
-  place-items:center;
   cursor:pointer;
-  transition:border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
-}
-
-.lead-reminder-toggle input[type="checkbox"]::after{
-  content:"";
-  width:10px;
-  height:10px;
-  border-radius:999px;
-  background:#6fad2b;
-  transform:scale(0);
-  transition:transform .18s ease;
+  background-position:center;
+  background-repeat:no-repeat;
+  background-size:0 0;
+  transition:border-color .18s ease, background-color .18s ease, box-shadow .18s ease, background-size .18s ease;
 }
 
 .lead-reminder-toggle input[type="checkbox"]:checked{
   border-color:#6fad2b;
   background:#f3f8f0;
+  background-image:radial-gradient(circle, #6fad2b 0 45%, transparent 52%);
+  background-size:10px 10px;
   box-shadow:0 0 0 3px rgba(111,173,43,.14);
-}
-
-.lead-reminder-toggle input[type="checkbox"]:checked::after{
-  transform:scale(1);
 }
 
 .lead-reminder-toggle input[type="checkbox"]:focus-visible{
@@ -2944,6 +2933,31 @@ input,select,textarea{
 
 .lead-reminder-fields{
   margin-top:14px;
+}
+
+.notification-summary{
+  margin-bottom:4px;
+}
+
+.notification-summary-card{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  padding:14px 16px;
+  border:1px solid rgba(19,33,28,.08);
+  border-radius:18px;
+  background:#f8faf8;
+}
+
+.notification-summary-card strong{
+  color:#22322b;
+  font-size:14px;
+}
+
+.notification-summary-card span{
+  color:#51635a;
+  font-size:13px;
+  line-height:1.45;
 }
 
 .card-highlighted{
@@ -6029,6 +6043,22 @@ body[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]:checked{
   background:#1f3327 !important;
   border-color:#6fad2b !important;
   box-shadow:0 0 0 3px rgba(111,173,43,.16) !important;
+}
+
+html[data-theme="dark"] .notification-summary-card,
+body[data-theme="dark"] .notification-summary-card{
+  background:#1b2120 !important;
+  border-color:rgba(255,255,255,.08) !important;
+}
+
+html[data-theme="dark"] .notification-summary-card strong,
+body[data-theme="dark"] .notification-summary-card strong{
+  color:#eef2f0 !important;
+}
+
+html[data-theme="dark"] .notification-summary-card span,
+body[data-theme="dark"] .notification-summary-card span{
+  color:#b7c5be !important;
 }
 
 html[data-theme="dark"] .leads-table th,
