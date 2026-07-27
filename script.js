@@ -5216,36 +5216,11 @@
       return false;
     }
 
+    // A consolidação já acontece no workspace local durante a normalização.
+    // Não forçamos persistência aqui para evitar timeouts em workspaces grandes.
     state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
-
-    try {
-      await persistFunnelWorkspaceToSupabase();
-    } catch (error) {
-      if (/row-level security policy/i.test(String(error?.message || ""))) {
-        console.warn("Consolidação de Ações Externas bloqueada por RLS. Mantendo ajuste apenas no workspace local.");
-        state.funnelDataLoadedFromSupabase = false;
-      } else {
-        throw error;
-      }
-    }
-
     writeStoredExternalActionsFunnelMergeDone(true);
-
-    try {
-      await logChange(
-        "merge_external_actions_funnel",
-        "funnel_workspace",
-        null,
-        `Funis "Eventos Externos" e "Ações Externas" foram consolidados mantendo as pipelines atuais por ${getUserDisplayName()}.`,
-        {
-          target_funnel: "Ações Externas",
-          preserve_stage_ids: true
-        }
-      );
-    } catch (error) {
-      console.warn("Não foi possível registrar a consolidação de Ações Externas no histórico:", error);
-    }
 
     return true;
   }
