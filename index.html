@@ -1,238 +1,1089 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Pax Insights organiza CRM, funis, governanca operacional e inteligencia comercial em uma camada visual clara e controlada." />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" />
   <title>Pax Insights</title>
+  <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
-  <link rel="stylesheet" href="style.css?v=20260724-01" />
+  <link rel="stylesheet" href="style.css?v=20260724-32" />
 </head>
 <body>
-  <div class="site-shell">
-    <header class="site-header">
-      <a class="brand" href="#top" aria-label="Pax Insights">
-        <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="brand-logo" />
-      </a>
+  <div id="bootScreen" class="boot-screen">Carregando sistema...</div>
 
-      <button id="menuToggleBtn" class="menu-toggle" type="button" aria-expanded="false" aria-controls="siteNav" aria-label="Abrir menu">
-        <span></span>
-        <span></span>
-      </button>
+  <section id="authScreen" class="screen hidden">
+    <div class="auth-shell">
+      <div class="auth-card">
+        <div class="auth-brand">
+          <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="auth-brand-logo" id="authBrandLogo" />
+        </div>
+        <p>CRM e inteligência comercial em um ambiente controlado por perfis, solicitações e auditoria centralizada.</p>
 
-      <nav id="siteNav" class="site-nav" aria-label="Navegacao principal">
-        <a href="#produto">Produto</a>
-        <a href="#modulos">Modulos</a>
-        <a href="#governanca">Governanca</a>
-        <a href="#contato">Contato</a>
-        <a class="nav-cta" href="#demo">Solicitar apresentacao</a>
+        <div class="tabs">
+          <button class="tab-btn active" data-tab="login" type="button">Entrar</button>
+          <button class="tab-btn" id="registerTabBtn" data-tab="register" type="button">Solicitar Acesso</button>
+        </div>
+
+        <form id="loginForm" class="tab-panel active">
+          <label for="loginEmail">E-mail</label>
+          <input type="email" id="loginEmail" autocomplete="email" required />
+
+          <label for="loginPassword">Senha</label>
+          <input type="password" id="loginPassword" autocomplete="current-password" required />
+
+          <button class="btn btn-primary" type="submit">Entrar</button>
+          <button class="btn btn-link" type="button" id="forgotPasswordBtn">Esqueci minha senha</button>
+        </form>
+
+        <form id="registerForm" class="tab-panel">
+          <label for="registerName">Nome completo</label>
+          <input type="text" id="registerName" autocomplete="name" required />
+
+          <label for="registerEmail">E-mail</label>
+          <input type="email" id="registerEmail" autocomplete="email" required />
+
+          <label for="registerDepartment" class="hidden">Departamento</label>
+          <select id="registerDepartment" class="auth-select hidden">
+            <option value="">Selecione o departamento</option>
+          </select>
+
+          <label for="registerDepartmentSecondary" class="hidden">Segundo departamento</label>
+          <select id="registerDepartmentSecondary" class="auth-select hidden">
+            <option value="">Opcional</option>
+          </select>
+
+          <label for="registerPassword">Senha</label>
+          <input type="password" id="registerPassword" autocomplete="new-password" required />
+
+          <button class="btn btn-primary" type="submit">Enviar solicitacao</button>
+        </form>
+
+        <div id="registrationNotice" class="security-note hidden"></div>
+
+        <div id="resetPasswordBox" class="hidden stack reset-box">
+          <label for="newPassword">Nova senha</label>
+          <input type="password" id="newPassword" autocomplete="new-password" placeholder="Digite sua nova senha" />
+          <button class="btn btn-primary" type="button" id="updatePasswordBtn">Salvar nova senha</button>
+        </div>
+
+        <p id="authMessage" class="message"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="appScreen" class="screen hidden">
+    <div class="mobile-topbar">
+      <div class="mobile-topbar-main">
+        <button id="mobileMenuBtn" class="mobile-menu-btn" type="button" aria-label="Abrir menu">&#9776;</button>
+        <div class="mobile-brand-block"><strong id="mobileOrgName">CRM Pax</strong></div>
+        <button type="button" id="mobileAddLeadBtn" class="btn btn-primary mobile-topbar-action">+ Lead</button>
+        <button type="button" id="mobileFiltersBtn" class="btn btn-secondary mobile-only mobile-filter-icon-btn" aria-label="Abrir filtros"></button>
+      </div>
+      <nav class="mobile-nav" aria-label="Menu principal no celular">
+        <button class="menu-item mobile-nav-item" data-view="funil" type="button">Funil</button>
+        <button class="menu-item mobile-nav-item active" data-view="relatorios" type="button">Relatórios</button>
+        <button class="menu-item mobile-nav-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
+        <button class="menu-item mobile-nav-item" data-view="leads" type="button">Leads</button>
+        <button class="menu-item mobile-nav-item" data-view="equipe" type="button">Acessos</button>
+        <button class="menu-item mobile-nav-item hidden" data-admin-only="true" data-view="configuracoes" type="button">Config.</button>
       </nav>
+    </div>
+
+    <div id="mobileFiltersPanel" class="mobile-filters-panel hidden">
+      <div class="mobile-filters-grid">
+        <div class="form-group">
+          <label for="mobileCategoryFilter">Categoria</label>
+          <select id="mobileCategoryFilter">
+            <option value="">B2B e B2C</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileGroupFilter">Grupo</label>
+          <select id="mobileGroupFilter">
+            <option value="">Todos os grupos</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileFunnelFilter">Funil</label>
+          <select id="mobileFunnelFilter">
+            <option value="">Todos os funis</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileSubfunnelFilter">Subfunil</label>
+          <select id="mobileSubfunnelFilter">
+            <option value="">Todos os subfunis</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileOwnerFilter">Responsável</label>
+          <select id="mobileOwnerFilter">
+            <option value="">Todos os responsáveis</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileMonthFilter">Mês</label>
+          <select id="mobileMonthFilter">
+            <option value="">Todos os meses</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileStageFilter">Pipeline</label>
+          <select id="mobileStageFilter">
+            <option value="">Todos os pipelines</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileLeadSourceFilter">Origem do Lead</label>
+          <select id="mobileLeadSourceFilter">
+            <option value="">Todas as origens</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileSocialSourceFilter">Canal de origem</label>
+          <select id="mobileSocialSourceFilter">
+            <option value="">Todos os canais</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileIndicatorFilter">Indicado por</label>
+          <select id="mobileIndicatorFilter">
+            <option value="">Todas as indicações</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mobileIndicatorSectorFilter">Setor do indicado</label>
+          <select id="mobileIndicatorSectorFilter">
+            <option value="">Todos os setores</option>
+          </select>
+        </div>
+      </div>
+      <div class="mobile-filters-actions">
+        <button type="button" id="mobileClearFiltersBtn" class="btn btn-secondary">Limpar filtros</button>
+      </div>
+    </div>
+
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="shell-brand-logo" id="shellBrandLogo" />
+      </div>
+
+      <nav class="shell-tabs" aria-label="Navegação principal">
+        <button type="button" id="shellTabCrm" class="shell-tab active">CRM</button>
+        <button type="button" id="shellTabIntel" class="shell-tab">Central de Inteligência</button>
+      </nav>
+
+      <div class="shell-profile">
+        <button type="button" id="profileMenuBtn" class="profile-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Abrir menu do usuário">
+          <span class="profile-menu-avatar" id="profileMenuAvatar">PI</span>
+        </button>
+
+        <div id="profileMenu" class="profile-menu hidden">
+          <div class="profile-menu-summary">
+            <span class="profile-menu-label">Conta</span>
+            <strong id="profileMenuName">Usuário</strong>
+            <small id="profileMenuRole">Carregando...</small>
+          </div>
+          <button type="button" id="openAccountBtn" class="profile-menu-item">Minha conta</button>
+          <button type="button" id="profileTeamBtn" class="profile-menu-item menu-item" data-view="equipe">Acessos</button>
+          <button type="button" id="profileSettingsBtn" class="profile-menu-item menu-item hidden" data-admin-only="true" data-view="configuracoes">Configurações</button>
+          <button type="button" id="themeToggleBtn" class="profile-menu-item profile-theme-switch" aria-label="Alternar entre tema white e dark">
+            <span class="profile-theme-switch-copy">Tema</span>
+            <span class="profile-theme-switch-track" aria-hidden="true">
+              <span class="profile-theme-switch-side profile-theme-switch-side-light">☼</span>
+              <span class="profile-theme-switch-side profile-theme-switch-side-dark">☾</span>
+              <span class="profile-theme-switch-thumb">
+                <span id="themeToggleThumbIcon">☼</span>
+              </span>
+            </span>
+          </button>
+          <button type="button" id="headerLogoutBtn" class="profile-menu-item profile-menu-item-danger">Sair</button>
+        </div>
+      </div>
     </header>
 
-    <main id="top">
-      <section class="hero section">
-        <div class="hero-copy">
-          <span class="eyebrow">CRM, estrutura e inteligencia comercial</span>
-          <h1>Visibilidade operacional com a cara do seu processo, sem virar um sistema generico.</h1>
-          <p>
-            O Pax Insights concentra funis, leads, governanca e acompanhamento comercial em uma experiencia clara,
-            pensada para operacoes que precisam organizar execucao sem perder controle.
-          </p>
-
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="#produto">Ver visao geral</a>
-            <a class="btn btn-secondary" href="#demo">Falar sobre implementacao</a>
-          </div>
-
-          <ul class="hero-points">
-            <li>Camada publica separada do ambiente operacional.</li>
-            <li>Fluxos comerciais visiveis, auditaveis e organizados.</li>
-            <li>Base preparada para evoluir sem expor seguranca interna.</li>
-          </ul>
-        </div>
-
-        <div class="hero-stage">
-          <div class="hero-panel hero-panel-primary">
-            <div class="panel-head">
-              <span class="panel-kicker">Fluxo visivel</span>
-              <strong>Visao do processo</strong>
-            </div>
-            <div class="funnel-preview">
-              <div class="funnel-step is-active">
-                <span>1</span>
-                <strong>Apresentacao</strong>
-              </div>
-              <div class="funnel-step">
-                <span>2</span>
-                <strong>Qualificacao</strong>
-              </div>
-              <div class="funnel-step">
-                <span>3</span>
-                <strong>Negociacao</strong>
-              </div>
-              <div class="funnel-step">
-                <span>4</span>
-                <strong>Fechamento</strong>
-              </div>
-            </div>
-          </div>
-
-          <div class="hero-panel hero-panel-secondary">
-            <div class="panel-head">
-              <span class="panel-kicker">Governanca</span>
-              <strong>Operacao com criterio</strong>
-            </div>
-            <div class="signal-grid">
-              <article>
-                <small>Permissoes</small>
-                <strong>Perfis e acessos bem definidos</strong>
-              </article>
-              <article>
-                <small>Relatorios</small>
-                <strong>Leitura rapida do que esta acontecendo</strong>
-              </article>
-              <article>
-                <small>Estrutura</small>
-                <strong>Funis, grupos e responsaveis organizados</strong>
-              </article>
-              <article>
-                <small>Escala</small>
-                <strong>Base pronta para crescer com consistencia</strong>
-              </article>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="produto" class="section section-grid">
-        <div class="section-heading">
-          <span class="eyebrow">Produto</span>
-          <h2>Um ambiente desenhado para dar ordem ao comercial.</h2>
-          <p>
-            O foco nao e acumular tela. O foco e organizar pipeline, leitura operacional e rotina comercial com
-            uma interface que torna o processo compreensivel.
-          </p>
-        </div>
-
-        <div class="feature-grid">
-          <article class="feature-card reveal">
-            <span class="feature-index">01</span>
-            <h3>Funis estruturados</h3>
-            <p>Organize categorias, grupos, funis e subfunis de forma visual, sem depender de planilhas dispersas.</p>
-          </article>
-          <article class="feature-card reveal">
-            <span class="feature-index">02</span>
-            <h3>Leads mais legiveis</h3>
-            <p>Centralize responsavel, origem, plano, etapa e historico em uma leitura clara para a operacao.</p>
-          </article>
-          <article class="feature-card reveal">
-            <span class="feature-index">03</span>
-            <h3>Governanca real</h3>
-            <p>Separacao entre camada visual publica e ambiente interno, reduzindo exposicao indevida da operacao.</p>
-          </article>
-          <article class="feature-card reveal">
-            <span class="feature-index">04</span>
-            <h3>Base para inteligencia</h3>
-            <p>O produto nasce com estrutura para evoluir relatorios, leitura de performance e rotina analitica.</p>
-          </article>
-        </div>
-      </section>
-
-      <section id="modulos" class="section">
-        <div class="section-heading inline-heading">
+    <section id="shellViewCrm" class="shell-view shell-view-active">
+      <div id="app" class="app">
+      <aside id="sidebar" class="sidebar">
+        <div class="brand">
+          <div class="brand-logo"><img src="assets/pax-insights-symbol-white.png" alt="Pax Insights" class="brand-logo-img" /></div>
           <div>
-            <span class="eyebrow">Modulos</span>
-            <h2>O que entra no ecossistema.</h2>
-          </div>
-          <p>O site publico mostra a proposta. A operacao sensivel continua isolada no ambiente privado.</p>
-        </div>
-
-        <div class="module-grid">
-          <article class="module-card reveal">
-            <div class="module-icon">
-              <img src="assets/pax-insights-symbol-white.png" alt="" />
-            </div>
-            <h3>Camada publica</h3>
-            <p>Landing pages, apresentacao do produto, navegacao institucional e formulacao de contato.</p>
-          </article>
-          <article class="module-card reveal">
-            <div class="module-icon module-icon-outline">
-              <span>CRM</span>
-            </div>
-            <h3>Camada operacional</h3>
-            <p>Funis, leads, relatorios, acessos, estrutura e regras do processo ficam protegidos no repositrio privado.</p>
-          </article>
-          <article class="module-card reveal">
-            <div class="module-icon module-icon-outline">
-              <span>CI</span>
-            </div>
-            <h3>Camada de evolucao</h3>
-            <p>Espaco para expandir conteudo, demonstracoes, visoes de inteligencia e novos pontos de entrada.</p>
-          </article>
-        </div>
-      </section>
-
-      <section id="governanca" class="section governance-section">
-        <div class="section-heading">
-          <span class="eyebrow">Governanca</span>
-          <h2>Separacao clara entre vitrine publica e nucleo privado.</h2>
-          <p>
-            O processo certo aqui e manter o visual aberto em um repositorio publico e preservar dados,
-            credenciais, integracoes internas e seguranca no repositorio privado.
-          </p>
-        </div>
-
-        <div class="governance-layout">
-          <article class="governance-card reveal">
-            <h3>Publico</h3>
-            <ul>
-              <li>Apresentacao do produto</li>
-              <li>Paginas institucionais</li>
-              <li>Navegacao e experiencia visual</li>
-              <li>Conteudo comercial e demonstrativo</li>
-            </ul>
-          </article>
-          <article class="governance-card reveal governance-card-accent">
-            <h3>Privado</h3>
-            <ul>
-              <li>Supabase e regras internas</li>
-              <li>Autenticacao e controle de acesso</li>
-              <li>Leads, funis e relatorios reais</li>
-              <li>Automacoes, auditoria e seguranca</li>
-            </ul>
-          </article>
-        </div>
-      </section>
-
-      <section id="demo" class="section cta-section">
-        <div class="cta-card reveal">
-          <span class="eyebrow">Proxima etapa</span>
-          <h2>Base publica pronta para crescer.</h2>
-          <p>
-            A partir daqui, o processo natural e transformar este repositorio no site institucional,
-            enquanto o CRM continua evoluindo isolado no repositorio privado.
-          </p>
-          <div class="cta-actions">
-            <a class="btn btn-primary" href="mailto:contato@paxinsights.com.br?subject=Quero%20conhecer%20o%20Pax%20Insights">Solicitar demonstracao</a>
-            <a class="btn btn-secondary" href="#contato">Ver contato</a>
+            <h1 id="orgNameLabel">Pax Insights</h1>
+            <p id="userWelcome">Usuário</p>
           </div>
         </div>
-      </section>
-    </main>
 
-    <footer id="contato" class="site-footer">
-      <div>
-        <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="footer-logo" />
-        <p>Camada visual publica do produto Pax Insights.</p>
+        <nav class="menu">
+          <button class="menu-item" data-view="funil" type="button">Funil</button>
+          <button class="menu-item active" data-view="relatorios" type="button">Relatórios</button>
+          <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
+          <button class="menu-item" data-view="leads" type="button">Leads</button>
+          <button class="menu-item" data-view="equipe" type="button">Acessos</button>
+          <button class="menu-item hidden" data-admin-only="true" data-view="configuracoes" type="button">Configurações</button>
+        </nav>
+
+        <div class="sidebar-footer">
+          <p><strong>Modo:</strong> CRM compartilhado</p>
+          <p><strong>Acesso:</strong> <span id="userAccessLevel">Carregando...</span></p>
+          <button id="logoutBtn" class="btn btn-ghost hidden" type="button">Sair</button>
+          <div class="sidebar-footer-actions">
+            <button id="sidebarCollapseBtn" class="sidebar-toggle-btn" type="button" aria-label="Recolher menu lateral">&laquo;</button>
+          </div>
+        </div>
+      </aside>
+      <button id="sidebarExpandBtn" class="sidebar-expand-btn" type="button" aria-label="Expandir menu lateral">&raquo;</button>
+
+      <main class="main">
+        <div class="crm-workspace">
+          <aside id="crmNavbar" class="crm-navbar" aria-label="Navegação do CRM">
+            <div class="crm-navbar-links">
+              <button class="menu-item" data-view="funil" type="button">Funil</button>
+              <button class="menu-item active" data-view="relatorios" type="button">Relatórios</button>
+              <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
+              <button class="menu-item" data-view="leads" type="button">Leads</button>
+            </div>
+            <div class="crm-navbar-footer">
+              <button id="crmNavbarCollapseBtn" class="crm-navbar-toggle-btn" type="button" aria-label="Recolher menu lateral do CRM">&laquo;</button>
+            </div>
+          </aside>
+          <button id="crmNavbarExpandBtn" class="crm-navbar-expand-btn" type="button" aria-label="Expandir menu lateral do CRM">&raquo;</button>
+          <aside id="crmFunnelSidebar" class="crm-funnel-sidebar hidden" aria-label="Categorias e funis">
+            <div id="crmFunnelNav" class="crm-funnel-nav">
+              <section class="crm-funnel-section">
+                <div class="crm-funnel-section-head" data-funnel-category-head="B2B">
+                  <h3>B2B</h3>
+                </div>
+                <div id="funnelCategoryB2BList" class="crm-funnel-list"></div>
+                <button id="funnelCategoryB2BCreate" class="crm-funnel-create-link" type="button" data-funnel-create-category="B2B">Criar funil</button>
+              </section>
+              <section class="crm-funnel-section">
+                <div class="crm-funnel-section-head" data-funnel-category-head="B2C">
+                  <h3>B2C</h3>
+                </div>
+                <div id="funnelCategoryB2CList" class="crm-funnel-list"></div>
+                <button id="funnelCategoryB2CCreate" class="crm-funnel-create-link" type="button" data-funnel-create-category="B2C">Criar funil</button>
+              </section>
+            </div>
+          </aside>
+
+          <div class="crm-content">
+        <header class="topbar">
+          <div>
+            <div class="topbar-title-row">
+              <h2 id="pageTitle">Pipeline</h2>
+              <button type="button" id="editCurrentFunnelBtn" class="funnel-inline-action hidden" aria-label="Configurar funil">⚙</button>
+              <button type="button" id="deleteCurrentFunnelBtn" class="funnel-inline-action funnel-inline-action-danger hidden" aria-label="Excluir funil">🗑</button>
+            </div>
+            <p id="pageSubtitle">Gerencie os leads do CRM compartilhado.</p>
+            <button type="button" id="funnelBackBtn" class="funnel-back-inline hidden" aria-label="Voltar para o funil">← Funil</button>
+          </div>
+
+          <div class="topbar-actions">
+            <input type="text" id="searchInput" class="mobile-hidden-control" placeholder="Buscar cliente, contato, contrato, canal de origem..." />
+            <button type="button" id="desktopFiltersBtn" class="btn btn-secondary mobile-hidden-control filters-trigger-btn" aria-expanded="false">
+              <span>Filtros</span>
+              <span id="desktopFiltersCount" class="filters-trigger-count hidden">0</span>
+            </button>
+
+            <button type="button" id="importCsvBtn" class="btn btn-secondary mobile-hidden-control">Importar</button>
+            <button type="button" id="exportCsvBtn" class="btn btn-secondary mobile-hidden-control">Exportar</button>
+            <input type="file" id="csvFileInput" accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" class="hidden" />
+            <button type="button" id="deleteSelectedBtn" class="btn btn-danger hidden">Excluir selecionados</button>
+            <button type="button" id="addLeadBtn" class="btn btn-primary">+ Novo Lead</button>
+            <button type="button" id="addStageBtn" class="btn btn-secondary hidden" data-admin-only="true">+ Pipeline</button>
+          </div>
+
+          <div id="desktopFiltersPanel" class="desktop-filters-panel hidden">
+            <div class="desktop-filters-panel-head">
+              <div>
+                <strong>Filtros</strong>
+                <p>Refine rapidamente os dados do CRM.</p>
+              </div>
+              <button type="button" id="desktopFiltersCloseBtn" class="desktop-filters-close" aria-label="Fechar filtros">×</button>
+            </div>
+            <div id="desktopFiltersSummary" class="desktop-filters-summary">
+              <span class="filter-summary-empty">Nenhum filtro aplicado</span>
+            </div>
+            <div class="desktop-filters-grid">
+              <div class="filter-dropdown" id="categoryFilterDropdown">
+                <button type="button" class="filter-btn" id="categoryFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="categoryFilterLabel">B2B e B2C</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="categoryFilterMenu" role="listbox" aria-label="Filtro de categoria"></div>
+                <select id="categoryFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">B2B e B2C</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="groupFilterDropdown">
+                <button type="button" class="filter-btn" id="groupFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="groupFilterLabel">Todos os grupos</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="groupFilterMenu" role="listbox" aria-label="Filtro de grupo"></div>
+                <select id="groupFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os grupos</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="funnelFilterDropdown">
+                <button type="button" class="filter-btn" id="funnelFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="funnelFilterLabel">Todos os funis</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="funnelFilterMenu" role="listbox" aria-label="Filtro de funil"></div>
+                <select id="funnelFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os funis</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="subfunnelFilterDropdown">
+                <button type="button" class="filter-btn" id="subfunnelFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="subfunnelFilterLabel">Todos os subfunis</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="subfunnelFilterMenu" role="listbox" aria-label="Filtro de subfunil"></div>
+                <select id="subfunnelFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os subfunis</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="ownerFilterDropdown">
+                <button type="button" class="filter-btn" id="ownerFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="ownerFilterLabel">Todos os responsaveis</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="ownerFilterMenu" role="listbox" aria-label="Filtro de responsaveis"></div>
+                <select id="ownerFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os responsaveis</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="monthFilterDropdown">
+                <button type="button" class="filter-btn" id="monthFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="monthFilterLabel">Todos os meses</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="monthFilterMenu" role="listbox" aria-label="Filtro de meses"></div>
+                <select id="monthFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os meses</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="stageFilterDropdown">
+                <button type="button" class="filter-btn" id="stageFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="stageFilterLabel">Todos os pipelines</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="stageFilterMenu" role="listbox" aria-label="Filtro de pipeline"></div>
+                <select id="stageFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os pipelines</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="leadSourceFilterDropdown">
+                <button type="button" class="filter-btn" id="leadSourceFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="leadSourceFilterLabel">Todas as origens</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="leadSourceFilterMenu" role="listbox" aria-label="Filtro de origem do lead"></div>
+                <select id="leadSourceFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todas as origens</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="socialSourceFilterDropdown">
+                <button type="button" class="filter-btn" id="socialSourceFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="socialSourceFilterLabel">Todos os canais</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="socialSourceFilterMenu" role="listbox" aria-label="Filtro de canal de origem"></div>
+                <select id="socialSourceFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os canais</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="indicatorFilterDropdown">
+                <button type="button" class="filter-btn" id="indicatorFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="indicatorFilterLabel">Todas as indicações</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="indicatorFilterMenu" role="listbox" aria-label="Filtro de indicado por"></div>
+                <select id="indicatorFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todas as indicações</option>
+                </select>
+              </div>
+
+              <div class="filter-dropdown" id="indicatorSectorFilterDropdown">
+                <button type="button" class="filter-btn" id="indicatorSectorFilterBtn" aria-haspopup="listbox" aria-expanded="false">
+                  <span class="filter-btn-label" id="indicatorSectorFilterLabel">Todos os setores</span>
+                  <span class="filter-btn-arrow">&#9662;</span>
+                </button>
+                <div class="filter-menu hidden" id="indicatorSectorFilterMenu" role="listbox" aria-label="Filtro de setor do indicado"></div>
+                <select id="indicatorSectorFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
+                  <option value="">Todos os setores</option>
+                </select>
+              </div>
+            </div>
+            <div class="desktop-filters-actions">
+              <button type="button" id="desktopClearFiltersBtn" class="btn btn-secondary">Limpar filtros</button>
+            </div>
+          </div>
+        </header>
+
+        <section id="view-funil" class="view">
+          <div class="funil-main">
+            <div id="funnelHubPanel" class="funnel-hub-panel">
+              <div id="funnelCardsGrid" class="funnel-cards-grid"></div>
+              <div id="funnelDiagramPanel" class="funnel-diagram-panel hidden"></div>
+            </div>
+
+            <div id="funnelDetailPanel" class="hidden">
+              <div class="funil-sticky-head" id="funilStickyHead">
+                <div class="pipeline-stage-strip-wrap">
+                  <div class="pipeline-stage-strip" id="pipelineStageStrip"></div>
+                </div>
+              </div>
+              <div class="pipeline-board-wrap">
+                <div class="pipeline-scroll-area" id="pipelineScrollArea">
+                  <section class="pipeline" id="pipeline"></section>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <div class="pipeline-scrollbar-native" id="pipelineScrollTop">
+          <div class="pipeline-scrollbar-track" id="pipelineScrollTopTrack">
+            <div class="pipeline-scrollbar-thumb" id="pipelineScrollTopThumb"></div>
+          </div>
+        </div>
+
+        <section id="view-leads" class="view">
+          <div class="panel">
+            <div class="panel-header"><h3>Lista de Leads</h3></div>
+            <div class="table-wrap">
+              <table class="leads-table">
+                <thead>
+                  <tr>
+                    <th class="select-col">
+                      <input type="checkbox" id="selectAllLeads" class="lead-check" aria-label="Selecionar todos os leads visiveis" />
+                    </th>
+                    <th>Nome</th>
+                    <th>Contato</th>
+                    <th>Responsavel</th>
+                    <th>Valores dos planos</th>
+                    <th>Data Inicio</th>
+                    <th>Origem</th>
+                    <th>Canal de Origem</th>
+                    <th>Plano</th>
+                    <th>Pipeline</th>
+                    <th>Acoes</th>
+                  </tr>
+                </thead>
+                <tbody id="leadsTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-relatorios" class="view active-view">
+          <div class="panel">
+            <div class="panel-header"><h3>Relatorios</h3></div>
+
+            <div class="report-grid report-grid-extended">
+              <div class="report-card"><span>Total de leads</span><strong id="reportTotalLeads">0</strong></div>
+              <div class="report-card"><span>Receita fechada</span><strong id="reportClosedValue">R$ 0,00</strong></div>
+              <div class="report-card"><span>Fechados</span><strong id="reportClosedDeals">0</strong></div>
+              <div class="report-card"><span>Conversao</span><strong id="reportConversionRate">0%</strong></div>
+              <div class="report-card"><span>Ticket medio</span><strong id="reportAvgTicket">R$ 0,00</strong></div>
+              <div class="report-card"><span>Leads indicados</span><strong id="reportReferralCount">0</strong></div>
+              <div class="report-card"><span>Leads em espera</span><strong id="reportWaitingCount">0</strong></div>
+              <div class="report-card"><span>Maior pipeline</span><strong id="reportTopStage">-</strong></div>
+              <div class="report-card"><span>Maior responsavel</span><strong id="reportTopOwner">-</strong></div>
+              <div class="report-card"><span>Maior indicação</span><strong id="reportTopReferral">-</strong></div>
+              <div class="report-card"><span>Mes com mais leads</span><strong id="reportBestMonth">-</strong></div>
+              <div class="report-card"><span>Planos fechados</span><strong id="reportClosedPlans">0</strong></div>
+            </div>
+
+            <div class="charts-grid charts-grid-extended">
+              <div class="chart-card">
+                <h4>Evolucao mensal</h4>
+                <canvas id="monthlyChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Receita por Responsavel</h4>
+                <canvas id="ownerChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Media mensal de fechamentos por vendedor</h4>
+                <canvas id="ownerMonthlyAverageChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Leads por Pipeline</h4>
+                <canvas id="pipelineChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Origem dos Leads</h4>
+                <canvas id="trafficChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Leads por canal de origem</h4>
+                <canvas id="socialChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Indicações por pessoa e setor</h4>
+                <canvas id="referralSectorChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Fechamentos por plano</h4>
+                <canvas id="planCountChart"></canvas>
+              </div>
+              <div class="chart-card">
+                <h4>Receita por plano</h4>
+                <canvas id="planRevenueChart"></canvas>
+              </div>
+              <div class="chart-card chart-card-annual full-width">
+                <h4 id="yearlyChartTitle">Contatos diarios do ano</h4>
+                <canvas id="yearlyDailyChart"></canvas>
+              </div>
+            </div>
+
+            <div class="panel-header report-subheader"><h3>Resumo de planos fechados</h3></div>
+            <div class="table-wrap">
+              <table class="leads-table plan-summary-table">
+                <thead>
+                  <tr>
+                    <th>Plano</th>
+                    <th>Valor unitario</th>
+                    <th>Quantidade</th>
+                    <th>Receita</th>
+                  </tr>
+                </thead>
+                <tbody id="planSummaryBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-equipe" class="view admin-overlay-view">
+          <div class="admin-overlay-frame">
+            <div class="admin-overlay-head">
+              <div>
+                <span class="admin-overlay-kicker">Acessos</span>
+                <h3>Pessoas e Acessos</h3>
+                <p class="section-note">Gerencie solicitações de acesso, alterações administrativas e a equipe ativa no CRM.</p>
+              </div>
+              <button type="button" id="closeTeamViewBtn" class="admin-overlay-close" aria-label="Fechar acessos">&times;</button>
+            </div>
+
+            <div class="admin-overlay-body">
+              <div class="panel request-panel hidden" data-admin-only="true">
+                <div class="panel-header">
+                  <div>
+                    <h3>Solicitacoes de Acesso</h3>
+                    <p class="section-note">Cadastros pendentes de aprovacao administrativa.</p>
+                  </div>
+                </div>
+                <div id="accessRequestsList" class="requests-grid"></div>
+              </div>
+
+              <div class="panel request-panel hidden" data-admin-only="true">
+                <div class="panel-header">
+                  <div>
+                    <h3>Solicitacoes Operacionais</h3>
+                    <p class="section-note">Pedidos de exclusao e autorizacoes gerados por usuarios comuns.</p>
+                  </div>
+                </div>
+                <div id="adminRequestsList" class="requests-grid"></div>
+              </div>
+
+              <div class="panel">
+                <div class="panel-header"><h3>Pessoas e Acessos</h3></div>
+                <p id="teamAccessLegend" class="section-note hidden">Administradores podem ajustar niveis de acesso, acompanhar alteracoes e consultar a equipe ativa no CRM.</p>
+                <div id="teamList" class="team-list"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-estrutura" class="view hidden" data-admin-only="true">
+          <div class="panel">
+            <div class="panel-header">
+              <div>
+                <h3>Estrutura do CRM</h3>
+                <p class="section-note">Gerencie pipelines e a lista de origens de lead usadas no CRM.</p>
+              </div>
+            </div>
+
+            <div class="config-box">
+              <p>Apenas administradores podem alterar estruturas compartilhadas e catalogos dinamicos do CRM.</p>
+              <div class="structure-scope-bar">
+                <div class="form-group">
+                  <label for="structureFunnelSelect">Funil</label>
+                  <select id="structureFunnelSelect"></select>
+                </div>
+                <div class="form-group">
+                  <label for="structureSubfunnelSelect">Subfunil</label>
+                  <select id="structureSubfunnelSelect"></select>
+                </div>
+              </div>
+              <div id="stagesConfigList" class="stages-config-list"></div>
+            </div>
+
+            <div class="config-box">
+              <div class="panel-header panel-header-tight"><h3>Origem do Lead</h3></div>
+              <p>Lista dinamica usada no cadastro, filtros e relatorios.</p>
+              <div class="config-inline-form">
+                <input type="text" id="leadSourceName" placeholder="Nova origem do lead" />
+                <button type="button" id="addLeadSourceBtn" class="btn btn-secondary">Adicionar origem</button>
+              </div>
+              <div id="leadSourcesConfigList" class="saved-stage-types config-source-list"></div>
+            </div>
+
+            <div class="config-box">
+              <div class="panel-header panel-header-tight"><h3>Canal de Origem</h3></div>
+              <p>Lista dinamica usada no cadastro, filtros e relatorios para o canal de origem.</p>
+              <div class="config-inline-form">
+                <input type="text" id="socialSourceName" placeholder="Novo canal de origem" />
+                <button type="button" id="addSocialSourceBtn" class="btn btn-secondary">Adicionar canal</button>
+              </div>
+              <div id="socialSourcesConfigList" class="saved-stage-types config-source-list"></div>
+            </div>
+
+            <div class="config-box">
+              <div class="panel-header panel-header-tight"><h3>Departamentos</h3></div>
+              <p>Defina quais departamentos existem no CRM e quais podem acessar cada funil.</p>
+              <div class="config-inline-form">
+                <input type="text" id="departmentName" placeholder="Novo departamento" />
+                <button type="button" id="addDepartmentBtn" class="btn btn-secondary">Adicionar departamento</button>
+              </div>
+              <div id="departmentsConfigList" class="saved-stage-types config-source-list"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="view-configuracoes" class="view hidden admin-overlay-view" data-admin-only="true">
+          <div class="admin-overlay-frame">
+            <div class="admin-overlay-head">
+              <div>
+                <span class="admin-overlay-kicker">Configuração</span>
+                <h3>Configuracao</h3>
+                <p class="section-note">Consulte o histórico administrativo do CRM.</p>
+              </div>
+              <button type="button" id="closeSettingsViewBtn" class="admin-overlay-close" aria-label="Fechar configuração">&times;</button>
+            </div>
+
+            <div class="admin-overlay-body">
+              <div class="panel">
+                <div class="panel-header">
+                  <div>
+                    <h3>Configuracao</h3>
+                    <p class="section-note">Por enquanto, esta area centraliza somente o historico administrativo.</p>
+                  </div>
+                  <button type="button" id="historyBtn" class="btn btn-history hidden" data-admin-only="true">Historico</button>
+                </div>
+
+                <div class="config-box">
+                  <p>Use o historico para auditar alteracoes em leads, pipelines, exclusoes e aprovacoes administrativas.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+          </div>
+        </div>
+      </main>
       </div>
-      <div class="footer-links">
-        <a href="#produto">Produto</a>
-        <a href="#modulos">Modulos</a>
-        <a href="#governanca">Governanca</a>
+    </section>
+
+    <section id="shellViewIntel" class="shell-view hidden">
+      <div class="intel-placeholder">
+        <div class="intel-placeholder-card">
+          <img src="assets/pax-insights-symbol-white.png" alt="" class="intel-placeholder-symbol" />
+          <span class="intel-placeholder-kicker">Central de Inteligência</span>
+          <h2>Estrutura preparada</h2>
+          <p>Esta área já está reservada no shell do Pax Insights. O conteúdo analítico entra na próxima etapa.</p>
+        </div>
       </div>
-    </footer>
+    </section>
+  </section>
+
+  <div class="crm-modal-overlay hidden" id="accountModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3>Minha conta</h3>
+        <button class="close-btn" id="closeAccountModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="accountForm" class="lead-form">
+        <div class="account-avatar-section">
+          <div id="accountAvatarPreview" class="account-avatar-preview" aria-hidden="true">
+            <span id="accountAvatarInitials">PI</span>
+          </div>
+          <div class="account-avatar-actions">
+            <label for="accountAvatarFile" class="btn btn-secondary account-avatar-upload">Escolher foto</label>
+            <input type="file" id="accountAvatarFile" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+            <button type="button" class="btn btn-ghost hidden" id="removeAccountAvatarBtn">Remover foto</button>
+            <p class="helper-text">A imagem sera ajustada para o perfil.</p>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="accountFullName">Nome completo</label>
+          <input type="text" id="accountFullName" autocomplete="name" />
+        </div>
+
+        <div class="form-group">
+          <label for="accountEmail">E-mail</label>
+          <input type="email" id="accountEmail" readonly />
+        </div>
+
+        <div class="form-group">
+          <label for="accountRole">Nível de acesso</label>
+          <input type="text" id="accountRole" readonly />
+        </div>
+
+        <p id="accountMessage" class="message account-message"></p>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelAccountBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+      </form>
+    </div>
   </div>
 
-  <script src="script.js?v=20260724-01"></script>
+  <div class="crm-modal-overlay hidden" id="funnelModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="funnelModalTitle">Criar funil</h3>
+        <button class="close-btn" id="closeFunnelModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="funnelForm" class="lead-form">
+        <input type="hidden" id="funnelEditId" />
+        <div class="form-group">
+          <label for="funnelName">Nome do funil</label>
+          <input type="text" id="funnelName" required />
+        </div>
+
+        <div class="form-group">
+          <label for="funnelCategory">Categoria</label>
+          <select id="funnelCategory">
+            <option value="B2B">B2B</option>
+            <option value="B2C">B2C</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="funnelOfficialDepartmentGroup">
+          <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com edição</label>
+          <select id="funnelOfficialDepartmentSelect"></select>
+          <p class="helper-text" id="funnelOfficialDepartmentHelper">Quando o funil estiver em "Todos", este departamento pode editar mesmo se os demais só visualizarem.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="funnelVisibilityScope">Quem pode ver esse funil</label>
+          <select id="funnelVisibilityScope">
+            <option value="all">Todos</option>
+            <option value="owner">Só eu</option>
+            <option value="departments">Departamentos específicos</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="funnelGlobalAccessGroup">
+          <label for="funnelGlobalAccessLevel">Quando estiver em "Todos"</label>
+          <select id="funnelGlobalAccessLevel">
+            <option value="view">Todos só visualizam</option>
+            <option value="edit">Todos podem editar</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="funnelDepartmentsGroup">
+          <label>Departamentos com acesso</label>
+          <div id="funnelDepartmentsChecklist" class="department-checklist"></div>
+          <p class="helper-text">Use o olho para liberar só visualização e o lápis para permitir edição dentro do funil.</p>
+        </div>
+
+        <div class="form-group">
+          <label for="funnelSubCount">Quantidade de subfunis</label>
+          <input type="number" id="funnelSubCount" min="1" max="12" value="2" required />
+        </div>
+
+        <div class="form-group">
+          <label>Nome de cada subfunil</label>
+          <div id="funnelSubfields" class="funnel-subfields"></div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelFunnelBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="saveFunnelBtn">Criar funil</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="modalOverlay">
+    <div class="crm-modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Novo Lead</h3>
+        <button class="close-btn" id="closeModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="leadForm" class="lead-form">
+        <input type="hidden" id="leadId" />
+        <input type="hidden" id="value" />
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="name">Nome</label>
+            <input type="text" id="name" required />
+          </div>
+
+          <div class="form-group">
+            <label for="contact">Contato</label>
+            <input type="text" id="contact" required />
+          </div>
+
+          <div class="form-group" id="ownerGroup">
+            <label for="owner">Responsavel</label>
+            <select id="owner" required></select>
+            <div id="ownerCreateBox" class="lead-inline-form hidden">
+              <input type="text" id="ownerCreateInput" placeholder="Novo responsável" />
+              <button type="button" id="ownerCreateBtn" class="btn btn-secondary">Criar e selecionar</button>
+            </div>
+            <p class="helper-text">Selecione um responsável existente ou crie um novo.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="startDate">Data de inicio</label>
+            <input type="date" id="startDate" required />
+          </div>
+
+          <div class="form-group" id="leadFunnelGroup">
+            <label for="leadFunnelSelect">Funil</label>
+            <select id="leadFunnelSelect"></select>
+          </div>
+
+          <div class="form-group" id="leadSubfunnelGroup">
+            <label for="leadSubfunnelSelect">Subfunil</label>
+            <select id="leadSubfunnelSelect"></select>
+          </div>
+
+          <div class="form-group">
+            <label for="stage">Pipeline</label>
+            <select id="stage" required></select>
+          </div>
+
+          <div class="form-group hidden" id="contractNumberGroup">
+            <label for="contractNumber">Numero do contrato</label>
+            <input type="text" id="contractNumber" placeholder="Informe o numero do contrato" />
+          </div>
+
+          <div class="form-group">
+            <label for="trafficType">Origem do lead</label>
+            <select id="trafficType" required></select>
+          </div>
+
+          <div class="form-group form-group-full hidden" id="referralNameGroup">
+            <label for="referralName">Nome de quem indicou</label>
+            <input type="text" id="referralName" placeholder="Digite o nome de quem indicou" />
+          </div>
+
+          <div class="form-group form-group-full hidden" id="referralSectorGroup">
+            <label for="referralSector">Setor do indicado</label>
+            <input type="text" id="referralSector" placeholder="Digite o setor do indicado" />
+          </div>
+
+          <div class="form-group form-group-full" id="socialSourceGroup">
+            <label for="socialSource">Canal de origem</label>
+            <select id="socialSource"></select>
+            <div id="socialSourceCreateBox" class="lead-inline-form hidden">
+              <input type="text" id="socialSourceCreateInput" placeholder="Novo canal de origem" />
+              <button type="button" id="socialSourceCreateBtn" class="btn btn-secondary">Criar e selecionar</button>
+            </div>
+            <p class="helper-text">Selecione um canal existente ou crie um novo.</p>
+          </div>
+
+          <div class="form-group form-group-full hidden" id="planGroup">
+            <label>Planos</label>
+            <div class="plan-toolbar">
+              <button type="button" class="btn btn-secondary" id="addPlanBtn">Adicionar plano</button>
+            </div>
+            <div id="plansList" class="plans-list"></div>
+            <datalist id="planSuggestions"></datalist>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Observacoes</label>
+          <div class="observation-toolbar">
+            <button type="button" class="btn btn-secondary" id="addObservationBtn">Adicionar observacao</button>
+          </div>
+          <div id="observationsList" class="observations-list"></div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Salvar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="stageModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="stageModalTitle">Adicionar pipeline</h3>
+        <button class="close-btn" id="closeStageModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="stageForm" class="lead-form">
+        <input type="hidden" id="stageId" />
+        <div class="form-group">
+          <label for="stageName">Nome da etapa</label>
+          <input type="text" id="stageName" required />
+        </div>
+
+        <div class="form-group">
+          <label for="stageFunnelSelect">Funil</label>
+          <select id="stageFunnelSelect" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="stageSubfunnelSelect">Subfunil</label>
+          <select id="stageSubfunnelSelect" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="stageColor">Cor</label>
+          <div class="color-field">
+            <input type="color" id="stageColor" value="#1f9d55" />
+            <span id="stageColorPreview" class="color-preview-label">#1F9D55</span>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="stageType">Tipo</label>
+          <select id="stageType">
+            <option value="andamento">Andamento</option>
+            <option value="fechado">Fechado</option>
+            <option value="cancelado">Cancelado</option>
+            <option value="espera">Espera</option>
+          </select>
+        </div>
+
+        <div class="form-group hidden" id="customStageTypeGroup">
+          <label for="customStageType">Personalizado</label>
+          <input type="text" id="customStageType" placeholder="Ex.: pos-venda, retorno, renovacao" />
+          <div class="custom-type-actions">
+            <button type="button" class="btn btn-secondary hidden" id="removeCustomTypeBtn">Remover este tipo</button>
+          </div>
+          <small class="helper-text">Voce pode criar, editar ou remover um tipo personalizado para este pipeline.</small>
+        </div>
+
+        <div class="form-group" id="savedStageTypesGroup">
+          <label>Tipos disponiveis</label>
+          <div id="savedStageTypes" class="saved-stage-types"></div>
+          <div class="saved-stage-type-actions hidden" id="savedStageTypeActions">
+            <button type="button" class="btn btn-secondary" id="removeSelectedStageTypeBtn">Remover tipo selecionado</button>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelStageBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="saveStageBtn">Adicionar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="historyModalOverlay">
+    <div class="crm-modal crm-history-modal">
+      <div class="modal-header">
+        <h3>Historico de Alteracoes</h3>
+        <button class="close-btn" id="closeHistoryModalBtn" type="button">&times;</button>
+      </div>
+
+      <div class="history-wrap">
+        <div class="history-toolbar">
+          <button type="button" class="btn btn-secondary" id="refreshHistoryBtn">Atualizar</button>
+        </div>
+        <pre id="historyText" class="history-text">Carregando historico...</pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="permissionModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="permissionModalTitle">Solicitar autorizacao</h3>
+        <button class="close-btn" id="closePermissionModalBtn" type="button">&times;</button>
+      </div>
+
+      <div class="history-wrap">
+        <p id="permissionModalText" class="section-note">Esta acao exige aprovacao de um administrador.</p>
+        <div class="form-group">
+          <label for="permissionRequestReason">Motivo da solicitacao</label>
+          <textarea id="permissionRequestReason" rows="4" placeholder="Explique por que essa acao precisa ser executada."></textarea>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelPermissionRequestBtn">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="submitPermissionRequestBtn">Enviar para Solicitacoes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="funnelGroupModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="funnelGroupModalTitle">Criar grupo</h3>
+        <button class="close-btn" id="closeFunnelGroupModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="funnelGroupForm" class="lead-form">
+        <input type="hidden" id="funnelGroupId" />
+
+        <div class="form-group">
+          <label for="funnelGroupName">Nome do grupo</label>
+          <input type="text" id="funnelGroupName" required />
+        </div>
+
+        <div class="form-group">
+          <label for="funnelGroupCategory">Categoria</label>
+          <select id="funnelGroupCategory">
+            <option value="B2B">B2B</option>
+            <option value="B2C">B2C</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="funnelGroupOwnerDepartment">Departamento dono do grupo</label>
+          <select id="funnelGroupOwnerDepartment"></select>
+          <p class="helper-text">O departamento de quem criou já entra aqui por padrão. A diretoria também pode começar com visualização, e o administrador pode ajustar depois.</p>
+        </div>
+
+        <div class="form-group">
+          <label>Departamentos com acesso ao grupo</label>
+          <div id="funnelGroupDepartmentsChecklist" class="department-checklist"></div>
+          <p class="helper-text">Esse acesso vale só para o grupo. Os funis dentro dele continuam particulares.</p>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelFunnelGroupBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="saveFunnelGroupBtn">Salvar grupo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="funnelContextMenu" class="funnel-context-menu hidden" role="menu" aria-hidden="true"></div>
+
+  <script src="script.js?v=20260724-15"></script>
 </body>
 </html>
