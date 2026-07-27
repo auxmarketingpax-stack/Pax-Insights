@@ -4449,6 +4449,36 @@
     return state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === subfunnelId);
   }
 
+  function getVisibleStagesForSubfunnel(subfunnelId) {
+    const scopedStages = getStagesForSubfunnel(subfunnelId);
+    const leadCountByStageId = new Map();
+    state.leads.forEach((lead) => {
+      leadCountByStageId.set(lead.stage_id, (leadCountByStageId.get(lead.stage_id) || 0) + 1);
+    });
+
+    const visibleStages = [];
+    const seenStageNames = new Map();
+    scopedStages.forEach((stage) => {
+      const stageKey = normalizeComparisonText(stage.name || "");
+      const leadCount = leadCountByStageId.get(stage.id) || 0;
+      const previousStage = seenStageNames.get(stageKey);
+
+      if (!previousStage) {
+        seenStageNames.set(stageKey, { id: stage.id, leadCount });
+        visibleStages.push(stage);
+        return;
+      }
+
+      if (leadCount > 0 && previousStage.leadCount === 0) {
+        const replaceIndex = visibleStages.findIndex((item) => item.id === previousStage.id);
+        if (replaceIndex >= 0) visibleStages.splice(replaceIndex, 1, stage);
+        seenStageNames.set(stageKey, { id: stage.id, leadCount });
+      }
+    });
+
+    return visibleStages;
+  }
+
   function getFirstStageForSubfunnel(subfunnelId) {
     return getStagesForSubfunnel(subfunnelId)[0] || null;
   }
@@ -4459,7 +4489,7 @@
   }
 
   function getPipelineCountForSubfunnel(subfunnelId) {
-    return getStagesForSubfunnel(subfunnelId).length;
+    return getVisibleStagesForSubfunnel(subfunnelId).length;
   }
 
   function getLeadCountForSubfunnel(subfunnelId) {
@@ -4575,33 +4605,7 @@
       });
     }
     if (!canViewFunnelItem(getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id))) return [];
-    const scopedStages = state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === state.activeSubfunnelId);
-    const leadCountByStageId = new Map();
-    state.leads.forEach((lead) => {
-      leadCountByStageId.set(lead.stage_id, (leadCountByStageId.get(lead.stage_id) || 0) + 1);
-    });
-
-    const visibleStages = [];
-    const seenStageNames = new Map();
-    scopedStages.forEach((stage) => {
-      const stageKey = normalizeComparisonText(stage.name || "");
-      const leadCount = leadCountByStageId.get(stage.id) || 0;
-      const previousStage = seenStageNames.get(stageKey);
-
-      if (!previousStage) {
-        seenStageNames.set(stageKey, { id: stage.id, leadCount });
-        visibleStages.push(stage);
-        return;
-      }
-
-      if (leadCount > 0 && previousStage.leadCount === 0) {
-        const replaceIndex = visibleStages.findIndex((item) => item.id === previousStage.id);
-        if (replaceIndex >= 0) visibleStages.splice(replaceIndex, 1, stage);
-        seenStageNames.set(stageKey, { id: stage.id, leadCount });
-      }
-    });
-
-    return visibleStages;
+    return getVisibleStagesForSubfunnel(state.activeSubfunnelId);
   }
 
   function getScopedLeads() {
