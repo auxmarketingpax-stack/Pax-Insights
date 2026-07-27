@@ -2660,7 +2660,7 @@
 
     container.classList.toggle("has-image", Boolean(avatarUrl));
     if (avatarUrl) {
-      container.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="Foto do perfil" class="avatar-image" />`;
+      container.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="Foto do perfil" class="avatar-image" style="width:100%;height:100%;display:block;object-fit:cover;border:0;outline:none;border-radius:50%;clip-path:circle(50% at 50% 50%);box-shadow:none;background:transparent;" />`;
       return;
     }
 

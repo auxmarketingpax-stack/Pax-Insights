@@ -513,7 +513,7 @@ input:focus,select:focus,textarea:focus{
 .topbar-title-row{
   display:flex;
   align-items:center;
-  gap:6px;
+  gap:4px;
 }
 
 .topbar-funnel-group-note{
@@ -2869,6 +2869,8 @@ input,select,textarea{
 
 .profile-menu-btn{
   appearance:none;
+  -webkit-appearance:none;
+  -moz-appearance:none;
   border:none;
   background:transparent;
   cursor:pointer;
@@ -2885,20 +2887,35 @@ input,select,textarea{
   overflow:hidden;
   box-shadow:none;
   outline:none;
+  filter:none;
+  isolation:isolate;
 }
 
+.profile-menu-btn:hover,
+.profile-menu-btn:active,
 .profile-menu-btn:focus{
   outline:none;
+  border:none;
+  background:transparent;
+  box-shadow:none;
 }
 
 .profile-menu-btn:focus-visible{
   outline:none;
+  border:none;
+  background:transparent;
   box-shadow:none;
 }
 
 .profile-menu-btn::-moz-focus-inner{
   border:0;
   padding:0;
+}
+
+.profile-menu-btn::before,
+.profile-menu-btn::after{
+  content:none !important;
+  display:none !important;
 }
 
 .profile-menu-avatar{
@@ -2913,12 +2930,18 @@ input,select,textarea{
   font-weight:800;
   letter-spacing:.04em;
   box-shadow:0 14px 28px rgba(19,33,28,.14);
+  border:0;
+  outline:none;
+  position:relative;
+  isolation:isolate;
 }
 
 .profile-menu-avatar.has-image{
   background:transparent;
   color:transparent;
   box-shadow:none;
+  border:0;
+  outline:none;
 }
 
 .avatar-image{
@@ -2929,6 +2952,9 @@ input,select,textarea{
   border:0;
   border-radius:50%;
   clip-path:circle(50% at 50% 50%);
+  outline:none;
+  box-shadow:none;
+  background:transparent;
 }
 
 .account-avatar-section{
@@ -4487,14 +4513,20 @@ input,select,textarea{
   color:#5d6c65;
   cursor:pointer;
   padding:0;
+  width:16px;
+  height:16px;
+  min-width:16px;
+  min-height:16px;
+  display:inline-grid;
+  place-items:center;
   font-size:18px;
   line-height:1;
   transition:color .2s ease, transform .2s ease;
 }
 
 .funnel-inline-action svg{
-  width:18px;
-  height:18px;
+  width:16px;
+  height:16px;
   display:block;
 }
 
