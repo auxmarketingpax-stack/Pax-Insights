@@ -2971,6 +2971,10 @@ input,select,textarea{
   padding:20px;
 }
 
+#notificationModalOverlay .form-actions{
+  justify-content:center;
+}
+
 .card-highlighted{
   border-color:rgba(111,173,43,.52) !important;
   box-shadow:0 0 0 3px rgba(111,173,43,.18), 0 20px 36px rgba(19,33,28,.12) !important;

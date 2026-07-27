@@ -10670,6 +10670,7 @@
     els.leadNotificationEditor?.classList.remove("hidden");
     els.stageNotificationEditor?.classList.add("hidden");
     if (els.leadNotificationEnabled) els.leadNotificationEnabled.checked = Boolean(reminder);
+    if (els.leadNotificationDate) els.leadNotificationDate.min = getLocalIsoDate();
     if (els.leadNotificationDate) els.leadNotificationDate.value = reminder?.type === "date" ? (reminder.due_date || "") : "";
     if (els.leadNotificationMessage) els.leadNotificationMessage.value = reminder?.message || "";
     toggleNotificationDeleteButton(Boolean(reminder));
@@ -11796,6 +11797,10 @@
 
       if (enabled && !nextReminder) {
         alert("Informe a data da notificação.");
+        return;
+      }
+      if (enabled && nextReminder?.due_date && nextReminder.due_date < getLocalIsoDate()) {
+        alert("A data da notificação do lead não pode ser anterior a 27/07/2026.");
         return;
       }
 
