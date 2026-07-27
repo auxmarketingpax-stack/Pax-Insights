@@ -92,8 +92,6 @@
     profileMenuName: $("profileMenuName"),
     profileMenuRole: $("profileMenuRole"),
     openAccountBtn: $("openAccountBtn"),
-    profileTeamBtn: $("profileTeamBtn"),
-    profileSettingsBtn: $("profileSettingsBtn"),
     headerLogoutBtn: $("headerLogoutBtn"),
     logoutBtn: $("logoutBtn"),
     userWelcome: $("userWelcome"),
@@ -141,6 +139,11 @@
     { suffix: "apresentacao", name: "Apresentacao/Negociacao", type: "andamento", color: "#5b9e4b" },
     { suffix: "espera", name: "Nao responde", type: "espera", color: "#a98432" },
     { suffix: "fechado", name: "Fechado", type: "fechado", color: "#3e7d93" },
+  ];
+
+  const groups = [
+    { id: "group-b2b-vendas", category: "B2B", name: "Vendas", summary: "Vendas", collapsed: false },
+    { id: "group-b2c-vendas", category: "B2C", name: "Vendas", summary: "Vendas", collapsed: false },
   ];
 
   const funnels = [
@@ -201,11 +204,6 @@
     },
   ];
 
-  const groups = [
-    { id: "group-b2b-vendas", category: "B2B", name: "Vendas", summary: "Vendas", collapsed: false },
-    { id: "group-b2c-vendas", category: "B2C", name: "Vendas", summary: "Vendas", collapsed: false },
-  ];
-
   const stages = funnels.flatMap((funnel) => funnel.subfunnels.flatMap((subfunnel) => (
     stageTemplates.map((template) => ({
       id: `${subfunnel.id}-${template.suffix}`,
@@ -245,6 +243,7 @@
     { name: "Elvislania Alves da Silva", email: "elvislania@paxinsights.com", role: "Gestao", department: "Vendas", status: "Aprovado" },
     { name: "Leidimar Correa Martins", email: "leidimar@paxinsights.com", role: "Usuario", department: "Relacionamento", status: "Aprovado" },
     { name: "Willyan Kayke Borges dos Santos", email: "willyan@paxinsights.com", role: "Usuario", department: "Comercial", status: "Aprovado" },
+    { name: "Maria Clara Nicacio Martins", email: "maria.clara@paxinsights.com", role: "Usuario", department: "Comercial", status: "Aprovado" },
   ];
 
   const state = {
@@ -273,6 +272,14 @@
       .replaceAll("'", "&#39;");
   }
 
+  function normalizeText(value) {
+    return String(value || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  }
+
   function brMoney(value) {
     return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(value || 0));
   }
@@ -286,7 +293,7 @@
 
   function formatMonthLabel(value) {
     if (!value) return "-";
-    const [year, month] = value.split("-");
+    const [year, month] = String(value).split("-");
     const months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
     return `${months[Math.max(0, Number(month) - 1)] || month}/${year}`;
   }
@@ -315,8 +322,8 @@
 
   function getSubfunnelById(id) {
     for (const funnel of funnels) {
-      const subfunnel = funnel.subfunnels.find((item) => item.id === id);
-      if (subfunnel) return { ...subfunnel, funnel_id: funnel.id, category: funnel.category };
+      const found = funnel.subfunnels.find((item) => item.id === id);
+      if (found) return { ...found, funnel_id: funnel.id, category: funnel.category };
     }
     return null;
   }
@@ -355,7 +362,9 @@
   }
 
   function getLeadLatestObservation(lead) {
-    return Array.isArray(lead.observations) && lead.observations.length ? lead.observations[lead.observations.length - 1] : null;
+    return Array.isArray(lead.observations) && lead.observations.length
+      ? lead.observations[lead.observations.length - 1]
+      : null;
   }
 
   function getScopedLeads() {
@@ -365,8 +374,8 @@
 
   function getFilteredLeads(options = {}) {
     const respectSubfunnelScope = options.scope === "subfunnel";
-    const normalizedSearch = normalizeText(state.search);
-    let items = respectSubfunnelScope && state.activeSubfunnelId ? getScopedLeads() : [...leads];
+    const search = normalizeText(state.search);
+    let items = respectSubfunnelScope ? getScopedLeads() : [...leads];
 
     items = items.filter((lead) => {
       const funnel = getFunnelById(lead.funnel_id);
@@ -387,7 +396,7 @@
       if (state.filters.indicator && lead.referral_name !== state.filters.indicator) return false;
       if (state.filters.indicatorSector && lead.referral_sector !== state.filters.indicatorSector) return false;
 
-      if (!normalizedSearch) return true;
+      if (!search) return true;
       const haystack = normalizeText([
         lead.name,
         lead.contact,
@@ -401,18 +410,10 @@
         subfunnel?.name,
         stage?.name,
       ].join(" "));
-      return haystack.includes(normalizedSearch);
+      return haystack.includes(search);
     });
 
     return items;
-  }
-
-  function normalizeText(value) {
-    return String(value || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .trim();
   }
 
   function getDashboardMetrics() {
@@ -424,23 +425,27 @@
     const avgTicket = closedLeads.length ? totalValue / closedLeads.length : 0;
     const waitingCount = filtered.filter((lead) => getStageById(lead.stage_id)?.stage_type === "espera").length;
     const referralCount = filtered.filter((lead) => lead.referral_name).length;
-    const byStage = stages.reduce((acc, stage) => {
-      if (acc.some((item) => item.name === stage.name)) return acc;
-      acc.push({
+    const byStage = [];
+    const stageNames = new Set();
+
+    for (const stage of stages) {
+      if (stageNames.has(stage.name)) continue;
+      stageNames.add(stage.name);
+      byStage.push({
         name: stage.name,
         color: stage.color,
         count: filtered.filter((lead) => getStageById(lead.stage_id)?.name === stage.name).length,
       });
-      return acc;
-    }, []);
-    const topStage = [...byStage].sort((a, b) => b.count - a.count)[0];
+    }
+
     const ownerTotals = {};
     const referralTotals = {};
     const monthTotals = {};
     const planTotals = {};
 
-    for (const lead of filtered) {
-      ownerTotals[lead.owner || "Sem responsavel"] = (ownerTotals[lead.owner || "Sem responsavel"] || 0) + (getStageById(lead.stage_id)?.stage_type === "fechado" ? 1 : 0);
+    filtered.forEach((lead) => {
+      const ownerKey = lead.owner || "Sem responsavel";
+      ownerTotals[ownerKey] = (ownerTotals[ownerKey] || 0) + (getStageById(lead.stage_id)?.stage_type === "fechado" ? 1 : 0);
       if (lead.referral_name) {
         referralTotals[lead.referral_name] = (referralTotals[lead.referral_name] || 0) + 1;
       }
@@ -454,7 +459,7 @@
         planTotals[key].count += 1;
         planTotals[key].totalValue += Number(lead.value || 0);
       }
-    }
+    });
 
     return {
       total,
@@ -467,73 +472,38 @@
       referralCount,
       waitingCount,
       byStage,
-      topStage,
+      topStage: [...byStage].sort((a, b) => b.count - a.count)[0],
       topOwner: Object.entries(ownerTotals).sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0], "pt-BR"))[0],
       topReferral: Object.entries(referralTotals).sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0], "pt-BR"))[0],
       bestMonth: Object.entries(monthTotals).sort((a, b) => b[1] - a[1])[0],
-      planSummary: Object.values(planTotals).sort((a, b) => b.totalValue - a.totalValue),
+      planSummary: Object.values(planTotals).sort((a, b) => (b.totalValue - a.totalValue) || a.plan.localeCompare(b.plan, "pt-BR")),
     };
   }
 
   function getFilterOptions(key) {
-    const unique = new Set();
-    const push = (value) => {
-      if (value) unique.add(String(value));
-    };
-
-    for (const lead of leads) {
+    const values = new Set();
+    leads.forEach((lead) => {
       const funnel = getFunnelById(lead.funnel_id);
       const group = getGroupById(funnel?.groupId);
       const subfunnel = getSubfunnelById(lead.subfunnel_id);
       const stage = getStageById(lead.stage_id);
-      if (key === "category") push(funnel?.category);
-      if (key === "group") push(group?.name);
-      if (key === "funnel") push(funnel?.name);
-      if (key === "subfunnel") push(subfunnel?.name);
-      if (key === "owner") push(lead.owner);
-      if (key === "month") push(String(lead.start_date || "").slice(0, 7));
-      if (key === "stage") push(stage?.name);
-      if (key === "leadSource") push(lead.traffic_type);
-      if (key === "socialSource") push(lead.social_source);
-      if (key === "indicator") push(lead.referral_name);
-      if (key === "indicatorSector") push(lead.referral_sector);
-    }
-
-    return [...unique].sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
+      if (key === "category") values.add(funnel?.category || "");
+      if (key === "group") values.add(group?.name || "");
+      if (key === "funnel") values.add(funnel?.name || "");
+      if (key === "subfunnel") values.add(subfunnel?.name || "");
+      if (key === "owner") values.add(lead.owner || "");
+      if (key === "month") values.add(String(lead.start_date || "").slice(0, 7));
+      if (key === "stage") values.add(stage?.name || "");
+      if (key === "leadSource") values.add(lead.traffic_type || "");
+      if (key === "socialSource") values.add(lead.social_source || "");
+      if (key === "indicator") values.add(lead.referral_name || "");
+      if (key === "indicatorSector") values.add(lead.referral_sector || "");
+    });
+    return [...values].filter(Boolean).sort((a, b) => String(a).localeCompare(String(b), "pt-BR"));
   }
 
   function getFilterDisplayValue(key, value) {
-    if (key === "month") return formatMonthLabel(value);
-    return value;
-  }
-
-  function setDesktopFiltersOpen(open) {
-    state.desktopFiltersOpen = Boolean(open);
-    els.desktopFiltersPanel?.classList.toggle("hidden", !state.desktopFiltersOpen);
-    els.desktopFiltersBtn?.setAttribute("aria-expanded", String(state.desktopFiltersOpen));
-  }
-
-  function setMobileFiltersOpen(open) {
-    state.mobileFiltersOpen = Boolean(open);
-    els.mobileFiltersPanel?.classList.toggle("hidden", !state.mobileFiltersOpen);
-  }
-
-  function setFilterMenuOpen(key) {
-    state.openFilterKey = state.openFilterKey === key ? null : key;
-    filterConfigs.forEach((config) => {
-      const dropdown = $(config.dropdownId);
-      const menu = $(config.menuId);
-      const isOpen = state.openFilterKey === config.key;
-      dropdown?.classList.toggle("open", isOpen);
-      menu?.classList.toggle("hidden", !isOpen);
-      $(config.btnId)?.setAttribute("aria-expanded", String(isOpen));
-    });
-  }
-
-  function clearFilters() {
-    state.filters = Object.fromEntries(filterConfigs.map((item) => [item.key, ""]));
-    renderFilters();
-    renderAll();
+    return key === "month" ? formatMonthLabel(value) : value;
   }
 
   function countActiveFilters() {
@@ -542,37 +512,36 @@
 
   function renderFilterSummary() {
     if (!els.desktopFiltersSummary) return;
-    const entries = filterConfigs.filter((item) => state.filters[item.key]).map((item) => (
-      `<span class="filter-chip">${escapeHtml(getFilterDisplayValue(item.key, state.filters[item.key]))}</span>`
-    ));
-    els.desktopFiltersSummary.innerHTML = entries.length
-      ? entries.join("")
+    const chips = filterConfigs
+      .filter((config) => state.filters[config.key])
+      .map((config) => `<span class="filter-chip">${escapeHtml(getFilterDisplayValue(config.key, state.filters[config.key]))}</span>`);
+    els.desktopFiltersSummary.innerHTML = chips.length
+      ? chips.join("")
       : '<span class="filter-summary-empty">Nenhum filtro aplicado</span>';
   }
 
   function renderFilters() {
     filterConfigs.forEach((config) => {
       const options = getFilterOptions(config.key);
+      const currentValue = state.filters[config.key];
+      const currentLabel = currentValue ? getFilterDisplayValue(config.key, currentValue) : config.defaultLabel;
       const label = $(config.labelId);
       const menu = $(config.menuId);
       const select = $(config.selectId);
       const mobileSelect = $(config.mobileId);
       const btn = $(config.btnId);
       const dropdown = $(config.dropdownId);
-      const currentValue = state.filters[config.key];
-      const currentLabel = currentValue ? getFilterDisplayValue(config.key, currentValue) : config.defaultLabel;
 
       if (label) label.textContent = currentLabel;
-      if (select) {
-        select.innerHTML = [`<option value="">${escapeHtml(config.defaultLabel)}</option>`]
-          .concat(options.map((option) => `<option value="${escapeHtml(option)}" ${currentValue === option ? "selected" : ""}>${escapeHtml(getFilterDisplayValue(config.key, option))}</option>`))
-          .join("");
-      }
-      if (mobileSelect) {
-        mobileSelect.innerHTML = [`<option value="">${escapeHtml(config.defaultLabel)}</option>`]
-          .concat(options.map((option) => `<option value="${escapeHtml(option)}" ${currentValue === option ? "selected" : ""}>${escapeHtml(getFilterDisplayValue(config.key, option))}</option>`))
-          .join("");
-      }
+
+      const optionsMarkup = [
+        `<option value="">${escapeHtml(config.defaultLabel)}</option>`,
+        ...options.map((option) => `<option value="${escapeHtml(option)}" ${currentValue === option ? "selected" : ""}>${escapeHtml(getFilterDisplayValue(config.key, option))}</option>`),
+      ].join("");
+
+      if (select) select.innerHTML = optionsMarkup;
+      if (mobileSelect) mobileSelect.innerHTML = optionsMarkup;
+
       if (menu) {
         menu.innerHTML = [
           `<button type="button" class="filter-option ${!currentValue ? "active" : ""}" data-filter-key="${config.key}" data-filter-value="">${escapeHtml(config.defaultLabel)}</button>`,
@@ -599,28 +568,80 @@
     renderFilterSummary();
   }
 
+  function closeFunnelContextMenu() {
+    if (!els.funnelContextMenu) return;
+    state.funnelContextMenuState = null;
+    els.funnelContextMenu.classList.add("hidden");
+    els.funnelContextMenu.setAttribute("aria-hidden", "true");
+    els.funnelContextMenu.innerHTML = "";
+    els.funnelContextMenu.style.left = "";
+    els.funnelContextMenu.style.top = "";
+  }
+
+  function openFunnelContextMenu({ x = 0, y = 0, actions = [] } = {}) {
+    if (!els.funnelContextMenu) return;
+    if (!actions.length) {
+      closeFunnelContextMenu();
+      return;
+    }
+
+    els.funnelContextMenu.innerHTML = actions.map((action) => `
+      <button type="button" class="funnel-context-menu-item${action.danger ? " danger" : ""}" data-funnel-context-action="${escapeHtml(action.id)}">
+        ${escapeHtml(action.label)}
+      </button>
+    `).join("");
+
+    state.funnelContextMenuState = { actions };
+    els.funnelContextMenu.classList.remove("hidden");
+    els.funnelContextMenu.setAttribute("aria-hidden", "false");
+
+    const rect = els.funnelContextMenu.getBoundingClientRect();
+    const maxLeft = Math.max(12, window.innerWidth - rect.width - 12);
+    const maxTop = Math.max(12, window.innerHeight - rect.height - 12);
+    els.funnelContextMenu.style.left = `${Math.min(x, maxLeft)}px`;
+    els.funnelContextMenu.style.top = `${Math.min(y, maxTop)}px`;
+  }
+
+  function showDemoNotice(message) {
+    window.alert(message || "Visual demonstrativo: a acao operacional continua somente no repositorio privado.");
+  }
+
+  function toggleFunnelGroup(groupId) {
+    const group = getGroupById(groupId);
+    if (!group) return;
+    group.collapsed = !group.collapsed;
+    renderFunnelNav();
+  }
+
   function renderFunnelNav() {
     const renderFunnelButton = (funnel) => `
-      <div class="crm-funnel-item ${state.activeFunnelId === funnel.id ? "active" : ""}" data-funnel-open="${funnel.id}" role="button" tabindex="0">
+      <div
+        class="crm-funnel-item ${state.activeFunnelId === funnel.id ? "active" : ""}"
+        data-funnel-open="${funnel.id}"
+        data-funnel-nav-item="${funnel.id}"
+        role="button"
+        tabindex="0"
+      >
         <span class="crm-funnel-item-label">${escapeHtml(funnel.name)}</span>
       </div>
     `;
 
     const renderGroup = (group) => {
-      const groupFunnels = funnels.filter((item) => item.groupId === group.id);
+      const groupFunnels = getFunnelsForGroup(group.id);
+      const collapsed = Boolean(group.collapsed);
       return `
-        <section class="crm-funnel-group" data-funnel-group="${group.id}">
-          <div class="crm-funnel-group-head" data-funnel-group-head="${group.id}">
-            <button type="button" class="crm-funnel-group-toggle" data-funnel-group-toggle="${group.id}" aria-label="Expandir grupo">
-              <span aria-hidden="true">▾</span>
+        <section class="crm-funnel-group ${collapsed ? "is-collapsed" : ""}" data-funnel-group="${group.id}" data-funnel-group-drop="${group.id}">
+          <div class="crm-funnel-group-head" data-funnel-group-head="${group.id}" data-funnel-group-drop="${group.id}">
+            <button type="button" class="crm-funnel-group-toggle" data-funnel-group-toggle="${group.id}" aria-label="${collapsed ? "Expandir" : "Recolher"} grupo">
+              <span aria-hidden="true">${collapsed ? "&#9656;" : "&#9662;"}</span>
             </button>
             <div class="crm-funnel-group-copy">
               <strong>${escapeHtml(group.name)}</strong>
               <span>${escapeHtml(group.summary)}</span>
             </div>
           </div>
-          <div class="crm-funnel-group-body">
-            ${groupFunnels.map(renderFunnelButton).join("")}
+          <div class="crm-funnel-group-body" data-funnel-group-drop="${group.id}">
+            ${groupFunnels.length ? groupFunnels.map(renderFunnelButton).join("") : '<div class="crm-funnel-empty crm-funnel-empty-group">Grupo sem funis visiveis.</div>'}
           </div>
         </section>
       `;
@@ -628,11 +649,11 @@
 
     const renderSectionList = (category, container) => {
       if (!container) return;
-      const categoryGroups = groups.filter((item) => item.category === category);
-      const ungroupedFunnels = funnels.filter((item) => item.category === category && !item.groupId);
+      const categoryGroups = groups.filter((group) => group.category === category);
+      const ungroupedFunnels = funnels.filter((funnel) => funnel.category === category && !funnel.groupId);
       container.innerHTML = `
         ${categoryGroups.map(renderGroup).join("")}
-        <div class="crm-funnel-ungrouped">
+        <div class="crm-funnel-ungrouped" data-funnel-group-drop="">
           <div class="crm-funnel-ungrouped-label">Sem grupo</div>
           ${ungroupedFunnels.map(renderFunnelButton).join("")}
         </div>
@@ -695,9 +716,8 @@
       return;
     }
 
-    els.funnelCardsGrid.innerHTML = funnel.subfunnels.map((subfunnel, index) => {
-      const subStages = getStagesForSubfunnel(subfunnel.id);
-      const stageCount = subStages.length;
+    const cards = funnel.subfunnels.map((subfunnel, index) => {
+      const stageCount = getStagesForSubfunnel(subfunnel.id).length;
       const leadCount = leads.filter((lead) => lead.subfunnel_id === subfunnel.id).length;
       return `
         <article class="funnel-card" data-subfunnel-open="${subfunnel.id}" data-parent-funnel-id="${funnel.id}">
@@ -726,13 +746,16 @@
           </div>
         </article>
       `;
-    }).join("") + `
+    });
+
+    cards.push(`
       <button type="button" class="funnel-card funnel-card-create" data-demo-action="create-subfunnel">
         <span class="funnel-card-plus">+</span>
         <span class="funnel-card-create-label">Novo subfunil</span>
       </button>
-    `;
+    `);
 
+    els.funnelCardsGrid.innerHTML = cards.join("");
     renderFunnelDiagram(funnel);
   }
 
@@ -765,7 +788,7 @@
       const stageLeads = filtered.filter((lead) => lead.stage_id === stage.id);
       const cards = stageLeads.length
         ? stageLeads.map((lead) => {
-          const latestObservation = getLeadLatestObservation(lead);
+          const note = getLeadLatestObservation(lead);
           return `
             <article class="card" data-lead-id="${lead.id}">
               <div class="card-top">
@@ -785,7 +808,7 @@
                 <span><strong>Canal de origem:</strong> ${escapeHtml(lead.social_source || "-")}</span>
                 ${lead.contract ? `<span><strong>Contrato:</strong> ${escapeHtml(lead.contract)}</span>` : ""}
               </div>
-              ${latestObservation ? `<div class="card-notes"><strong>Ultima observacao:</strong> ${escapeHtml(latestObservation.text)}<small>${formatDate(latestObservation.date)}</small></div>` : ""}
+              ${note ? `<div class="card-notes"><strong>Ultima observacao:</strong> ${escapeHtml(note.text)}<small>${formatDate(note.date)}</small></div>` : ""}
               <div class="card-actions">
                 <button type="button" class="edit-btn" data-demo-action="edit-lead">Editar</button>
                 <button type="button" class="delete-btn" data-demo-action="delete-lead">Excluir</button>
@@ -903,15 +926,18 @@
   function renderStructure() {
     if (els.structureFunnelSelect) {
       els.structureFunnelSelect.innerHTML = funnels.map((funnel) => `<option value="${escapeHtml(funnel.id)}">${escapeHtml(`${funnel.category} - ${funnel.name}`)}</option>`).join("");
+      els.structureFunnelSelect.value = els.structureFunnelSelect.value || state.activeFunnelId;
     }
 
     const activeStructureFunnel = getFunnelById(els.structureFunnelSelect?.value || state.activeFunnelId) || funnels[0];
     if (els.structureSubfunnelSelect) {
       els.structureSubfunnelSelect.innerHTML = activeStructureFunnel.subfunnels.map((subfunnel) => `<option value="${escapeHtml(subfunnel.id)}">${escapeHtml(subfunnel.name)}</option>`).join("");
+      els.structureSubfunnelSelect.value = els.structureSubfunnelSelect.value || activeStructureFunnel.subfunnels[0]?.id || "";
     }
 
-    const activeSubfunnelId = els.structureSubfunnelSelect?.value || activeStructureFunnel.subfunnels[0]?.id;
+    const activeSubfunnelId = els.structureSubfunnelSelect?.value || activeStructureFunnel.subfunnels[0]?.id || "";
     const structureStages = getStagesForSubfunnel(activeSubfunnelId);
+
     if (els.stagesConfigList) {
       els.stagesConfigList.innerHTML = structureStages.map((stage, index) => `
         <div class="stage-config-item">
@@ -939,7 +965,7 @@
       els.socialSourcesConfigList.innerHTML = [...new Set(leads.map((lead) => lead.social_source))].map((item) => `<div class="stage-config-item">${escapeHtml(item)}</div>`).join("");
     }
     if (els.departmentsConfigList) {
-      els.departmentsConfigList.innerHTML = ["Gestao", "Vendas", "Relacionamento", "Comercial"].map((item) => `<div class="stage-config-item">${escapeHtml(item)}</div>`).join("");
+      els.departmentsConfigList.innerHTML = ["Gestao", "Vendas", "Relacionamento", "Comercial", "Marketing"].map((item) => `<div class="stage-config-item">${escapeHtml(item)}</div>`).join("");
     }
   }
 
@@ -953,7 +979,7 @@
     canvas.height = height * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, width, height);
-    ctx.fillStyle = getComputedStyle(document.documentElement).dataset?.theme === "dark" ? "#eff2f0" : "#13211c";
+    ctx.fillStyle = document.documentElement.dataset.theme === "dark" ? "#eff2f0" : "#13211c";
     ctx.font = '600 14px "Segoe UI Variable","Aptos",sans-serif';
     ctx.fillText(message, 18, 28);
   }
@@ -1018,11 +1044,8 @@
     values.forEach((value, index) => {
       const x = padding + (chartWidth / Math.max(values.length - 1, 1)) * index;
       const y = padding + chartHeight - ((value / max) * (chartHeight - 8));
-      if (index === 0) {
-        ctx.moveTo(x, y);
-      } else {
-        ctx.lineTo(x, y);
-      }
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     });
     ctx.stroke();
   }
@@ -1043,20 +1066,19 @@
       const monthKey = String(lead.start_date || "").slice(0, 7);
       monthMap[monthKey] = (monthMap[monthKey] || 0) + 1;
       ownerMap[lead.owner || "Sem resp."] = (ownerMap[lead.owner || "Sem resp."] || 0) + 1;
-      const stageName = getStageById(lead.stage_id)?.name || "Sem etapa";
-      stageMap[stageName] = (stageMap[stageName] || 0) + 1;
+      stageMap[getStageById(lead.stage_id)?.name || "Sem etapa"] = (stageMap[getStageById(lead.stage_id)?.name || "Sem etapa"] || 0) + 1;
       trafficMap[lead.traffic_type || "Sem origem"] = (trafficMap[lead.traffic_type || "Sem origem"] || 0) + 1;
       socialMap[lead.social_source || "Sem canal"] = (socialMap[lead.social_source || "Sem canal"] || 0) + 1;
       if (lead.referral_name) {
-        const referralKey = `${lead.referral_name}${lead.referral_sector ? ` / ${lead.referral_sector}` : ""}`;
-        referralMap[referralKey] = (referralMap[referralKey] || 0) + 1;
+        const key = `${lead.referral_name}${lead.referral_sector ? ` / ${lead.referral_sector}` : ""}`;
+        referralMap[key] = (referralMap[key] || 0) + 1;
       }
       if (lead.plan_name && Number(lead.value || 0) > 0) {
         planCountMap[lead.plan_name] = (planCountMap[lead.plan_name] || 0) + 1;
         planRevenueMap[lead.plan_name] = (planRevenueMap[lead.plan_name] || 0) + Number(lead.value || 0);
       }
-      const dayKey = Number(String(lead.start_date || "").slice(8, 10));
-      if (dayKey) dayMap[dayKey] = (dayMap[dayKey] || 0) + 1;
+      const day = Number(String(lead.start_date || "").slice(8, 10));
+      if (day) dayMap[day] = (dayMap[day] || 0) + 1;
     });
 
     drawBars(els.monthlyChart, Object.keys(monthMap).map(formatMonthLabel), Object.values(monthMap), "#6fad2b");
@@ -1065,11 +1087,8 @@
     drawBars(els.pipelineChart, Object.keys(stageMap), Object.values(stageMap), "#4d879d");
     drawBars(els.trafficChart, Object.keys(trafficMap), Object.values(trafficMap), "#9d7a3e");
     drawBars(els.socialChart, Object.keys(socialMap), Object.values(socialMap), "#5e8b73");
-    if (Object.keys(referralMap).length) {
-      drawBars(els.referralSectorChart, Object.keys(referralMap), Object.values(referralMap), "#648e50");
-    } else {
-      drawCanvasMessage(els.referralSectorChart, "Sem indicacoes para exibir.");
-    }
+    if (Object.keys(referralMap).length) drawBars(els.referralSectorChart, Object.keys(referralMap), Object.values(referralMap), "#648e50");
+    else drawCanvasMessage(els.referralSectorChart, "Sem indicacoes para exibir.");
     if (Object.keys(planCountMap).length) {
       drawBars(els.planCountChart, Object.keys(planCountMap), Object.values(planCountMap), "#7a9650");
       drawBars(els.planRevenueChart, Object.keys(planRevenueMap), Object.values(planRevenueMap), "#4d7f5a");
@@ -1080,62 +1099,62 @@
     drawLine(els.yearlyDailyChart, Array.from({ length: 31 }, (_, index) => dayMap[index + 1] || 0), "#6fad2b");
   }
 
-  function syncPrimaryMenuState() {
-    $$("[data-view]").forEach((button) => {
-      button.classList.toggle("active", button.dataset.view === state.activeView && button.closest(".profile-menu") == null);
+  function setDesktopFiltersOpen(open) {
+    state.desktopFiltersOpen = Boolean(open);
+    els.desktopFiltersPanel?.classList.toggle("hidden", !state.desktopFiltersOpen);
+    els.desktopFiltersBtn?.setAttribute("aria-expanded", String(state.desktopFiltersOpen));
+  }
+
+  function setMobileFiltersOpen(open) {
+    state.mobileFiltersOpen = Boolean(open);
+    els.mobileFiltersPanel?.classList.toggle("hidden", !state.mobileFiltersOpen);
+  }
+
+  function setFilterMenuOpen(key) {
+    state.openFilterKey = state.openFilterKey === key ? null : key;
+    filterConfigs.forEach((config) => {
+      const isOpen = state.openFilterKey === config.key;
+      $(config.dropdownId)?.classList.toggle("open", isOpen);
+      $(config.menuId)?.classList.toggle("hidden", !isOpen);
+      $(config.btnId)?.setAttribute("aria-expanded", String(isOpen));
     });
   }
 
-  function bindView(name) {
-    const enteringAdminOverlay = name === "equipe" || name === "configuracoes";
-    if (!enteringAdminOverlay) {
-      state.lastWorkspaceView = name;
-    }
-
-    state.activeView = name;
-    if (name === "funil") {
-      state.funnelSidebarOpen = true;
-    } else {
-      state.funnelSidebarOpen = false;
-    }
-
-    document.querySelectorAll(".view").forEach((view) => {
-      const isActive = view.id === `view-${name}`;
-      view.classList.toggle("active-view", isActive);
-      view.classList.toggle("hidden", !isActive);
-    });
-
-    els.app?.classList.toggle("admin-overlay-mode", enteringAdminOverlay);
-    syncFunnelSidebarVisibility();
-    syncPrimaryMenuState();
-    setMobileFiltersOpen(false);
-
-    const activeFunnel = getFunnelById(state.activeFunnelId);
-    const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
-    const activeGroup = getGroupById(activeFunnel?.groupId);
-    const titles = {
-      funil: state.activeSubfunnelId
-        ? [activeSubfunnel?.name || "Pipeline", activeFunnel?.name || "Visualizacao do funil"]
-        : [activeFunnel?.name || "Funis", activeGroup ? `Grupo: ${activeGroup.name}` : "Escolha um funil na lateral para visualizar os cards dos subfunis."],
-      leads: ["Lista de Leads", "Visualize todos os leads cadastrados."],
-      relatorios: ["Relatorios", "Acompanhe os resultados do CRM compartilhado."],
-      equipe: ["Pessoas e Acessos", "Gerencie solicitacoes de acesso, alteracoes administrativas e a equipe ativa no CRM."],
-      estrutura: ["Estrutura do CRM", "Gerencie pipelines e a lista de origens de lead usadas no CRM."],
-      configuracoes: ["Configuracao", "Consulte o historico administrativo do CRM."],
-    };
-    const controlsVisible = name === "leads" || name === "relatorios" || (name === "funil" && Boolean(state.activeSubfunnelId));
-    if (els.pageTitle) els.pageTitle.textContent = titles[name][0];
-    if (els.pageSubtitle) els.pageSubtitle.textContent = titles[name][1];
-    els.topbar?.classList.toggle("hidden", false);
-    document.querySelector(".topbar-actions")?.classList.toggle("hidden", !controlsVisible);
-
+  function clearFilters() {
+    state.filters = Object.fromEntries(filterConfigs.map((config) => [config.key, ""]));
+    renderFilters();
     renderAll();
+  }
+
+  function updateBulkDeleteButton() {
+    if (!els.deleteSelectedBtn) return;
+    const count = state.selectedLeadIds.size;
+    els.deleteSelectedBtn.textContent = count ? `Excluir selecionados (${count})` : "Excluir selecionados";
+    els.deleteSelectedBtn.classList.toggle("hidden", count === 0);
+  }
+
+  function syncPrimaryMenuState() {
+    $$("[data-view]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.view === state.activeView && !button.closest(".profile-menu"));
+    });
   }
 
   function syncFunnelSidebarVisibility() {
     const visible = state.funnelSidebarOpen && state.activeView === "funil";
     els.app?.classList.toggle("funnel-sidebar-active", visible);
     els.crmFunnelSidebar?.classList.toggle("hidden", !visible);
+  }
+
+  function updateStickyLayout() {
+    const root = document.documentElement;
+    const mobileTopbarHeight = els.mobileTopbar?.offsetHeight || 0;
+    const shellHeaderHeight = document.querySelector(".shell-header")?.offsetHeight || 0;
+    const topbarHeight = els.topbar?.offsetHeight || 0;
+    root.style.setProperty("--mobile-topbar-height", `${mobileTopbarHeight}px`);
+    root.style.setProperty("--shell-header-height", `${shellHeaderHeight}px`);
+    root.style.setProperty("--topbar-height", `${topbarHeight}px`);
+    root.style.setProperty("--topbar-sticky-offset", `${mobileTopbarHeight}px`);
+    root.style.setProperty("--metrics-sticky-offset", `${mobileTopbarHeight + topbarHeight}px`);
   }
 
   function applySidebarCollapsed(collapsed, options = {}) {
@@ -1157,18 +1176,6 @@
     } catch (_error) {
       return false;
     }
-  }
-
-  function updateStickyLayout() {
-    const root = document.documentElement;
-    const mobileTopbarHeight = els.mobileTopbar?.offsetHeight || 0;
-    const shellHeaderHeight = document.querySelector(".shell-header")?.offsetHeight || 0;
-    const topbarHeight = els.topbar?.offsetHeight || 0;
-    root.style.setProperty("--mobile-topbar-height", `${mobileTopbarHeight}px`);
-    root.style.setProperty("--shell-header-height", `${shellHeaderHeight}px`);
-    root.style.setProperty("--topbar-height", `${topbarHeight}px`);
-    root.style.setProperty("--topbar-sticky-offset", `${mobileTopbarHeight}px`);
-    root.style.setProperty("--metrics-sticky-offset", `${mobileTopbarHeight + topbarHeight}px`);
   }
 
   function openAccountModal() {
@@ -1209,7 +1216,58 @@
     els.bootScreen?.classList.add("hidden");
     els.authScreen?.classList.add("hidden");
     els.appScreen?.classList.remove("hidden");
+  }
+
+  function bindView(name) {
+    const enteringAdminOverlay = name === "equipe" || name === "configuracoes";
+    if (!enteringAdminOverlay) {
+      state.lastWorkspaceView = name;
+    }
+
+    state.activeView = name;
+    state.funnelSidebarOpen = name === "funil";
+
+    document.querySelectorAll(".view").forEach((view) => {
+      const isActive = view.id === `view-${name}`;
+      view.classList.toggle("active-view", isActive);
+      view.classList.toggle("hidden", !isActive);
+    });
+
+    els.app?.classList.toggle("admin-overlay-mode", enteringAdminOverlay);
+    syncFunnelSidebarVisibility();
+    syncPrimaryMenuState();
+    setMobileFiltersOpen(false);
+
+    const activeFunnel = getFunnelById(state.activeFunnelId);
+    const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
+    const activeGroup = getGroupById(activeFunnel?.groupId);
+    const titles = {
+      funil: state.activeSubfunnelId
+        ? [activeSubfunnel?.name || "Pipeline", activeFunnel?.name || "Visualizacao do funil"]
+        : [activeFunnel?.name || "Funis", activeGroup ? `Grupo: ${activeGroup.name}` : "Escolha um funil na lateral para visualizar os cards dos subfunis."],
+      leads: ["Lista de Leads", "Visualize todos os leads cadastrados."],
+      relatorios: ["Relatorios", "Acompanhe os resultados do CRM compartilhado."],
+      equipe: ["Pessoas e Acessos", "Gerencie solicitacoes de acesso, alteracoes administrativas e a equipe ativa no CRM."],
+      estrutura: ["Estrutura do CRM", "Gerencie pipelines e a lista de origens de lead usadas no CRM."],
+      configuracoes: ["Configuracao", "Consulte o historico administrativo do CRM."],
+    };
+    const controlsVisible = name === "leads" || name === "relatorios" || (name === "funil" && Boolean(state.activeSubfunnelId));
+    if (els.pageTitle) els.pageTitle.textContent = titles[name][0];
+    if (els.pageSubtitle) els.pageSubtitle.textContent = titles[name][1];
+    els.topbar?.classList.toggle("hidden", false);
+    document.querySelector(".topbar-actions")?.classList.toggle("hidden", !controlsVisible);
+
     renderAll();
+  }
+
+  function openSubfunnelDetail(subfunnelId) {
+    state.activeSubfunnelId = subfunnelId;
+    bindView("funil");
+  }
+
+  function leaveSubfunnelDetail() {
+    state.activeSubfunnelId = null;
+    bindView("funil");
   }
 
   function renderAll() {
@@ -1237,31 +1295,14 @@
     updateStickyLayout();
   }
 
-  function updateBulkDeleteButton() {
-    if (!els.deleteSelectedBtn) return;
-    const count = state.selectedLeadIds.size;
-    els.deleteSelectedBtn.textContent = count ? `Excluir selecionados (${count})` : "Excluir selecionados";
-    els.deleteSelectedBtn.classList.toggle("hidden", count === 0);
-  }
-
-  function openSubfunnelDetail(subfunnelId) {
-    state.activeSubfunnelId = subfunnelId;
-    bindView("funil");
-  }
-
-  function leaveSubfunnelDetail() {
-    state.activeSubfunnelId = null;
-    bindView("funil");
-  }
-
   function bindEvents() {
     document.querySelectorAll('[data-admin-only="true"]').forEach((node) => node.classList.remove("hidden"));
+
     document.querySelectorAll(".tab-btn").forEach((button) => {
       button.addEventListener("click", () => {
         document.querySelectorAll(".tab-btn").forEach((item) => item.classList.toggle("active", item === button));
         document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.remove("active"));
-        const target = button.dataset.tab === "register" ? els.registerForm : els.loginForm;
-        target?.classList.add("active");
+        (button.dataset.tab === "register" ? els.registerForm : els.loginForm)?.classList.add("active");
         if (els.authMessage) els.authMessage.textContent = "";
       });
     });
@@ -1269,11 +1310,13 @@
     els.loginForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       showApp();
+      bindView("funil");
     });
 
     els.registerForm?.addEventListener("submit", (event) => {
       event.preventDefault();
       showApp();
+      bindView("funil");
     });
 
     els.forgotPasswordBtn?.addEventListener("click", () => {
@@ -1292,11 +1335,24 @@
         els.profileMenu.classList.add("hidden");
         els.profileMenuBtn?.setAttribute("aria-expanded", "false");
       }
-      if (!String(event.target?.className || "").includes("filter-btn") && !event.target?.closest?.(".filter-dropdown")) {
+
+      if (!event.target.closest(".filter-dropdown")) {
         state.openFilterKey = null;
         setFilterMenuOpen(null);
       }
+
+      if (els.funnelContextMenu && !els.funnelContextMenu.contains(event.target) && !event.target.closest("[data-funnel-nav-item]") && !event.target.closest("[data-funnel-group-head]") && !event.target.closest("[data-funnel-category-head]")) {
+        closeFunnelContextMenu();
+      }
     });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeFunnelContextMenu();
+      }
+    });
+
+    window.addEventListener("scroll", closeFunnelContextMenu, true);
 
     els.openAccountBtn?.addEventListener("click", openAccountModal);
     els.closeAccountModalBtn?.addEventListener("click", closeAccountModal);
@@ -1329,22 +1385,13 @@
       els.shellTabCrm?.classList.remove("active");
       els.shellViewIntel?.classList.add("shell-view-active");
       els.shellViewIntel?.classList.remove("hidden");
-      els.shellViewCrm?.classList.add("hidden");
       els.shellViewCrm?.classList.remove("shell-view-active");
-    });
-
-    els.closeTeamViewBtn?.addEventListener("click", () => {
-      bindView(state.lastWorkspaceView || "funil");
-    });
-
-    els.closeSettingsViewBtn?.addEventListener("click", () => {
-      bindView(state.lastWorkspaceView || "funil");
+      els.shellViewCrm?.classList.add("hidden");
     });
 
     $$("[data-view]").forEach((button) => {
       button.addEventListener("click", () => {
-        if (!button.dataset.view) return;
-        bindView(button.dataset.view);
+        if (button.dataset.view) bindView(button.dataset.view);
       });
     });
 
@@ -1358,6 +1405,8 @@
     els.crmNavbarExpandBtn?.addEventListener("click", () => applySidebarCollapsed(false));
 
     els.funnelBackBtn?.addEventListener("click", leaveSubfunnelDetail);
+    els.closeTeamViewBtn?.addEventListener("click", () => bindView(state.lastWorkspaceView || "funil"));
+    els.closeSettingsViewBtn?.addEventListener("click", () => bindView(state.lastWorkspaceView || "funil"));
 
     els.searchInput?.addEventListener("input", () => {
       state.search = els.searchInput.value || "";
@@ -1392,17 +1441,14 @@
 
     els.selectAllLeads?.addEventListener("change", () => {
       const filteredIds = getFilteredLeads().map((lead) => lead.id);
-      if (els.selectAllLeads.checked) {
-        filteredIds.forEach((id) => state.selectedLeadIds.add(id));
-      } else {
-        filteredIds.forEach((id) => state.selectedLeadIds.delete(id));
-      }
+      if (els.selectAllLeads.checked) filteredIds.forEach((id) => state.selectedLeadIds.add(id));
+      else filteredIds.forEach((id) => state.selectedLeadIds.delete(id));
       renderLeadTable();
       updateBulkDeleteButton();
     });
 
     els.deleteSelectedBtn?.addEventListener("click", () => {
-      window.alert("Modo demonstrativo: a exclusao real permanece apenas no ambiente privado.");
+      showDemoNotice();
       state.selectedLeadIds.clear();
       renderLeadTable();
       updateBulkDeleteButton();
@@ -1410,6 +1456,73 @@
 
     els.structureFunnelSelect?.addEventListener("change", renderStructure);
     els.structureSubfunnelSelect?.addEventListener("change", renderStructure);
+
+    els.crmFunnelNav?.addEventListener("click", (event) => {
+      const toggleBtn = event.target.closest("[data-funnel-group-toggle]");
+      if (toggleBtn) {
+        event.preventDefault();
+        toggleFunnelGroup(toggleBtn.dataset.funnelGroupToggle);
+        return;
+      }
+    });
+
+    els.crmFunnelNav?.addEventListener("contextmenu", (event) => {
+      const categoryHead = event.target.closest("[data-funnel-category-head]");
+      if (categoryHead) {
+        event.preventDefault();
+        const category = String(categoryHead.dataset.funnelCategoryHead || "B2C").trim();
+        openFunnelContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          actions: [{
+            id: `create-group-${category}`,
+            label: `Criar grupo em ${category}`,
+            handler: () => showDemoNotice("Visual demonstrativo: a criacao de grupos continua no ambiente privado."),
+          }],
+        });
+        return;
+      }
+
+      const funnelItem = event.target.closest("[data-funnel-nav-item]");
+      if (funnelItem) {
+        event.preventDefault();
+        const funnel = getFunnelById(funnelItem.dataset.funnelNavItem);
+        if (!funnel) return;
+        openFunnelContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          actions: [
+            { id: `edit-funnel-${funnel.id}`, label: "Editar funil", handler: () => showDemoNotice() },
+            { id: `delete-funnel-${funnel.id}`, label: "Excluir funil", danger: true, handler: () => showDemoNotice() },
+          ],
+        });
+        return;
+      }
+
+      const groupHead = event.target.closest("[data-funnel-group-head]");
+      if (groupHead) {
+        event.preventDefault();
+        const group = getGroupById(groupHead.dataset.funnelGroupHead);
+        if (!group) return;
+        openFunnelContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          actions: [
+            { id: `edit-group-${group.id}`, label: "Editar grupo", handler: () => showDemoNotice() },
+            { id: `toggle-group-${group.id}`, label: group.collapsed ? "Expandir grupo" : "Minimizar grupo", handler: () => toggleFunnelGroup(group.id) },
+            { id: `delete-group-${group.id}`, label: "Excluir grupo", danger: true, handler: () => showDemoNotice() },
+          ],
+        });
+      }
+    });
+
+    els.funnelContextMenu?.addEventListener("click", (event) => {
+      const actionButton = event.target.closest("[data-funnel-context-action]");
+      if (!actionButton || !state.funnelContextMenuState) return;
+      const action = state.funnelContextMenuState.actions.find((item) => item.id === actionButton.dataset.funnelContextAction);
+      closeFunnelContextMenu();
+      action?.handler?.();
+    });
 
     document.addEventListener("click", (event) => {
       const funnelItem = event.target.closest("[data-funnel-open]");
@@ -1428,26 +1541,22 @@
 
       const leadCheck = event.target.closest(".lead-check");
       if (leadCheck && leadCheck.dataset.id) {
-        if (leadCheck.checked) {
-          state.selectedLeadIds.add(leadCheck.dataset.id);
-        } else {
-          state.selectedLeadIds.delete(leadCheck.dataset.id);
-        }
+        if (leadCheck.checked) state.selectedLeadIds.add(leadCheck.dataset.id);
+        else state.selectedLeadIds.delete(leadCheck.dataset.id);
         updateBulkDeleteButton();
         return;
       }
 
       const demoButton = event.target.closest("[data-demo-action]");
       if (demoButton) {
-        window.alert("Visual demonstrativo: a acao operacional continua somente no repositorio privado.");
+        showDemoNotice();
       }
     });
 
     window.addEventListener("resize", () => {
       updateStickyLayout();
-      if (state.activeView === "relatorios") {
-        renderCharts();
-      }
+      if (state.activeView === "relatorios") renderCharts();
+      closeFunnelContextMenu();
     });
   }
 
