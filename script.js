@@ -7487,20 +7487,9 @@
     }
 
     try {
-      const mergedExternalActions = await ensureExternalActionsFunnelMerge();
-      if (mergedExternalActions) {
-        return loadAppData({
-          includeProfiles,
-          includeAdminData,
-          runRouteMigration: false
-        });
-      }
+      await ensureExternalActionsFunnelMerge();
     } catch (mergeError) {
-      console.error("Erro ao consolidar funis de Ações Externas:", mergeError);
-      const message = String(mergeError?.message || "");
-      if (!/row-level security policy/i.test(message)) {
-        alert(`Não foi possível consolidar os funis de Ações Externas: ${message}`);
-      }
+      console.warn("Erro ao consolidar funis de Ações Externas:", mergeError);
     }
 
     restoreStoredFunnelUiState();
