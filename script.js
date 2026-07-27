@@ -474,7 +474,7 @@
   const FUNNEL_UI_STATE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-ui-state`;
   const OWNER_RECONCILIATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.owner-reconciliation-v6`;
   const SOCIAL_SOURCE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.social-source-catalog-v1`;
-  const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
+  const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v3`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
   const LEGACY_CUSTOM_STAGE_TYPES_STORAGE_KEY = "crmPax.customStageTypes";
@@ -4179,6 +4179,19 @@
     const compact = normalizeComparisonText(raw).replace(/[^a-z0-9?]+/g, "");
     if (["indicacao", "indicao", "indica??o"].includes(compact)) return "Indicação";
     if (["apresentacao", "apresentao", "apresenta??o"].includes(compact)) return "Apresentação";
+    if ([
+      "eventoexterno",
+      "eventosexternos",
+      "eventosexterno",
+      "eventosexterno",
+      "acaoexterna",
+      "acoesexternas",
+      "acaoexternas",
+      "acaoexterno",
+      "acaoexternos",
+      "acoesexterno",
+      "acoesexternos"
+    ].includes(compact)) return "Ações Externas";
     return raw;
   }
 
@@ -5072,7 +5085,7 @@
       {
         category: "B2B",
         groupName: "Vendas",
-        funnelName: "Eventos Externos",
+        funnelName: "Ações Externas",
         subfunnelName: sourceSubfunnelName,
         leads: state.leads.filter((lead) => isB2BExternalEventLead(lead))
       },
@@ -5086,7 +5099,7 @@
       {
         category: "B2C",
         groupName: "Vendas",
-        funnelName: "Eventos Externos",
+        funnelName: "Ações Externas",
         subfunnelName: sourceSubfunnelName,
         leads: state.leads.filter((lead) => isB2CExternalEventLead(lead))
       }
@@ -5149,7 +5162,7 @@
         "migrate_funnel_routes",
         "funnel_workspace",
         null,
-        `Leads de origem "Indicação" e canais ACIM/CDL/SUDOEXPO foram redistribuídos automaticamente por ${getUserDisplayName()}.`,
+        `Leads de origem "Indicação", "Evento Externo" e "Ação Externa" foram consolidados automaticamente por ${getUserDisplayName()}.`,
         {
           source_funnel: sourceTemplate.funnel.name,
           source_subfunnel: sourceTemplate.subfunnel.name,
