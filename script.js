@@ -4453,6 +4453,19 @@
     return getStagesForSubfunnel(subfunnelId)[0] || null;
   }
 
+  function getLeadsForSubfunnel(subfunnelId) {
+    if (!subfunnelId) return [];
+    return state.leads.filter((lead) => getLeadSubfunnelId(lead) === subfunnelId);
+  }
+
+  function getPipelineCountForSubfunnel(subfunnelId) {
+    return getStagesForSubfunnel(subfunnelId).length;
+  }
+
+  function getLeadCountForSubfunnel(subfunnelId) {
+    return getLeadsForSubfunnel(subfunnelId).length;
+  }
+
   function getAvailableFunnels() {
     return (state.funnelWorkspace?.funnels || []).filter((item) => canViewFunnelItem(item));
   }
@@ -9696,8 +9709,8 @@
 
     const subfunnels = activeFunnel.subfunnels || [];
     const cards = subfunnels.map((subfunnel, index) => {
-      const stageCount = Object.values(state.funnelWorkspace?.stageAssignments || {}).filter((value) => value === subfunnel.id).length;
-      const leadCount = Object.values(state.funnelWorkspace?.leadAssignments || {}).filter((value) => value === subfunnel.id).length;
+      const stageCount = getPipelineCountForSubfunnel(subfunnel.id);
+      const leadCount = getLeadCountForSubfunnel(subfunnel.id);
       return `
         <article
           class="funnel-card"
