@@ -8549,7 +8549,7 @@
     els.pipelineStageStrip.innerHTML = stages.map((stage) => {
       const count = filtered.filter((lead) => lead.stage_id === stage.id).length;
       return `
-        <article class="pipeline-stage-tab">
+        <article class="pipeline-stage-tab" data-stage-id="${stage.id}">
           <div class="pipeline-stage-tab-main">
             <div class="pipeline-stage-tab-title">
               <span class="pipeline-stage-tab-accent" style="background:${stage.color}"></span>
@@ -12035,6 +12035,29 @@
 
   function bindPipelineEvents() {
     const canReorderPipelineLeads = canMoveLeads();
+    const openStageContextMenu = (event, stageId) => {
+      const stage = state.stages.find((item) => item.id === stageId);
+      if (!stage || !canManageStages()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      openFunnelContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        actions: [
+          { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
+          { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) },
+          { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => deleteStage(stage.id) }
+        ]
+      });
+    };
+
+    document.querySelectorAll(".pipeline-stage-tab").forEach((tab) => {
+      tab.oncontextmenu = (event) => {
+        const stageId = String(tab.dataset.stageId || "").trim();
+        if (!stageId) return;
+        openStageContextMenu(event, stageId);
+      };
+    });
 
     document.querySelectorAll(".card").forEach((card) => {
       card.draggable = canReorderPipelineLeads;
@@ -12081,19 +12104,9 @@
     document.querySelectorAll(".column").forEach((column) => {
       column.oncontextmenu = (event) => {
         if (event.target.closest(".card")) return;
-        const stage = state.stages.find((item) => item.id === column.dataset.stageId);
-        if (!stage || !canManageStages()) return;
-        event.preventDefault();
-        event.stopPropagation();
-        openFunnelContextMenu({
-          x: event.clientX,
-          y: event.clientY,
-          actions: [
-            { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
-            { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) },
-            { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => deleteStage(stage.id) }
-          ]
-        });
+        const stageId = String(column.dataset.stageId || "").trim();
+        if (!stageId) return;
+        openStageContextMenu(event, stageId);
       };
       if (!canReorderPipelineLeads) {
         column.ondragover = null;

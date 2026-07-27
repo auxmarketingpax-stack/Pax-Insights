@@ -2900,6 +2900,48 @@ input,select,textarea{
   cursor:pointer;
 }
 
+.lead-reminder-toggle input[type="checkbox"]{
+  appearance:none;
+  -webkit-appearance:none;
+  -moz-appearance:none;
+  width:22px;
+  height:22px;
+  min-width:22px;
+  min-height:22px;
+  border-radius:999px;
+  border:2px solid #cfe3d3;
+  background:#ffffff;
+  display:grid;
+  place-items:center;
+  cursor:pointer;
+  transition:border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.lead-reminder-toggle input[type="checkbox"]::after{
+  content:"";
+  width:10px;
+  height:10px;
+  border-radius:999px;
+  background:#6fad2b;
+  transform:scale(0);
+  transition:transform .18s ease;
+}
+
+.lead-reminder-toggle input[type="checkbox"]:checked{
+  border-color:#6fad2b;
+  background:#f3f8f0;
+  box-shadow:0 0 0 3px rgba(111,173,43,.14);
+}
+
+.lead-reminder-toggle input[type="checkbox"]:checked::after{
+  transform:scale(1);
+}
+
+.lead-reminder-toggle input[type="checkbox"]:focus-visible{
+  outline:none;
+  box-shadow:0 0 0 3px rgba(111,173,43,.18);
+}
+
 .lead-reminder-fields{
   margin-top:14px;
 }
@@ -5974,6 +6016,19 @@ html[data-theme="dark"] .lead-reminder-group,
 body[data-theme="dark"] .lead-reminder-group{
   background:#1b2120 !important;
   border-color:rgba(255,255,255,.08) !important;
+}
+
+html[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"],
+body[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]{
+  background:#181d1c !important;
+  border-color:rgba(255,255,255,.12) !important;
+}
+
+html[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]:checked,
+body[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]:checked{
+  background:#1f3327 !important;
+  border-color:#6fad2b !important;
+  box-shadow:0 0 0 3px rgba(111,173,43,.16) !important;
 }
 
 html[data-theme="dark"] .leads-table th,
