@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; upgrade-insecure-requests" />
   <title>Pax Insights</title>
   <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
@@ -1084,6 +1084,9 @@
 
   <div id="funnelContextMenu" class="funnel-context-menu hidden" role="menu" aria-hidden="true"></div>
 
-  <script src="script.js?v=20260724-15"></script>
+  <script src="vendor/supabase.min.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="config.js?v=20260415-02"></script>
+  <script src="script.js?v=20260727-01"></script>
 </body>
 </html>
