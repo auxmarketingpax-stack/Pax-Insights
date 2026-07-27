@@ -10,7 +10,7 @@
   <title>Pax Insights</title>
   <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
-  <link rel="stylesheet" href="style.css?v=20260727-03" />
+  <link rel="stylesheet" href="style.css?v=20260727-04" />
 </head>
 <body>
   <div id="bootScreen" class="boot-screen">Carregando sistema...</div>
@@ -21,7 +21,7 @@
         <div class="auth-brand">
           <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="auth-brand-logo" id="authBrandLogo" />
         </div>
-        <p>CRM e inteligência comercial em um ambiente controlado por perfis, solicitações e auditoria centralizada.</p>
+        <p>CRM e inteligÃªncia comercial em um ambiente controlado por perfis, solicitaÃ§Ãµes e auditoria centralizada.</p>
 
         <div class="tabs">
           <button class="tab-btn active" data-tab="login" type="button">Entrar</button>
@@ -85,7 +85,7 @@
       </div>
       <nav class="mobile-nav" aria-label="Menu principal no celular">
         <button class="menu-item mobile-nav-item" data-view="funil" type="button">Funil</button>
-        <button class="menu-item mobile-nav-item active" data-view="relatorios" type="button">Relatórios</button>
+        <button class="menu-item mobile-nav-item active" data-view="relatorios" type="button">RelatÃ³rios</button>
         <button class="menu-item mobile-nav-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
         <button class="menu-item mobile-nav-item" data-view="leads" type="button">Leads</button>
         <button class="menu-item mobile-nav-item" data-view="equipe" type="button">Acessos</button>
@@ -120,13 +120,13 @@
           </select>
         </div>
         <div class="form-group">
-          <label for="mobileOwnerFilter">Responsável</label>
+          <label for="mobileOwnerFilter">ResponsÃ¡vel</label>
           <select id="mobileOwnerFilter">
-            <option value="">Todos os responsáveis</option>
+            <option value="">Todos os responsÃ¡veis</option>
           </select>
         </div>
         <div class="form-group">
-          <label for="mobileMonthFilter">Mês</label>
+          <label for="mobileMonthFilter">MÃªs</label>
           <select id="mobileMonthFilter">
             <option value="">Todos os meses</option>
           </select>
@@ -152,7 +152,7 @@
         <div class="form-group">
           <label for="mobileIndicatorFilter">Indicado por</label>
           <select id="mobileIndicatorFilter">
-            <option value="">Todas as indicações</option>
+            <option value="">Todas as indicaÃ§Ãµes</option>
           </select>
         </div>
         <div class="form-group">
@@ -172,9 +172,9 @@
         <img src="assets/pax-insights-logo.png" alt="Pax Insights" class="shell-brand-logo" id="shellBrandLogo" />
       </div>
 
-      <nav class="shell-tabs" aria-label="Navegação principal">
+      <nav class="shell-tabs" aria-label="NavegaÃ§Ã£o principal">
         <button type="button" id="shellTabCrm" class="shell-tab active">CRM</button>
-        <button type="button" id="shellTabIntel" class="shell-tab">Central de Inteligência</button>
+        <button type="button" id="shellTabIntel" class="shell-tab">Central de InteligÃªncia</button>
       </nav>
 
       <div class="shell-profile">
@@ -185,43 +185,59 @@
             class="notifications-btn"
             aria-haspopup="true"
             aria-expanded="false"
-            aria-label="Abrir notificações"
+            aria-label="Abrir notificaÃ§Ãµes"
           >
-            <span class="notifications-btn-icon" aria-hidden="true">??</span>
+            <span class="notifications-btn-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                <path d="M12 3a4 4 0 0 0-4 4v1.05c0 .82-.3 1.61-.85 2.23L5.4 12.2A2 2 0 0 0 6.9 15.5h10.2a2 2 0 0 0 1.5-3.3l-1.75-1.92A3.35 3.35 0 0 1 16 8.05V7a4 4 0 0 0-4-4Zm0 18a2.75 2.75 0 0 0 2.58-1.8h-5.16A2.75 2.75 0 0 0 12 21Z" fill="currentColor"></path>
+              </svg>
+            </span>
             <span id="notificationsCount" class="notifications-count hidden">0</span>
           </button>
 
           <div id="notificationsPanel" class="notifications-panel hidden">
             <div class="notifications-panel-header">
-              <strong>Notificações</strong>
-              <span id="notificationsPanelMeta" class="notifications-panel-meta">Nenhuma pendência</span>
+              <strong>NotificaÃ§Ãµes</strong>
+              <span id="notificationsPanelMeta" class="notifications-panel-meta">Nenhuma pendÃªncia</span>
             </div>
             <div id="notificationsList" class="notifications-list">
-              <div class="notifications-empty">Nenhuma notificação pendente.</div>
+              <div class="notifications-empty">Nenhuma notificaÃ§Ã£o pendente.</div>
             </div>
           </div>
         </div>
 
-        <button type="button" id="profileMenuBtn" class="profile-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Abrir menu do usuário">
+        <button type="button" id="profileMenuBtn" class="profile-menu-btn" aria-haspopup="true" aria-expanded="false" aria-label="Abrir menu do usuÃ¡rio">
           <span class="profile-menu-avatar" id="profileMenuAvatar">PI</span>
         </button>
 
         <div id="profileMenu" class="profile-menu hidden">
           <div class="profile-menu-summary">
             <span class="profile-menu-label">Conta</span>
-            <strong id="profileMenuName">Usuário</strong>
+            <strong id="profileMenuName">UsuÃ¡rio</strong>
             <small id="profileMenuRole">Carregando...</small>
           </div>
           <button type="button" id="openAccountBtn" class="profile-menu-item">Minha conta</button>
           <button type="button" id="profileTeamBtn" class="profile-menu-item menu-item" data-view="equipe">Acessos</button>
-          <button type="button" id="profileSettingsBtn" class="profile-menu-item menu-item hidden" data-admin-only="true" data-view="configuracoes">Configurações</button>
+          <button type="button" id="profileSettingsBtn" class="profile-menu-item menu-item hidden" data-admin-only="true" data-view="configuracoes">ConfiguraÃ§Ãµes</button>
           <button type="button" id="themeToggleBtn" class="profile-menu-item profile-theme-switch" aria-label="Alternar entre tema white e dark">
             <span class="profile-theme-switch-copy">Tema</span>
             <span class="profile-theme-switch-track" aria-hidden="true">
-              <span class="profile-theme-switch-side profile-theme-switch-side-light">¤</span>
-              <span class="profile-theme-switch-side profile-theme-switch-side-dark">?</span>
+              <span class="profile-theme-switch-side profile-theme-switch-side-light">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M12 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V5a.75.75 0 0 1 .75-.75Zm0 11a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Zm0 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20.5a.75.75 0 0 1 .75-.75Zm7-7.75a.75.75 0 0 1 .75.75.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5H19Zm-12.5 0a.75.75 0 0 1 0 1.5H5a.75.75 0 0 1 0-1.5h1.5Zm9.45-5.2a.75.75 0 0 1 1.06 1.06l-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06Zm-7.84 7.84a.75.75 0 0 1 1.06 1.06L8.11 16.5a.75.75 0 0 1-1.06-1.06l1.06-1.05Zm8.9 2.11a.75.75 0 0 1 0 1.06.75.75 0 0 1-1.06 0l-1.06-1.05a.75.75 0 1 1 1.06-1.06l1.06 1.05Zm-7.84-7.84a.75.75 0 0 1 0 1.06L8.11 9.72a.75.75 0 0 1-1.06-1.06L8.11 7.6a.75.75 0 0 1 1.06 0Z" fill="currentColor"></path>
+                </svg>
+              </span>
+              <span class="profile-theme-switch-side profile-theme-switch-side-dark">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M14.5 4.5a.75.75 0 0 1 .79-.73 8.2 8.2 0 1 1-7.52 12.06.75.75 0 0 1 .88-1.05 6.7 6.7 0 0 0 7.95-8.73.75.75 0 0 1 .59-.99 6.6 6.6 0 0 0-2.69-.56Z" fill="currentColor"></path>
+                </svg>
+              </span>
               <span class="profile-theme-switch-thumb">
-                <span id="themeToggleThumbIcon">¤</span>
+                <span id="themeToggleThumbIcon">
+                  <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                    <path d="M12 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V5a.75.75 0 0 1 .75-.75Zm0 11a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Zm0 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20.5a.75.75 0 0 1 .75-.75Zm7-7.75a.75.75 0 0 1 .75.75.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5H19Zm-12.5 0a.75.75 0 0 1 0 1.5H5a.75.75 0 0 1 0-1.5h1.5Zm9.45-5.2a.75.75 0 0 1 1.06 1.06l-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06Zm-7.84 7.84a.75.75 0 0 1 1.06 1.06L8.11 16.5a.75.75 0 0 1-1.06-1.06l1.06-1.05Zm8.9 2.11a.75.75 0 0 1 0 1.06.75.75 0 0 1-1.06 0l-1.06-1.05a.75.75 0 1 1 1.06-1.06l1.06 1.05Zm-7.84-7.84a.75.75 0 0 1 0 1.06L8.11 9.72a.75.75 0 0 1-1.06-1.06L8.11 7.6a.75.75 0 0 1 1.06 0Z" fill="currentColor"></path>
+                  </svg>
+                </span>
               </span>
             </span>
           </button>
@@ -237,17 +253,17 @@
           <div class="brand-logo"><img src="assets/pax-insights-symbol-white.png" alt="Pax Insights" class="brand-logo-img" /></div>
           <div>
             <h1 id="orgNameLabel">Pax Insights</h1>
-            <p id="userWelcome">Usuário</p>
+            <p id="userWelcome">UsuÃ¡rio</p>
           </div>
         </div>
 
         <nav class="menu">
           <button class="menu-item" data-view="funil" type="button">Funil</button>
-          <button class="menu-item active" data-view="relatorios" type="button">Relatórios</button>
+          <button class="menu-item active" data-view="relatorios" type="button">RelatÃ³rios</button>
           <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
           <button class="menu-item" data-view="leads" type="button">Leads</button>
           <button class="menu-item" data-view="equipe" type="button">Acessos</button>
-          <button class="menu-item hidden" data-admin-only="true" data-view="configuracoes" type="button">Configurações</button>
+          <button class="menu-item hidden" data-admin-only="true" data-view="configuracoes" type="button">ConfiguraÃ§Ãµes</button>
         </nav>
 
         <div class="sidebar-footer">
@@ -263,10 +279,10 @@
 
       <main class="main">
         <div class="crm-workspace">
-          <aside id="crmNavbar" class="crm-navbar" aria-label="Navegação do CRM">
+          <aside id="crmNavbar" class="crm-navbar" aria-label="NavegaÃ§Ã£o do CRM">
             <div class="crm-navbar-links">
               <button class="menu-item" data-view="funil" type="button">Funil</button>
-              <button class="menu-item active" data-view="relatorios" type="button">Relatórios</button>
+              <button class="menu-item active" data-view="relatorios" type="button">RelatÃ³rios</button>
               <button class="menu-item hidden" data-admin-only="true" data-view="estrutura" type="button">Estrutura</button>
               <button class="menu-item" data-view="leads" type="button">Leads</button>
             </div>
@@ -299,11 +315,26 @@
           <div>
             <div class="topbar-title-row">
               <h2 id="pageTitle">Pipeline</h2>
-              <button type="button" id="editCurrentFunnelBtn" class="funnel-inline-action hidden" aria-label="Configurar funil">?</button>
-              <button type="button" id="deleteCurrentFunnelBtn" class="funnel-inline-action funnel-inline-action-danger hidden" aria-label="Excluir funil">??</button>
+              <button type="button" id="editCurrentFunnelBtn" class="funnel-inline-action hidden" aria-label="Configurar funil">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="m4 15.75 9.9-9.9a2.12 2.12 0 0 1 3 3L7 18.75 3.5 19.5 4 15.75Zm9.1-8.1 3 3" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              </button>
+              <button type="button" id="deleteCurrentFunnelBtn" class="funnel-inline-action funnel-inline-action-danger hidden" aria-label="Excluir funil">
+                <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                  <path d="M9.5 4.75h5M5.75 7.5h12.5M9 10.5v6M15 10.5v6M8.5 19.25h7a1.75 1.75 0 0 0 1.75-1.6l.82-10.15H5.93l.82 10.15a1.75 1.75 0 0 0 1.75 1.6Z" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              </button>
             </div>
             <p id="pageSubtitle">Gerencie os leads do CRM compartilhado.</p>
-            <button type="button" id="funnelBackBtn" class="funnel-back-inline hidden" aria-label="Voltar para o funil">? Funil</button>
+            <button type="button" id="funnelBackBtn" class="funnel-back-inline hidden" aria-label="Voltar para o funil">
+              <span class="funnel-back-inline-icon" aria-hidden="true">
+                <svg viewBox="0 0 16 16" focusable="false" aria-hidden="true">
+                  <path d="M9.75 3.5 5.25 8l4.5 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                </svg>
+              </span>
+              <span>Funil</span>
+            </button>
           </div>
 
           <div class="topbar-actions">
@@ -327,7 +358,7 @@
                 <strong>Filtros</strong>
                 <p>Refine rapidamente os dados do CRM.</p>
               </div>
-              <button type="button" id="desktopFiltersCloseBtn" class="desktop-filters-close" aria-label="Fechar filtros">×</button>
+              <button type="button" id="desktopFiltersCloseBtn" class="desktop-filters-close" aria-label="Fechar filtros">Ã—</button>
             </div>
             <div id="desktopFiltersSummary" class="desktop-filters-summary">
               <span class="filter-summary-empty">Nenhum filtro aplicado</span>
@@ -434,12 +465,12 @@
 
               <div class="filter-dropdown" id="indicatorFilterDropdown">
                 <button type="button" class="filter-btn" id="indicatorFilterBtn" aria-haspopup="listbox" aria-expanded="false">
-                  <span class="filter-btn-label" id="indicatorFilterLabel">Todas as indicações</span>
+                  <span class="filter-btn-label" id="indicatorFilterLabel">Todas as indicaÃ§Ãµes</span>
                   <span class="filter-btn-arrow">&#9662;</span>
                 </button>
                 <div class="filter-menu hidden" id="indicatorFilterMenu" role="listbox" aria-label="Filtro de indicado por"></div>
                 <select id="indicatorFilter" class="hidden-native-filter" aria-hidden="true" tabindex="-1">
-                  <option value="">Todas as indicações</option>
+                  <option value="">Todas as indicaÃ§Ãµes</option>
                 </select>
               </div>
 
@@ -529,7 +560,7 @@
               <div class="report-card"><span>Leads em espera</span><strong id="reportWaitingCount">0</strong></div>
               <div class="report-card"><span>Maior pipeline</span><strong id="reportTopStage">-</strong></div>
               <div class="report-card"><span>Maior responsavel</span><strong id="reportTopOwner">-</strong></div>
-              <div class="report-card"><span>Maior indicação</span><strong id="reportTopReferral">-</strong></div>
+              <div class="report-card"><span>Maior indicaÃ§Ã£o</span><strong id="reportTopReferral">-</strong></div>
               <div class="report-card"><span>Mes com mais leads</span><strong id="reportBestMonth">-</strong></div>
               <div class="report-card"><span>Planos fechados</span><strong id="reportClosedPlans">0</strong></div>
             </div>
@@ -560,7 +591,7 @@
                 <canvas id="socialChart"></canvas>
               </div>
               <div class="chart-card">
-                <h4>Indicações por pessoa e setor</h4>
+                <h4>IndicaÃ§Ãµes por pessoa e setor</h4>
                 <canvas id="referralSectorChart"></canvas>
               </div>
               <div class="chart-card">
@@ -600,7 +631,7 @@
               <div>
                 <span class="admin-overlay-kicker">Acessos</span>
                 <h3>Pessoas e Acessos</h3>
-                <p class="section-note">Gerencie solicitações de acesso, alterações administrativas e a equipe ativa no CRM.</p>
+                <p class="section-note">Gerencie solicitaÃ§Ãµes de acesso, alteraÃ§Ãµes administrativas e a equipe ativa no CRM.</p>
               </div>
               <button type="button" id="closeTeamViewBtn" class="admin-overlay-close" aria-label="Fechar acessos">&times;</button>
             </div>
@@ -695,11 +726,11 @@
           <div class="admin-overlay-frame">
             <div class="admin-overlay-head">
               <div>
-                <span class="admin-overlay-kicker">Configuração</span>
+                <span class="admin-overlay-kicker">ConfiguraÃ§Ã£o</span>
                 <h3>Configuracao</h3>
-                <p class="section-note">Consulte o histórico administrativo do CRM.</p>
+                <p class="section-note">Consulte o histÃ³rico administrativo do CRM.</p>
               </div>
-              <button type="button" id="closeSettingsViewBtn" class="admin-overlay-close" aria-label="Fechar configuração">&times;</button>
+              <button type="button" id="closeSettingsViewBtn" class="admin-overlay-close" aria-label="Fechar configuraÃ§Ã£o">&times;</button>
             </div>
 
             <div class="admin-overlay-body">
@@ -729,9 +760,9 @@
       <div class="intel-placeholder">
         <div class="intel-placeholder-card">
           <img src="assets/pax-insights-symbol-white.png" alt="" class="intel-placeholder-symbol" />
-          <span class="intel-placeholder-kicker">Central de Inteligência</span>
+          <span class="intel-placeholder-kicker">Central de InteligÃªncia</span>
           <h2>Estrutura preparada</h2>
-          <p>Esta área já está reservada no shell do Pax Insights. O conteúdo analítico entra na próxima etapa.</p>
+          <p>Esta Ã¡rea jÃ¡ estÃ¡ reservada no shell do Pax Insights. O conteÃºdo analÃ­tico entra na prÃ³xima etapa.</p>
         </div>
       </div>
     </section>
@@ -768,7 +799,7 @@
         </div>
 
         <div class="form-group">
-          <label for="accountRole">Nível de acesso</label>
+          <label for="accountRole">NÃ­vel de acesso</label>
           <input type="text" id="accountRole" readonly />
         </div>
 
@@ -805,24 +836,24 @@
         </div>
 
         <div class="form-group" id="funnelOfficialDepartmentGroup">
-          <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com edição</label>
+          <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com ediÃ§Ã£o</label>
           <select id="funnelOfficialDepartmentSelect"></select>
-          <p class="helper-text" id="funnelOfficialDepartmentHelper">Quando o funil estiver em "Todos", este departamento pode editar mesmo se os demais só visualizarem.</p>
+          <p class="helper-text" id="funnelOfficialDepartmentHelper">Quando o funil estiver em "Todos", este departamento pode editar mesmo se os demais sÃ³ visualizarem.</p>
         </div>
 
         <div class="form-group">
           <label for="funnelVisibilityScope">Quem pode ver esse funil</label>
           <select id="funnelVisibilityScope">
             <option value="all">Todos</option>
-            <option value="owner">Só eu</option>
-            <option value="departments">Departamentos específicos</option>
+            <option value="owner">SÃ³ eu</option>
+            <option value="departments">Departamentos especÃ­ficos</option>
           </select>
         </div>
 
         <div class="form-group" id="funnelGlobalAccessGroup">
           <label for="funnelGlobalAccessLevel">Quando estiver em "Todos"</label>
           <select id="funnelGlobalAccessLevel">
-            <option value="view">Todos só visualizam</option>
+            <option value="view">Todos sÃ³ visualizam</option>
             <option value="edit">Todos podem editar</option>
           </select>
         </div>
@@ -830,7 +861,7 @@
         <div class="form-group" id="funnelDepartmentsGroup">
           <label>Departamentos com acesso</label>
           <div id="funnelDepartmentsChecklist" class="department-checklist"></div>
-          <p class="helper-text">Use o olho para liberar só visualização e o lápis para permitir edição dentro do funil.</p>
+          <p class="helper-text">Use o olho para liberar sÃ³ visualizaÃ§Ã£o e o lÃ¡pis para permitir ediÃ§Ã£o dentro do funil.</p>
         </div>
 
         <div class="form-group">
@@ -877,10 +908,10 @@
             <label for="owner">Responsavel</label>
             <select id="owner" required></select>
             <div id="ownerCreateBox" class="lead-inline-form hidden">
-              <input type="text" id="ownerCreateInput" placeholder="Novo responsável" />
+              <input type="text" id="ownerCreateInput" placeholder="Novo responsÃ¡vel" />
               <button type="button" id="ownerCreateBtn" class="btn btn-secondary">Criar e selecionar</button>
             </div>
-            <p class="helper-text">Selecione um responsável existente ou crie um novo.</p>
+            <p class="helper-text">Selecione um responsÃ¡vel existente ou crie um novo.</p>
           </div>
 
           <div class="form-group">
@@ -905,7 +936,7 @@
 
           <div class="form-group form-group-full lead-reminder-group">
             <div class="lead-reminder-head">
-              <label for="leadReminderEnabled">Notificação do lead</label>
+              <label for="leadReminderEnabled">NotificaÃ§Ã£o do lead</label>
               <label class="lead-reminder-toggle">
                 <input type="checkbox" id="leadReminderEnabled" />
                 <span>Ativar</span>
@@ -915,30 +946,30 @@
             <div id="leadReminderFields" class="lead-reminder-fields hidden">
               <div class="form-grid">
                 <div class="form-group">
-                  <label for="leadReminderType">Tipo de notificação</label>
+                  <label for="leadReminderType">Tipo de notificaÃ§Ã£o</label>
                   <select id="leadReminderType">
-                    <option value="date">Em uma data específica</option>
+                    <option value="date">Em uma data especÃ­fica</option>
                     <option value="stage_days">Tempo na pipeline atual</option>
                   </select>
                 </div>
 
                 <div class="form-group" id="leadReminderDateGroup">
-                  <label for="leadReminderDate">Data da notificação</label>
+                  <label for="leadReminderDate">Data da notificaÃ§Ã£o</label>
                   <input type="date" id="leadReminderDate" />
                 </div>
 
                 <div class="form-group hidden" id="leadReminderDaysGroup">
-                  <label for="leadReminderDays">Avisar após quantos dias nesta pipeline</label>
+                  <label for="leadReminderDays">Avisar apÃ³s quantos dias nesta pipeline</label>
                   <input type="number" id="leadReminderDays" min="1" step="1" placeholder="Ex.: 5" />
                 </div>
 
                 <div class="form-group form-group-full">
-                  <label for="leadReminderMessage">Observação da notificação</label>
+                  <label for="leadReminderMessage">ObservaÃ§Ã£o da notificaÃ§Ã£o</label>
                   <input type="text" id="leadReminderMessage" placeholder="Ex.: Retornar cliente sobre proposta" />
                 </div>
               </div>
 
-              <p class="helper-text">A notificação aparece para o responsável do lead quando vencer.</p>
+              <p class="helper-text">A notificaÃ§Ã£o aparece para o responsÃ¡vel do lead quando vencer.</p>
             </div>
           </div>
 
@@ -1128,13 +1159,13 @@
         <div class="form-group">
           <label for="funnelGroupOwnerDepartment">Departamento dono do grupo</label>
           <select id="funnelGroupOwnerDepartment"></select>
-          <p class="helper-text">O departamento de quem criou já entra aqui por padrão. A diretoria também pode começar com visualização, e o administrador pode ajustar depois.</p>
+          <p class="helper-text">O departamento de quem criou jÃ¡ entra aqui por padrÃ£o. A diretoria tambÃ©m pode comeÃ§ar com visualizaÃ§Ã£o, e o administrador pode ajustar depois.</p>
         </div>
 
         <div class="form-group">
           <label>Departamentos com acesso ao grupo</label>
           <div id="funnelGroupDepartmentsChecklist" class="department-checklist"></div>
-          <p class="helper-text">Esse acesso vale só para o grupo. Os funis dentro dele continuam particulares.</p>
+          <p class="helper-text">Esse acesso vale sÃ³ para o grupo. Os funis dentro dele continuam particulares.</p>
         </div>
 
         <div class="form-actions">
@@ -1150,6 +1181,6 @@
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="config.js?v=20260415-02"></script>
-  <script src="script.js?v=20260727-03"></script>
+  <script src="script.js?v=20260727-04"></script>
 </body>
 </html>

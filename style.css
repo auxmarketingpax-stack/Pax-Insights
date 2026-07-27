@@ -2716,8 +2716,18 @@ input,select,textarea{
 }
 
 .notifications-btn-icon{
-  font-size:18px;
-  line-height:1;
+  width:18px;
+  height:18px;
+  display:inline-grid;
+  place-items:center;
+  line-height:0;
+}
+
+.notifications-btn-icon svg{
+  width:18px;
+  height:18px;
+  display:block;
+  fill:currentColor;
 }
 
 .notifications-count{
@@ -3027,11 +3037,22 @@ input,select,textarea{
 .profile-theme-switch-side{
   position:relative;
   z-index:1;
-  font-size:15px;
-  line-height:1;
+  width:15px;
+  height:15px;
+  display:inline-grid;
+  place-items:center;
+  line-height:0;
   color:#7d8e86;
   opacity:.42;
   transition:var(--transition);
+}
+
+.profile-theme-switch-side svg,
+.profile-theme-switch-thumb svg{
+  width:15px;
+  height:15px;
+  display:block;
+  fill:currentColor;
 }
 
 .profile-theme-switch-thumb{
@@ -3047,6 +3068,12 @@ input,select,textarea{
   place-items:center;
   box-shadow:0 10px 24px rgba(19,33,28,.16);
   transition:transform .22s ease, background .22s ease, color .22s ease, box-shadow .22s ease;
+}
+
+#themeToggleThumbIcon{
+  display:inline-grid;
+  place-items:center;
+  line-height:0;
 }
 
 .profile-theme-switch.is-dark .profile-theme-switch-thumb{
@@ -3176,6 +3203,21 @@ input,select,textarea{
 .funnel-back-inline:focus-visible{
   color:#155733;
   outline:none;
+}
+
+.funnel-back-inline-icon{
+  width:14px;
+  height:14px;
+  display:inline-grid;
+  place-items:center;
+  margin-right:6px;
+  line-height:0;
+}
+
+.funnel-back-inline-icon svg{
+  width:14px;
+  height:14px;
+  display:block;
 }
 
 .panel,
@@ -4298,6 +4340,25 @@ input,select,textarea{
   outline:none;
 }
 
+.crm-funnel-group-toggle-icon{
+  display:inline-grid;
+  place-items:center;
+  width:14px;
+  height:14px;
+  line-height:0;
+}
+
+.crm-funnel-group-toggle-icon svg{
+  width:14px;
+  height:14px;
+  display:block;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2.2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+}
+
 .crm-funnel-group-copy{
   min-width:0;
   display:grid;
@@ -4397,6 +4458,12 @@ input,select,textarea{
   font-size:18px;
   line-height:1;
   transition:color .2s ease, transform .2s ease;
+}
+
+.funnel-inline-action svg{
+  width:18px;
+  height:18px;
+  display:block;
 }
 
 .funnel-inline-action:hover{

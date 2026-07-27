@@ -341,6 +341,13 @@
     funnelContextMenu: $("funnelContextMenu")
   };
 
+  const ICONS = {
+    sun: '<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M12 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V5a.75.75 0 0 1 .75-.75Zm0 11a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Zm0 4.25a.75.75 0 0 1 .75.75v1.5a.75.75 0 0 1-1.5 0V20.5a.75.75 0 0 1 .75-.75Zm7-7.75a.75.75 0 0 1 .75.75.75.75 0 0 1-.75.75h-1.5a.75.75 0 0 1 0-1.5H19Zm-12.5 0a.75.75 0 0 1 0 1.5H5a.75.75 0 0 1 0-1.5h1.5Zm9.45-5.2a.75.75 0 0 1 1.06 1.06l-1.06 1.06a.75.75 0 0 1-1.06-1.06l1.06-1.06Zm-7.84 7.84a.75.75 0 0 1 1.06 1.06L8.11 16.5a.75.75 0 0 1-1.06-1.06l1.06-1.05Zm8.9 2.11a.75.75 0 0 1 0 1.06.75.75 0 0 1-1.06 0l-1.06-1.05a.75.75 0 1 1 1.06-1.06l1.06 1.05Zm-7.84-7.84a.75.75 0 0 1 0 1.06L8.11 9.72a.75.75 0 0 1-1.06-1.06L8.11 7.6a.75.75 0 0 1 1.06 0Z" fill="currentColor"></path></svg>',
+    moon: '<svg viewBox="0 0 24 24" focusable="false" aria-hidden="true"><path d="M14.5 4.5a.75.75 0 0 1 .79-.73 8.2 8.2 0 1 1-7.52 12.06.75.75 0 0 1 .88-1.05 6.7 6.7 0 0 0 7.95-8.73.75.75 0 0 1 .59-.99 6.6 6.6 0 0 0-2.69-.56Z" fill="currentColor"></path></svg>',
+    chevronRight: '<svg viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"></path></svg>',
+    chevronDown: '<svg viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"></path></svg>'
+  };
+
   const state = {
     supabase: null,
     currentUser: null,
@@ -2744,7 +2751,7 @@
     els.themeToggleBtn?.classList.toggle("is-dark", isDark);
     els.themeToggleBtn?.setAttribute("aria-label", isDark ? "Trocar para tema white" : "Trocar para tema dark");
     if (els.themeToggleThumbIcon) {
-      els.themeToggleThumbIcon.textContent = isDark ? "☾" : "☼";
+      els.themeToggleThumbIcon.innerHTML = isDark ? ICONS.moon : ICONS.sun;
     }
   }
 
@@ -9853,7 +9860,7 @@
         <section class="crm-funnel-group ${collapsed ? "is-collapsed" : ""}" data-funnel-group="${group.id}" data-funnel-group-drop="${group.id}">
           <div class="crm-funnel-group-head" data-funnel-group-head="${group.id}" data-funnel-group-drop="${group.id}">
             <button type="button" class="crm-funnel-group-toggle" data-funnel-group-toggle="${group.id}" aria-label="${collapsed ? "Expandir" : "Recolher"} grupo">
-              <span aria-hidden="true">${collapsed ? "▸" : "▾"}</span>
+              <span class="crm-funnel-group-toggle-icon" aria-hidden="true">${collapsed ? ICONS.chevronRight : ICONS.chevronDown}</span>
             </button>
             <div class="crm-funnel-group-copy">
               <strong>${escapeHtml(group.name)}</strong>
