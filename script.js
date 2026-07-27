@@ -5851,8 +5851,8 @@
         }
 
         mergedSubfunnels[existingIndex] = {
-          ...remoteSubfunnel,
-          ...mergedSubfunnels[existingIndex]
+          ...mergedSubfunnels[existingIndex],
+          ...remoteSubfunnel
         };
       });
 
@@ -5898,8 +5898,8 @@
 
         const localFunnel = mergedFunnels[existingIndex];
         mergedFunnels[existingIndex] = {
-          ...remoteFunnel,
           ...localFunnel,
+          ...remoteFunnel,
           group_id: localFunnel?.group_id || localFunnel?.groupId || remoteFunnel?.group_id || remoteFunnel?.groupId || null,
           subfunnels: mergeRemoteSubfunnelsWithStored(localFunnel?.subfunnels || [], remoteFunnel?.subfunnels || [], deletedSubfunnelIds)
         };
