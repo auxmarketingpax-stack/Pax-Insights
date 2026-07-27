@@ -3082,9 +3082,6 @@
       modal.scrollTop = 0;
       requestAnimationFrame(() => {
         const focusTarget = focusSelector ? modal.querySelector(focusSelector) : null;
-        if (overlay !== els.notificationModalOverlay) {
-          modal.scrollIntoView({ block: "start", inline: "nearest" });
-        }
         focusTarget?.focus?.({ preventScroll: true });
       });
     }
@@ -3094,7 +3091,7 @@
     if (!overlay) return;
     overlay.classList.add("hidden");
     overlay.scrollTop = 0;
-    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay]
+    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay]
       .some((item) => item && !item.classList.contains("hidden"));
     if (!hasOpenOverlay) document.body.classList.remove("modal-open");
   }
@@ -6281,8 +6278,11 @@
           z-index:${total - index};
         "
       >
-        <span class="funnel-diagram-segment-index">${index + 1}</span>
-        <strong>${escapeHtml(subfunnel.name)}</strong>
+        <div class="funnel-diagram-segment-shape" aria-hidden="true"></div>
+        <div class="funnel-diagram-segment-label">
+          <span class="funnel-diagram-segment-index">${index + 1}</span>
+          <strong>${escapeHtml(subfunnel.name)}</strong>
+        </div>
       </div>
     `).join("");
 
