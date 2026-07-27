@@ -72,6 +72,8 @@
     teamList: $("teamList"),
     accessRequestsList: $("accessRequestsList"),
     adminRequestsList: $("adminRequestsList"),
+    closeTeamViewBtn: $("closeTeamViewBtn"),
+    closeSettingsViewBtn: $("closeSettingsViewBtn"),
     structureFunnelSelect: $("structureFunnelSelect"),
     structureSubfunnelSelect: $("structureSubfunnelSelect"),
     stagesConfigList: $("stagesConfigList"),
@@ -215,6 +217,7 @@
     selectedLeadIds: new Set(),
     search: "",
     filters: Object.fromEntries(filterConfigs.map((item) => [item.key, ""])),
+    lastWorkspaceView: "funil",
   };
 
   function escapeHtml(value) {
@@ -1036,8 +1039,12 @@
   }
 
   function bindView(name) {
-    state.activeView = name;
     const enteringAdminOverlay = name === "equipe" || name === "configuracoes";
+    if (!enteringAdminOverlay) {
+      state.lastWorkspaceView = name;
+    }
+
+    state.activeView = name;
     if (name === "funil") {
       state.funnelSidebarOpen = true;
     } else {
@@ -1045,7 +1052,9 @@
     }
 
     document.querySelectorAll(".view").forEach((view) => {
-      view.classList.toggle("active-view", view.id === `view-${name}`);
+      const isActive = view.id === `view-${name}`;
+      view.classList.toggle("active-view", isActive);
+      view.classList.toggle("hidden", !isActive);
     });
 
     els.app?.classList.toggle("admin-overlay-mode", enteringAdminOverlay);
@@ -1262,6 +1271,7 @@
       els.shellTabIntel?.classList.remove("active");
       els.shellViewCrm?.classList.add("shell-view-active");
       els.shellViewCrm?.classList.remove("hidden");
+      els.shellViewIntel?.classList.remove("shell-view-active");
       els.shellViewIntel?.classList.add("hidden");
     });
 
@@ -1269,9 +1279,18 @@
       state.shellView = "intel";
       els.shellTabIntel?.classList.add("active");
       els.shellTabCrm?.classList.remove("active");
+      els.shellViewIntel?.classList.add("shell-view-active");
       els.shellViewIntel?.classList.remove("hidden");
       els.shellViewCrm?.classList.add("hidden");
       els.shellViewCrm?.classList.remove("shell-view-active");
+    });
+
+    els.closeTeamViewBtn?.addEventListener("click", () => {
+      bindView(state.lastWorkspaceView || "funil");
+    });
+
+    els.closeSettingsViewBtn?.addEventListener("click", () => {
+      bindView(state.lastWorkspaceView || "funil");
     });
 
     $$("[data-view]").forEach((button) => {
