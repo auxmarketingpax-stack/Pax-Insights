@@ -304,6 +304,10 @@
     savedStageTypes: $("savedStageTypes"),
     savedStageTypeActions: $("savedStageTypeActions"),
     removeSelectedStageTypeBtn: $("removeSelectedStageTypeBtn"),
+    stageReminderEnabled: $("stageReminderEnabled"),
+    stageReminderFields: $("stageReminderFields"),
+    stageReminderDays: $("stageReminderDays"),
+    stageReminderMessage: $("stageReminderMessage"),
     addLeadSourceBtn: $("addLeadSourceBtn"),
     leadSourceName: $("leadSourceName"),
     leadSourcesConfigList: $("leadSourcesConfigList"),
@@ -499,6 +503,7 @@
   const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
   const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
   const DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.deleted-funnel-workspace-ids-v1`;
+  const NOTIFICATION_DISMISSALS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.notification-dismissals-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
   const LEGACY_CUSTOM_STAGE_TYPES_STORAGE_KEY = "crmPax.customStageTypes";
@@ -3377,6 +3382,29 @@
     return null;
   }
 
+  function normalizeStageReminderConfig(config = null) {
+    if (!config || typeof config !== "object") return null;
+    const days = Math.max(1, Number(config.days || 0) || 0);
+    const message = normalizeSpacing(config.message || config.label || "");
+    if (!days) return null;
+    return {
+      days,
+      message
+    };
+  }
+
+  function normalizeLeadStageTracking(tracking = null) {
+    const normalized = {};
+    if (!tracking || typeof tracking !== "object") return normalized;
+    Object.entries(tracking).forEach(([stageId, rawDate]) => {
+      const nextStageId = String(stageId || "").trim();
+      const nextDate = normalizeDateInput(rawDate || "");
+      if (!nextStageId || !nextDate) return;
+      normalized[nextStageId] = nextDate;
+    });
+    return normalized;
+  }
+
   function cleanObservationList(observations) {
     return (Array.isArray(observations) ? observations : [])
       .map((item) => ({
@@ -3565,7 +3593,8 @@
         contract_number: "",
         referral_name: "",
         referral_sector: "",
-        reminder: null
+        reminder: null,
+        stage_tracking: {}
       };
     }
 
@@ -3579,6 +3608,7 @@
       const referralName = String(parsed?.referral_name || "").trim();
       const referralSector = String(parsed?.referral_sector || "").trim();
       const reminder = normalizeLeadReminder(parsed?.reminder || null);
+      const stageTracking = normalizeLeadStageTracking(parsed?.stage_tracking || parsed?.stageTracking || {});
       if (!plans.length && legacyPlan) {
         plans.push({ name: legacyPlan, value: Number.isFinite(Number(leadValue)) ? Number(leadValue) : 0 });
       } else if (!plans.length && Number(leadValue || 0) > 0) {
@@ -3597,7 +3627,8 @@
         contract_number: contractNumber,
         referral_name: referralName,
         referral_sector: referralSector,
-        reminder
+        reminder,
+        stage_tracking: stageTracking
       };
     } catch (_error) {
       const text = raw.trim();
@@ -3609,7 +3640,8 @@
         contract_number: "",
         referral_name: "",
         referral_sector: "",
-        reminder: null
+        reminder: null,
+        stage_tracking: {}
       };
     }
   }
@@ -3623,10 +3655,11 @@
     const referralName = String(meta.referral_name || "").trim();
     const referralSector = String(meta.referral_sector || "").trim();
     const reminder = normalizeLeadReminder(meta.reminder || null);
+    const stageTracking = normalizeLeadStageTracking(meta.stage_tracking || meta.stageTracking || {});
 
-    if (!plan && !plans.length && !observations.length && !contractNumber && !referralName && !referralSector && !reminder) return legacyText;
+    if (!plan && !plans.length && !observations.length && !contractNumber && !referralName && !referralSector && !reminder && !Object.keys(stageTracking).length) return legacyText;
 
-    return `__CRM_META__${JSON.stringify({ plan, plans, legacyText, observations, contract_number: contractNumber, referral_name: referralName, referral_sector: referralSector, reminder })}`;
+    return `__CRM_META__${JSON.stringify({ plan, plans, legacyText, observations, contract_number: contractNumber, referral_name: referralName, referral_sector: referralSector, reminder, stage_tracking: stageTracking })}`;
   }
 
   function normalizeLead(lead, options = {}) {
@@ -3798,6 +3831,21 @@
     return normalizeLeadReminder(lead?._meta?.reminder || null);
   }
 
+  function getLeadStageTracking(lead) {
+    return normalizeLeadStageTracking(lead?._meta?.stage_tracking || lead?._meta?.stageTracking || {});
+  }
+
+  function getLeadStageEntryDate(lead, stageId = lead?.stage_id) {
+    const normalizedStageId = String(stageId || "").trim();
+    const tracking = getLeadStageTracking(lead);
+    if (normalizedStageId && tracking[normalizedStageId]) return tracking[normalizedStageId];
+    return normalizeDateInput(lead?.start_date || "") || getLocalIsoDate();
+  }
+
+  function getStageReminderConfig(stageId) {
+    return normalizeStageReminderConfig(state.funnelWorkspace?.stageReminderConfigs?.[String(stageId || "").trim()] || null);
+  }
+
   function isLeadOwnedByCurrentUser(lead) {
     const currentOwnerKey = normalizeComparisonText(getCurrentLeadOwnerName());
     const leadOwnerKey = normalizeComparisonText(lead?.owner || lead?.owner_raw || "");
@@ -3835,10 +3883,27 @@
     return null;
   }
 
+  function getPipelineReminderNotification(lead) {
+    if (!lead || !isLeadOwnedByCurrentUser(lead)) return null;
+    const stageId = String(lead.stage_id || "").trim();
+    const config = getStageReminderConfig(stageId);
+    if (!stageId || !config) return null;
+    const elapsedDays = diffDaysBetweenDates(getLeadStageEntryDate(lead, stageId), getLocalIsoDate());
+    if (elapsedDays < Number(config.days || 0)) return null;
+    return {
+      leadId: lead.id,
+      type: "pipeline_days",
+      dueLabel: `${elapsedDays} dia(s) na pipeline`,
+      message: config.message || `Lead parado há ${elapsedDays} dia(s) nesta pipeline`,
+      reminder: config,
+      stageReminder: true
+    };
+  }
+
   function getActiveLeadNotifications() {
     return state.leads
       .map((lead) => {
-        const notification = getLeadReminderNotification(lead);
+        const notification = getLeadReminderNotification(lead) || getPipelineReminderNotification(lead);
         if (!notification) return null;
         const stage = state.stages.find((item) => item.id === lead.stage_id) || null;
         const subfunnelId = getLeadSubfunnelId(lead);
@@ -3849,9 +3914,15 @@
           lead,
           stage,
           subfunnel,
-          funnel
+          funnel,
+          dismissKey: buildNotificationDismissKey({
+            ...notification,
+            lead,
+            stage
+          })
         };
       })
+      .filter((item) => item && !isNotificationDismissed(item))
       .filter(Boolean)
       .sort((a, b) => String(a.lead?.name || "").localeCompare(String(b.lead?.name || ""), "pt-BR"));
   }
@@ -3895,6 +3966,16 @@
       if (els.leadReminderDate) els.leadReminderDate.value = "";
       if (els.leadReminderDays) els.leadReminderDays.value = "";
       if (els.leadReminderMessage) els.leadReminderMessage.value = "";
+    }
+  }
+
+  function toggleStageReminderFields({ clearWhenHidden = false } = {}) {
+    const enabled = Boolean(els.stageReminderEnabled?.checked);
+    els.stageReminderFields?.classList.toggle("hidden", !enabled);
+
+    if (!enabled && clearWhenHidden) {
+      if (els.stageReminderDays) els.stageReminderDays.value = "";
+      if (els.stageReminderMessage) els.stageReminderMessage.value = "";
     }
   }
 
@@ -4239,7 +4320,8 @@
         }
       ],
       stageAssignments: {},
-      leadAssignments: {}
+      leadAssignments: {},
+      stageReminderConfigs: {}
     };
   }
 
@@ -4250,7 +4332,8 @@
         groups: Array.isArray(parsed.groups) ? parsed.groups : [],
         funnels: Array.isArray(parsed.funnels) ? parsed.funnels : [],
         stageAssignments: parsed.stageAssignments && typeof parsed.stageAssignments === "object" ? parsed.stageAssignments : {},
-        leadAssignments: parsed.leadAssignments && typeof parsed.leadAssignments === "object" ? parsed.leadAssignments : {}
+        leadAssignments: parsed.leadAssignments && typeof parsed.leadAssignments === "object" ? parsed.leadAssignments : {},
+        stageReminderConfigs: parsed.stageReminderConfigs && typeof parsed.stageReminderConfigs === "object" ? parsed.stageReminderConfigs : {}
       };
     };
 
@@ -4261,6 +4344,7 @@
         + (Array.isArray(workspace.funnels) ? workspace.funnels.length : 0) * 100
         + Object.keys(workspace.stageAssignments || {}).length
         + Object.keys(workspace.leadAssignments || {}).length
+        + Object.keys(workspace.stageReminderConfigs || {}).length
       );
     };
 
@@ -4315,6 +4399,49 @@
     if (state.funnelDataLoadedFromSupabase) {
       queueFunnelWorkspaceSync();
     }
+  }
+
+  function readNotificationDismissals() {
+    const parsed = readJsonStorageValue(NOTIFICATION_DISMISSALS_STORAGE_KEY);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  }
+
+  function writeNotificationDismissals(value = {}) {
+    try {
+      window.localStorage.setItem(NOTIFICATION_DISMISSALS_STORAGE_KEY, JSON.stringify(value && typeof value === "object" ? value : {}));
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
+  function buildNotificationDismissKey(notification) {
+    if (!notification?.leadId || !notification?.type) return "";
+    if (notification.type === "date") {
+      return `${notification.leadId}:date:${notification.reminder?.due_date || ""}`;
+    }
+    if (notification.type === "stage_days") {
+      return `${notification.leadId}:stage_days:${notification.reminder?.stage_id || ""}:${notification.reminder?.days || ""}:${notification.reminder?.start_date || ""}`;
+    }
+    if (notification.type === "pipeline_days") {
+      return `${notification.leadId}:pipeline_days:${notification.stage?.id || notification.lead?.stage_id || ""}:${notification.reminder?.days || ""}:${getLeadStageEntryDate(notification.lead, notification.stage?.id || notification.lead?.stage_id || "")}`;
+    }
+    return `${notification.leadId}:${notification.type}`;
+  }
+
+  function dismissNotification(notificationKey) {
+    const normalizedKey = String(notificationKey || "").trim();
+    if (!normalizedKey) return;
+    const current = readNotificationDismissals();
+    current[normalizedKey] = getLocalIsoDate();
+    writeNotificationDismissals(current);
+    renderNotifications();
+  }
+
+  function isNotificationDismissed(notification) {
+    const notificationKey = buildNotificationDismissKey(notification);
+    if (!notificationKey) return false;
+    const dismissals = readNotificationDismissals();
+    return Boolean(dismissals[notificationKey]);
   }
 
   function readStoredFunnelRouteMigrationDone() {
@@ -4873,7 +5000,8 @@
     return {
       funnels,
       stageAssignments,
-      leadAssignments
+      leadAssignments,
+      stageReminderConfigs: {}
     };
   }
 
@@ -5640,6 +5768,10 @@
         leadAssignments: {
           ...(localWorkspace.leadAssignments || {}),
           ...(remoteWorkspace.leadAssignments || {})
+        },
+        stageReminderConfigs: {
+          ...(remoteWorkspace.stageReminderConfigs || {}),
+          ...(localWorkspace.stageReminderConfigs || {})
         }
       };
     };
@@ -5720,6 +5852,14 @@
       const stageAssignedId = nextStageAssignments[lead.stage_id] || fallbackSubfunnelId;
       nextLeadAssignments[lead.id] = validSubfunnelIds.has(normalizedAssignedId) ? normalizedAssignedId : stageAssignedId;
     });
+    const validStageIds = new Set(state.stages.map((stage) => String(stage.id || "").trim()).filter(Boolean));
+    const nextStageReminderConfigs = {};
+    Object.entries(workspace.stageReminderConfigs || {}).forEach(([stageId, config]) => {
+      const normalizedStageId = String(stageId || "").trim();
+      const normalizedConfig = normalizeStageReminderConfig(config);
+      if (!normalizedStageId || !validStageIds.has(normalizedStageId) || !normalizedConfig) return;
+      nextStageReminderConfigs[normalizedStageId] = normalizedConfig;
+    });
 
     const dedupedWorkspace = dedupeFunnelWorkspace(normalizedFunnels, nextStageAssignments, nextLeadAssignments);
     const groupedWorkspace = ensureDerivedDefaultGroups(normalizedGroups, dedupedWorkspace.funnels);
@@ -5727,7 +5867,8 @@
       groups: groupedWorkspace.groups,
       funnels: groupedWorkspace.funnels,
       stageAssignments: dedupedWorkspace.stageAssignments,
-      leadAssignments: dedupedWorkspace.leadAssignments
+      leadAssignments: dedupedWorkspace.leadAssignments,
+      stageReminderConfigs: nextStageReminderConfigs
     };
 
     if (!getFunnelById(state.activeFunnelId) || !canViewFunnelItem(getFunnelById(state.activeFunnelId))) {
@@ -10026,6 +10167,7 @@
       els.notificationsCount.textContent = String(notifications.length);
       els.notificationsCount.classList.toggle("hidden", notifications.length === 0);
     }
+    els.notificationsBtn?.classList.toggle("has-alert", notifications.length > 0);
     if (els.notificationsPanelMeta) {
       els.notificationsPanelMeta.textContent = notifications.length
         ? `${notifications.length} pendência(s)`
@@ -10038,16 +10180,19 @@
     }
 
     els.notificationsList.innerHTML = notifications.map((item) => `
-      <button type="button" class="notifications-item" data-notification-lead-id="${escapeHtml(item.leadId)}">
-        <div class="notifications-item-head">
-          <span class="notifications-item-title">${escapeHtml(item.lead?.name || "Lead")}</span>
-          <span class="notifications-item-badge">${escapeHtml(item.dueLabel)}</span>
-        </div>
-        <div class="notifications-item-copy">${escapeHtml(item.message)}</div>
-        <div class="notifications-item-meta">
-          ${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.subfunnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}
-        </div>
-      </button>
+      <div class="notifications-item-shell">
+        <button type="button" class="notifications-item" data-notification-lead-id="${escapeHtml(item.leadId)}">
+          <div class="notifications-item-head">
+            <span class="notifications-item-title">${escapeHtml(item.lead?.name || "Lead")}</span>
+            <span class="notifications-item-badge">${escapeHtml(item.dueLabel)}</span>
+          </div>
+          <div class="notifications-item-copy">${escapeHtml(item.message)}</div>
+          <div class="notifications-item-meta">
+            ${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.subfunnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}
+          </div>
+        </button>
+        <button type="button" class="notifications-item-dismiss" data-dismiss-notification="${escapeHtml(item.dismissKey)}" aria-label="Dispensar notificação">×</button>
+      </div>
     `).join("");
   }
 
@@ -10434,11 +10579,23 @@
     openModalOverlay(els.modalOverlay, "#name");
   }
 
+  function openLeadNotificationEditor(lead) {
+    if (!lead) return;
+    openLeadModal(lead);
+    if (els.leadReminderEnabled) els.leadReminderEnabled.checked = true;
+    if (els.leadReminderType) els.leadReminderType.value = "date";
+    toggleLeadReminderFields();
+    requestAnimationFrame(() => {
+      els.leadReminderDate?.focus();
+      els.leadReminderFields?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+
   function closeLeadModal() {
     closeModalOverlay(els.modalOverlay);
   }
 
-  function openStageModal(stage = null) {
+  function openStageModal(stage = null, options = {}) {
     closeAllModals();
     els.stageForm.reset();
     els.stageId.value = stage?.id || "";
@@ -10456,9 +10613,29 @@
     }
     els.stageColor.value = sanitizeHexColor(stage?.color);
     refreshStageTypeOptions(stage?.custom_stage_type ? `custom:${stage.custom_stage_type}` : (stage?.stage_type || "andamento"), stage?.custom_stage_type || "");
+    const stageReminder = getStageReminderConfig(stage?.id);
+    if (els.stageReminderEnabled) els.stageReminderEnabled.checked = Boolean(stageReminder);
+    if (els.stageReminderDays) els.stageReminderDays.value = stageReminder?.days ? String(stageReminder.days) : "";
+    if (els.stageReminderMessage) els.stageReminderMessage.value = stageReminder?.message || "";
+    toggleStageReminderFields({ clearWhenHidden: !stageReminder });
     updateStageColorPreview(els.stageColor.value);
     syncBrandedSelects();
     openModalOverlay(els.stageModalOverlay, "#stageName");
+    if (options.openReminder) {
+      if (els.stageReminderEnabled && !els.stageReminderEnabled.checked) {
+        els.stageReminderEnabled.checked = true;
+      }
+      toggleStageReminderFields();
+      requestAnimationFrame(() => {
+        els.stageReminderDays?.focus();
+        els.stageReminderFields?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
+  }
+
+  function openStageNotificationEditor(stage) {
+    if (!stage) return;
+    openStageModal(stage, { openReminder: true });
   }
 
   function closeStageModal() {
@@ -11378,6 +11555,15 @@
       }
     }
 
+    const nextStageTracking = normalizeLeadStageTracking(existingMeta.stage_tracking || {});
+    if (selectedStageId) {
+      const stageStartDate = normalizeDateInput(payload.start_date || "") || getLocalIsoDate();
+      const previousStageId = String(existingLead?.stage_id || "").trim();
+      if (!nextStageTracking[selectedStageId] || previousStageId !== selectedStageId) {
+        nextStageTracking[selectedStageId] = existingLead ? getLocalIsoDate() : stageStartDate;
+      }
+    }
+
     payload.notes = serializeLeadMeta({
       ...existingMeta,
       plans: draftPlans,
@@ -11387,7 +11573,8 @@
       contract_number: contractNumber,
       referral_name: referralName,
       referral_sector: referralSector,
-      reminder: nextReminder
+      reminder: nextReminder,
+      stage_tracking: nextStageTracking
     });
 
     let error;
@@ -11469,10 +11656,17 @@
       position: els.stageId.value ? (state.stages.find((s) => s.id === els.stageId.value)?.position ?? state.stages.length) : state.stages.length,
       created_by: state.currentUser.id
     };
+    const nextStageReminder = els.stageReminderEnabled?.checked
+      ? normalizeStageReminderConfig({
+          days: els.stageReminderDays?.value || 0,
+          message: els.stageReminderMessage?.value || ""
+        })
+      : null;
 
     if (!payload.name) return alert("Informe o nome da etapa.");
     if (!selectedSubfunnelId) return alert("Selecione o subfunil desta pipeline.");
     if (payload.stage_type === "personalizado" && !payload.custom_stage_type) return alert("Informe o tipo personalizado.");
+    if (els.stageReminderEnabled?.checked && !nextStageReminder) return alert("Informe em quantos dias a notificação da pipeline deve aparecer.");
 
     if (false && payload.stage_type === "personalizado") {
       const savedType = await saveCustomStageType(payload.custom_stage_type);
@@ -11503,6 +11697,17 @@
       const { error } = await state.supabase.from("stages").update({ name: payload.name, color: payload.color, stage_type: payload.stage_type, custom_stage_type: payload.custom_stage_type, position: payload.position }).eq("id", els.stageId.value);
       if (error) return alert(`Erro no Supabase: ${error.message}`);
       assignStageToSubfunnel(els.stageId.value, selectedSubfunnelId);
+      if (state.funnelWorkspace) {
+        if (nextStageReminder) {
+          state.funnelWorkspace.stageReminderConfigs = {
+            ...(state.funnelWorkspace.stageReminderConfigs || {}),
+            [els.stageId.value]: nextStageReminder
+          };
+        } else if (state.funnelWorkspace.stageReminderConfigs) {
+          delete state.funnelWorkspace.stageReminderConfigs[els.stageId.value];
+        }
+        writeStoredFunnelWorkspace();
+      }
       await logChange("update", "stage", els.stageId.value, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, { before, after: payload });
     } else {
       const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
@@ -11510,6 +11715,13 @@
       await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
       if (data?.id) {
         assignStageToSubfunnel(data.id, selectedSubfunnelId);
+        if (state.funnelWorkspace && nextStageReminder) {
+          state.funnelWorkspace.stageReminderConfigs = {
+            ...(state.funnelWorkspace.stageReminderConfigs || {}),
+            [data.id]: nextStageReminder
+          };
+          writeStoredFunnelWorkspace();
+        }
       }
     }
 
@@ -11528,9 +11740,18 @@
       return;
     }
 
+    const leadMeta = getLeadMeta(lead?.notes || "", lead?.value || 0);
+    const nextStageTracking = normalizeLeadStageTracking(leadMeta.stage_tracking || {});
+    nextStageTracking[stageId] = getLocalIsoDate();
     const { error } = await state.supabase
       .from("leads")
-      .update({ stage_id: stageId })
+      .update({
+        stage_id: stageId,
+        notes: serializeLeadMeta({
+          ...leadMeta,
+          stage_tracking: nextStageTracking
+        })
+      })
       .eq("id", lead.id);
 
     if (error) return alert(`Erro no Supabase: ${error.message}`);
@@ -11652,6 +11873,10 @@
       .eq("id", id);
 
     if (error) return alert(`Erro no Supabase: ${error.message}`);
+    if (state.funnelWorkspace?.stageReminderConfigs) {
+      delete state.funnelWorkspace.stageReminderConfigs[id];
+      writeStoredFunnelWorkspace();
+    }
 
     await logChange(
       "delete",
@@ -11813,6 +12038,24 @@
 
     document.querySelectorAll(".card").forEach((card) => {
       card.draggable = canReorderPipelineLeads;
+      card.oncontextmenu = (event) => {
+        const lead = state.leads.find((item) => item.id === card.dataset.leadId);
+        if (!lead) return;
+        const actions = [];
+        if (canEditLeads(lead)) {
+          actions.push(
+            { id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) },
+            { id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) }
+          );
+        }
+        if (canDeleteLeads(lead)) {
+          actions.push({ id: `delete-lead-${lead.id}`, label: "Excluir", danger: true, handler: () => deleteLead(lead.id) });
+        }
+        if (!actions.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions });
+      };
       card.ondragstart = (event) => {
         if (!canReorderPipelineLeads) {
           event.preventDefault();
@@ -11836,6 +12079,22 @@
     });
 
     document.querySelectorAll(".column").forEach((column) => {
+      column.oncontextmenu = (event) => {
+        if (event.target.closest(".card")) return;
+        const stage = state.stages.find((item) => item.id === column.dataset.stageId);
+        if (!stage || !canManageStages()) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openFunnelContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          actions: [
+            { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
+            { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) },
+            { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => deleteStage(stage.id) }
+          ]
+        });
+      };
       if (!canReorderPipelineLeads) {
         column.ondragover = null;
         column.ondragleave = null;
@@ -12459,6 +12718,7 @@
     els.closeStageModalBtn.addEventListener("click", closeStageModal);
     els.cancelStageBtn.addEventListener("click", closeStageModal);
     els.stageForm.addEventListener("submit", submitStage);
+    els.stageReminderEnabled?.addEventListener("change", () => toggleStageReminderFields({ clearWhenHidden: !els.stageReminderEnabled.checked }));
     els.stageColor.addEventListener("input", (e) => updateStageColorPreview(e.target.value));
     els.stageType.addEventListener("change", toggleCustomStageTypeField);
     els.structureFunnelSelect?.addEventListener("change", () => {
@@ -12528,6 +12788,12 @@
           if (lead) openLeadModal(lead);
         }
         if (leadBtn.dataset.action === "delete-lead") deleteLead(leadBtn.dataset.id);
+      }
+
+      const dismissNotificationBtn = event.target.closest("[data-dismiss-notification]");
+      if (dismissNotificationBtn) {
+        dismissNotification(dismissNotificationBtn.dataset.dismissNotification);
+        return;
       }
 
       const notificationBtn = event.target.closest("[data-notification-lead-id]");
