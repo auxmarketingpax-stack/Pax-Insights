@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
   const $ = (id) => document.getElementById(id);
 
   const els = {
@@ -324,6 +324,7 @@
     notificationModalOverlay: $("notificationModalOverlay"),
     closeNotificationModalBtn: $("closeNotificationModalBtn"),
     cancelNotificationBtn: $("cancelNotificationBtn"),
+    deleteNotificationBtn: $("deleteNotificationBtn"),
     notificationForm: $("notificationForm"),
     notificationModalTitle: $("notificationModalTitle"),
     notificationModalDescription: $("notificationModalDescription"),
@@ -3065,8 +3066,10 @@
     if (modal) {
       modal.scrollTop = 0;
       requestAnimationFrame(() => {
-        modal.scrollIntoView({ block: "start", inline: "nearest" });
         const focusTarget = focusSelector ? modal.querySelector(focusSelector) : null;
+        if (overlay !== els.notificationModalOverlay) {
+          modal.scrollIntoView({ block: "start", inline: "nearest" });
+        }
         focusTarget?.focus?.({ preventScroll: true });
       });
     }
@@ -4031,6 +4034,30 @@
 
     els.stageReminderSummary.innerHTML = buildReminderSummaryMarkup("Notificação salva", lines);
     els.stageReminderSummary.classList.remove("hidden");
+  }
+
+  function leadHasStageNotification(lead = null) {
+    return Boolean(lead?.stage_id && getStageReminderConfig(lead.stage_id));
+  }
+
+  function toggleNotificationDeleteButton(visible, label = "Excluir notificação") {
+    if (!els.deleteNotificationBtn) return;
+    els.deleteNotificationBtn.classList.add("hidden");
+  }
+
+  function applyLeadReminderLocally(leadId, nextReminder) {
+    state.leads = state.leads.map((lead) => {
+      if (lead.id !== leadId) return lead;
+      const meta = getLeadMeta(lead.notes || "", lead.value || 0);
+      const nextMeta = {
+        ...meta,
+        reminder: nextReminder || null
+      };
+      return normalizeLead({
+        ...lead,
+        notes: serializeLeadMeta(nextMeta)
+      });
+    });
   }
 
   function getLeadMonthKey(lead) {
@@ -10629,6 +10656,10 @@
 
   function openLeadNotificationEditor(lead) {
     if (!lead) return;
+    if (leadHasStageNotification(lead)) {
+      alert("Esta pipeline já possui uma notificação ativa. Neste lead só ficam disponíveis Editar e Excluir.");
+      return;
+    }
     const reminder = getLeadReminder(lead);
     closeAllModals();
     els.notificationForm?.reset();
@@ -10641,6 +10672,7 @@
     if (els.leadNotificationEnabled) els.leadNotificationEnabled.checked = Boolean(reminder);
     if (els.leadNotificationDate) els.leadNotificationDate.value = reminder?.type === "date" ? (reminder.due_date || "") : "";
     if (els.leadNotificationMessage) els.leadNotificationMessage.value = reminder?.message || "";
+    toggleNotificationDeleteButton(Boolean(reminder));
     toggleLeadReminderFields({ clearWhenHidden: !reminder });
     openModalOverlay(els.notificationModalOverlay, "#leadNotificationEnabled");
   }
@@ -10687,6 +10719,7 @@
     if (els.stageNotificationEnabled) els.stageNotificationEnabled.checked = Boolean(reminder);
     if (els.stageNotificationDays) els.stageNotificationDays.value = reminder?.days ? String(reminder.days) : "";
     if (els.stageNotificationMessage) els.stageNotificationMessage.value = reminder?.message || "";
+    toggleNotificationDeleteButton(Boolean(reminder));
     toggleStageReminderFields({ clearWhenHidden: !reminder });
     openModalOverlay(els.notificationModalOverlay, "#stageNotificationEnabled");
   }
@@ -10696,6 +10729,7 @@
   }
 
   function closeNotificationModal() {
+    toggleNotificationDeleteButton(false);
     closeModalOverlay(els.notificationModalOverlay);
   }
 
@@ -11745,6 +11779,10 @@
         alert("Seu perfil não tem permissão para alterar esta notificação.");
         return;
       }
+      if (leadHasStageNotification(lead)) {
+        alert("Esta pipeline já possui uma notificação ativa. Neste lead não é possível manter outra notificação.");
+        return;
+      }
 
       const existingMeta = getLeadMeta(lead.notes || "", lead.value || 0);
       const enabled = Boolean(els.leadNotificationEnabled?.checked);
@@ -11772,6 +11810,8 @@
         .eq("id", targetId);
 
       if (error) return alert(`Erro no Supabase: ${error.message}`);
+      applyLeadReminderLocally(targetId, nextReminder);
+      renderNotifications();
 
       await logChange(
         "update",
@@ -11816,6 +11856,26 @@
 
         writeStoredFunnelWorkspace();
       }
+
+      if (nextReminder) {
+        const conflictingLeads = state.leads.filter((lead) => String(lead?.stage_id || "").trim() === targetId && getLeadReminder(lead));
+        for (const lead of conflictingLeads) {
+          const meta = getLeadMeta(lead.notes || "", lead.value || 0);
+          const { error } = await state.supabase
+            .from("leads")
+            .update({
+              notes: serializeLeadMeta({
+                ...meta,
+                reminder: null
+              })
+            })
+            .eq("id", lead.id);
+          if (error) return alert(`Erro no Supabase: ${error.message}`);
+          applyLeadReminderLocally(lead.id, null);
+        }
+      }
+
+      renderNotifications();
 
       await logChange(
         "update",
@@ -12167,10 +12227,10 @@
         if (!lead) return;
         const actions = [];
         if (canEditLeads(lead)) {
-          actions.push(
-            { id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) },
-            { id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) }
-          );
+          actions.push({ id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) });
+          if (!leadHasStageNotification(lead)) {
+            actions.push({ id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) });
+          }
         }
         if (canDeleteLeads(lead)) {
           actions.push({ id: `delete-lead-${lead.id}`, label: "Excluir", danger: true, handler: () => deleteLead(lead.id) });

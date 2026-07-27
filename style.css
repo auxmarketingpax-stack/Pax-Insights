@@ -2799,6 +2799,10 @@ input,select,textarea{
   background:#f8faf8;
 }
 
+.notifications-empty{
+  padding:12px 14px;
+}
+
 .notifications-item-shell{
   padding:12px;
   display:grid;
@@ -2920,8 +2924,10 @@ input,select,textarea{
 
 .lead-reminder-toggle input[type="checkbox"]:checked{
   border-color:#6fad2b;
-  background:#f3f8f0;
+  background-color:#f3f8f0;
   background-image:radial-gradient(circle, #6fad2b 0 45%, transparent 52%);
+  background-repeat:no-repeat;
+  background-position:center;
   background-size:10px 10px;
   box-shadow:0 0 0 3px rgba(111,173,43,.14);
 }
@@ -2958,6 +2964,11 @@ input,select,textarea{
   color:#51635a;
   font-size:13px;
   line-height:1.45;
+}
+
+#notificationModalOverlay{
+  align-items:center;
+  padding:20px;
 }
 
 .card-highlighted{
@@ -3358,8 +3369,13 @@ input,select,textarea{
 
 .funnel-back-inline:hover,
 .funnel-back-inline:focus-visible{
-  color:#155733;
+  color:#6fad2b;
   outline:none;
+}
+
+.funnel-back-inline:hover *,
+.funnel-back-inline:focus-visible *{
+  color:#6fad2b;
 }
 
 .funnel-back-inline-icon{
@@ -6040,7 +6056,9 @@ body[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]{
 
 html[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]:checked,
 body[data-theme="dark"] .lead-reminder-toggle input[type="checkbox"]:checked{
-  background:#1f3327 !important;
+  background-color:#1f3327 !important;
+  background-repeat:no-repeat !important;
+  background-position:center !important;
   border-color:#6fad2b !important;
   box-shadow:0 0 0 3px rgba(111,173,43,.16) !important;
 }
