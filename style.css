@@ -4755,8 +4755,32 @@ input,select,textarea{
 
 .funnel-cards-grid{
   display:grid;
-  grid-template-columns:repeat(auto-fit,minmax(230px,1fr));
+  grid-template-columns:repeat(5,minmax(0,1fr));
   gap:16px;
+}
+
+@media (max-width:1500px){
+  .funnel-cards-grid{
+    grid-template-columns:repeat(4,minmax(0,1fr));
+  }
+}
+
+@media (max-width:1180px){
+  .funnel-cards-grid{
+    grid-template-columns:repeat(3,minmax(0,1fr));
+  }
+}
+
+@media (max-width:860px){
+  .funnel-cards-grid{
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+@media (max-width:620px){
+  .funnel-cards-grid{
+    grid-template-columns:1fr;
+  }
 }
 
 .funnel-card{
