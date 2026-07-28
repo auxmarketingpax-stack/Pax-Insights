@@ -630,18 +630,30 @@
     const aliases = {
       indicacaocolaborador: "Indicação",
       indicacaodecolaborador: "Indicação",
+      indicacao: "Indicação",
+      indicao: "Indicação",
+      indicao: "Indicação",
+      acim: "ACIM",
       cdl: "CDL",
       sudoexpo: "SUDOEXPO",
       fieldsales: "Field Sales",
       instagram: "Instagram",
+      instagran: "Instagram",
+      instgran: "Instagram",
       facebook: "Facebook",
       whatsapp: "WhatsApp",
       whatsap: "WhatsApp",
       whats: "WhatsApp",
       wpp: "WhatsApp",
-      ligacao: "Ligação",
-      mensagem: "Mensagem",
-      telefone: "Telefone"
+      ligacao: "Ligação / Mensagem",
+      mensagem: "Ligação / Mensagem",
+      telefone: "Ligação / Mensagem",
+      telef: "Ligação / Mensagem",
+      ligacaomensagem: "Ligação / Mensagem",
+      ligacaoemensagem: "Ligação / Mensagem",
+      telefonemensagem: "Ligação / Mensagem",
+      telefoneemensagem: "Ligação / Mensagem",
+      telefmensagem: "Ligação / Mensagem"
     };
 
     return aliases[getCompactAliasKey(value)] || "";
