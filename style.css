@@ -1003,7 +1003,18 @@ input:focus,select:focus,textarea:focus{
   border:1px solid var(--border);
   border-radius:14px;
   padding:var(--card-padding);
-  cursor:grab
+  cursor:grab;
+  touch-action:none;
+  user-select:none;
+  -webkit-user-select:none
+}
+
+.card,
+.card *,
+.pipeline-stage-tab,
+.pipeline-stage-tab *{
+  -webkit-user-select:none;
+  user-select:none;
 }
 .card.card-panning{
   cursor:grabbing;
@@ -1989,6 +2000,16 @@ input:focus,select:focus,textarea:focus{
   cursor:grab;
   user-select:none;
   -webkit-user-select:none;
+}
+
+body.touch-drag-lock,
+body.touch-drag-lock *{
+  user-select:none!important;
+  -webkit-user-select:none!important;
+}
+
+body.touch-drag-lock{
+  overscroll-behavior:none;
 }
 
 .pipeline-stage-tab.is-dragging,
@@ -9827,6 +9848,10 @@ body[data-theme="light"] .funnel-diagram-segment-index{
 }
 
 @media (min-width: 701px) and (max-width: 1180px){
+  .funnel-diagram-panel{
+    display:none !important;
+  }
+
   .sidebar{
     display:none !important;
   }

@@ -4463,6 +4463,10 @@
     return window.matchMedia("(max-width: 1100px)").matches;
   }
 
+  function shouldAutoCloseFunnelSidebarOnSelection() {
+    return isMobileViewport();
+  }
+
   function syncResponsiveHeaderState() {
     document.body.classList.toggle(
       "compact-admin-overlay",
@@ -6432,10 +6436,14 @@
   function openFunnelHub(funnelId) {
     const funnel = getFunnelById(funnelId);
     if (!funnel) return;
-    state.funnelSidebarOpen = false;
+    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
     state.activeFunnelId = funnel.id;
     state.activeSubfunnelId = null;
-    bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true });
+    bindView("funil", {
+      resetFunnelDetail: false,
+      preserveFunnelSidebarState: true,
+      keepFunnelSidebarOpen: state.funnelSidebarOpen
+    });
     renderAll();
   }
 
@@ -6669,10 +6677,14 @@
     const funnel = getFunnelById(funnelId);
     const subfunnel = getSubfunnelById(subfunnelId);
     if (!funnel || !subfunnel) return;
-    state.funnelSidebarOpen = false;
+    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
     state.activeFunnelId = funnel.id;
     state.activeSubfunnelId = subfunnelId;
-    bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true });
+    bindView("funil", {
+      resetFunnelDetail: false,
+      preserveFunnelSidebarState: true,
+      keepFunnelSidebarOpen: state.funnelSidebarOpen
+    });
     renderAll();
     requestAnimationFrame(() => {
       scrollFunnelDetailToTop();
@@ -6754,9 +6766,13 @@
   }
 
   function closeFunnelDetail() {
-    state.funnelSidebarOpen = false;
+    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
     state.activeSubfunnelId = null;
-    bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true });
+    bindView("funil", {
+      resetFunnelDetail: false,
+      preserveFunnelSidebarState: true,
+      keepFunnelSidebarOpen: state.funnelSidebarOpen
+    });
     renderAll();
   }
 
@@ -7995,12 +8011,21 @@
     if (dragState?.timerId) {
       clearTimeout(dragState.timerId);
     }
+    document.body.classList.remove("touch-drag-lock");
     document.querySelectorAll(".column.drag-over").forEach((item) => item.classList.remove("drag-over"));
     if (dragState?.sourceEl) {
+      if (Number.isFinite(dragState.pointerId) && typeof dragState.sourceEl.releasePointerCapture === "function") {
+        try {
+          dragState.sourceEl.releasePointerCapture(dragState.pointerId);
+        } catch {}
+      }
       dragState.sourceEl.style.pointerEvents = dragState.originalPointerEvents || "";
       dragState.sourceEl.style.transform = "";
       dragState.sourceEl.style.transition = "";
       dragState.sourceEl.style.zIndex = "";
+      dragState.sourceEl.style.userSelect = dragState.originalUserSelect || "";
+      dragState.sourceEl.style.webkitUserSelect = dragState.originalWebkitUserSelect || "";
+      dragState.sourceEl.style.touchAction = dragState.originalTouchAction || "";
       dragState.sourceEl.classList.remove("touch-drag-active");
     }
     if (dragState?.kind === "lead") {
@@ -8019,6 +8044,8 @@
     if (!isTouchPipelinePointerEvent(event) || !sourceEl) return;
 
     clearTouchPipelineDragState();
+    event.preventDefault();
+    event.stopPropagation();
     const pointerId = Number(event.pointerId);
     const startX = Number(event.clientX);
     const startY = Number(event.clientY);
@@ -8026,9 +8053,13 @@
       const activeDrag = state.touchPipelineDrag;
       if (!activeDrag || activeDrag.pointerId !== pointerId) return;
       activeDrag.activated = true;
+      document.body.classList.add("touch-drag-lock");
       sourceEl.style.pointerEvents = "none";
       sourceEl.style.transition = "none";
       sourceEl.style.zIndex = "999";
+      sourceEl.style.userSelect = "none";
+      sourceEl.style.webkitUserSelect = "none";
+      sourceEl.style.touchAction = "none";
       sourceEl.classList.add("touch-drag-active");
       if (kind === "lead") {
         sourceEl.classList.add("dragging");
@@ -8037,7 +8068,7 @@
         clearPipelineStageDragIndicators();
         markPipelineStageElements(id, "is-dragging");
       }
-    }, 220);
+    }, 130);
 
     state.touchPipelineDrag = {
       kind,
@@ -8050,13 +8081,21 @@
       lastY: startY,
       activated: false,
       timerId,
-      originalPointerEvents: sourceEl.style.pointerEvents || ""
+      originalPointerEvents: sourceEl.style.pointerEvents || "",
+      originalUserSelect: sourceEl.style.userSelect || "",
+      originalWebkitUserSelect: sourceEl.style.webkitUserSelect || "",
+      originalTouchAction: sourceEl.style.touchAction || ""
     };
+    if (Number.isFinite(pointerId) && typeof sourceEl.setPointerCapture === "function") {
+      try {
+        sourceEl.setPointerCapture(pointerId);
+      } catch {}
+    }
   }
 
   function updateTouchPipelineLeadDrag(clientX, clientY) {
     document.querySelectorAll(".column.drag-over").forEach((item) => item.classList.remove("drag-over"));
-    const targetColumn = document.elementFromPoint(clientX, clientY)?.closest?.(".column[data-stage-id]");
+    const targetColumn = getPipelineColumnAtPoint(clientX, clientY);
     if (targetColumn) {
       targetColumn.classList.add("drag-over");
     }
@@ -8064,11 +8103,12 @@
   }
 
   function updateTouchPipelineStageDrag(clientX, clientY) {
-    const dropTarget = getPipelineStageDropTarget(document.elementFromPoint(clientX, clientY));
+    const dropTarget = getPipelineStageDropTargetAtPoint(clientX, clientY);
     const draggedStageId = String(state.touchPipelineDrag?.id || "").trim();
     clearPipelineStageDragIndicators();
     if (!draggedStageId) return;
     markPipelineStageElements(draggedStageId, "is-dragging");
+    updatePipelineDragAutoScroll(clientX);
     if (!dropTarget) return;
 
     const targetStageId = String(dropTarget.dataset.stageId || "").trim();
@@ -8090,7 +8130,7 @@
     if (!dragState.activated) {
       const deltaX = Math.abs(dragState.lastX - dragState.startX);
       const deltaY = Math.abs(dragState.lastY - dragState.startY);
-      if (deltaX > 10 || deltaY > 10) {
+      if (deltaX > 28 || deltaY > 28) {
         clearTouchPipelineDragState();
       }
       return;
@@ -8126,7 +8166,7 @@
     state.touchPipelineDragSuppressContextUntil = Date.now() + 400;
 
     if (dragState.kind === "lead") {
-      const targetColumn = document.elementFromPoint(dropX, dropY)?.closest?.(".column[data-stage-id]");
+      const targetColumn = getPipelineColumnAtPoint(dropX, dropY);
       const targetStageId = String(targetColumn?.dataset?.stageId || "").trim();
       clearTouchPipelineDragState();
       if (targetStageId) {
@@ -8136,18 +8176,27 @@
     }
 
     if (dragState.kind === "stage") {
-      const dropTarget = getPipelineStageDropTarget(document.elementFromPoint(dropX, dropY));
+      const dropTarget = getPipelineStageDropTargetAtPoint(dropX, dropY);
       if (dropTarget) {
         if (dragState.timerId) {
           clearTimeout(dragState.timerId);
         }
         if (dragState.sourceEl) {
+          if (Number.isFinite(dragState.pointerId) && typeof dragState.sourceEl.releasePointerCapture === "function") {
+            try {
+              dragState.sourceEl.releasePointerCapture(dragState.pointerId);
+            } catch {}
+          }
           dragState.sourceEl.style.pointerEvents = dragState.originalPointerEvents || "";
           dragState.sourceEl.style.transform = "";
           dragState.sourceEl.style.transition = "";
           dragState.sourceEl.style.zIndex = "";
+          dragState.sourceEl.style.userSelect = dragState.originalUserSelect || "";
+          dragState.sourceEl.style.webkitUserSelect = dragState.originalWebkitUserSelect || "";
+          dragState.sourceEl.style.touchAction = dragState.originalTouchAction || "";
           dragState.sourceEl.classList.remove("touch-drag-active");
         }
+        document.body.classList.remove("touch-drag-lock");
         await handlePipelineStageDrop({
           target: dropTarget,
           clientX: dropX,
@@ -8166,8 +8215,30 @@
     });
   }
 
+  function getPipelineColumnAtPoint(clientX, clientY) {
+    const elements = typeof document.elementsFromPoint === "function"
+      ? document.elementsFromPoint(clientX, clientY)
+      : [document.elementFromPoint(clientX, clientY)].filter(Boolean);
+    for (const element of elements) {
+      const column = element?.closest?.(".column[data-stage-id]");
+      if (column) return column;
+    }
+    return null;
+  }
+
   function getPipelineStageDropTarget(target) {
     return target?.closest?.(".pipeline-stage-tab[data-stage-id], .column[data-stage-id]") || null;
+  }
+
+  function getPipelineStageDropTargetAtPoint(clientX, clientY) {
+    const elements = typeof document.elementsFromPoint === "function"
+      ? document.elementsFromPoint(clientX, clientY)
+      : [document.elementFromPoint(clientX, clientY)].filter(Boolean);
+    for (const element of elements) {
+      const target = getPipelineStageDropTarget(element);
+      if (target) return target;
+    }
+    return null;
   }
 
   function markPipelineStageElements(stageId, ...classNames) {
@@ -8293,12 +8364,18 @@
     autoScroll.speed = 0;
   }
 
+  function hasActivePipelineAutoScrollDrag() {
+    if (document.querySelector(".card.dragging")) return true;
+    if (state.pipelineStageDrag?.stageId) return true;
+    if (state.touchPipelineDrag?.activated) return true;
+    return false;
+  }
+
   function stepPipelineDragAutoScroll() {
     const area = els.pipelineScrollArea;
     const autoScroll = state.pipelineDragAutoScroll;
-    const draggingCard = document.querySelector(".card.dragging");
 
-    if (!area || !draggingCard || !autoScroll.speed) {
+    if (!area || !hasActivePipelineAutoScrollDrag() || !autoScroll.speed) {
       stopPipelineDragAutoScroll();
       return;
     }
@@ -8317,15 +8394,14 @@
 
   function updatePipelineDragAutoScroll(clientX) {
     const area = els.pipelineScrollArea;
-    const draggingCard = document.querySelector(".card.dragging");
-    if (!area || !draggingCard) {
+    if (!area || !hasActivePipelineAutoScrollDrag()) {
       stopPipelineDragAutoScroll();
       return;
     }
 
     const rect = area.getBoundingClientRect();
-    const threshold = Math.min(120, Math.max(48, rect.width * 0.18));
-    const maxSpeed = 26;
+    const threshold = Math.min(180, Math.max(72, rect.width * 0.22));
+    const maxSpeed = 34;
     let speed = 0;
 
     if (clientX <= rect.left + threshold) {
@@ -11146,12 +11222,12 @@
     state.highlightedLeadId = lead.id;
     state.activeFunnelId = funnelId;
     state.activeSubfunnelId = subfunnelId;
-    state.funnelSidebarOpen = false;
+    state.funnelSidebarOpen = shouldAutoCloseFunnelSidebarOnSelection() ? false : state.funnelSidebarOpen;
     setNotificationsPanelOpen(false);
     setShellTab("crm");
     bindView("funil", {
       resetFunnelDetail: false,
-      keepFunnelSidebarOpen: false,
+      keepFunnelSidebarOpen: state.funnelSidebarOpen,
       preserveFunnelSidebarState: false
     });
     renderAll();
