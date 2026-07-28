@@ -6674,6 +6674,9 @@
     state.activeSubfunnelId = subfunnelId;
     bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true });
     renderAll();
+    requestAnimationFrame(() => {
+      scrollFunnelDetailToTop();
+    });
   }
 
   function handleSubfunnelCardDragStart(event) {
@@ -7967,6 +7970,22 @@
     state.pipelineCardInteractionsBound = true;
   }
 
+  function scrollFunnelDetailToTop() {
+    const scrollingElement = document.scrollingElement || document.documentElement || document.body;
+    if (scrollingElement) {
+      scrollingElement.scrollTop = 0;
+    }
+    if (document.body) {
+      document.body.scrollTop = 0;
+    }
+    if (document.documentElement) {
+      document.documentElement.scrollTop = 0;
+    }
+    if (els.main) {
+      els.main.scrollTop = 0;
+    }
+  }
+
   function isTouchPipelinePointerEvent(event) {
     return isCompactViewport() && (event?.pointerType === "touch" || event?.pointerType === "pen");
   }
@@ -7977,6 +7996,13 @@
       clearTimeout(dragState.timerId);
     }
     document.querySelectorAll(".column.drag-over").forEach((item) => item.classList.remove("drag-over"));
+    if (dragState?.sourceEl) {
+      dragState.sourceEl.style.pointerEvents = dragState.originalPointerEvents || "";
+      dragState.sourceEl.style.transform = "";
+      dragState.sourceEl.style.transition = "";
+      dragState.sourceEl.style.zIndex = "";
+      dragState.sourceEl.classList.remove("touch-drag-active");
+    }
     if (dragState?.kind === "lead") {
       dragState.sourceEl?.classList.remove("dragging", "card-panning");
       stopPipelineDragAutoScroll();
@@ -8000,6 +8026,10 @@
       const activeDrag = state.touchPipelineDrag;
       if (!activeDrag || activeDrag.pointerId !== pointerId) return;
       activeDrag.activated = true;
+      sourceEl.style.pointerEvents = "none";
+      sourceEl.style.transition = "none";
+      sourceEl.style.zIndex = "999";
+      sourceEl.classList.add("touch-drag-active");
       if (kind === "lead") {
         sourceEl.classList.add("dragging");
       } else if (kind === "stage") {
@@ -8019,7 +8049,8 @@
       lastX: startX,
       lastY: startY,
       activated: false,
-      timerId
+      timerId,
+      originalPointerEvents: sourceEl.style.pointerEvents || ""
     };
   }
 
@@ -8066,6 +8097,9 @@
     }
 
     event.preventDefault();
+    const translateX = dragState.lastX - dragState.startX;
+    const translateY = dragState.lastY - dragState.startY;
+    dragState.sourceEl.style.transform = `translate(${translateX}px, ${translateY}px)`;
     if (dragState.kind === "lead") {
       updateTouchPipelineLeadDrag(dragState.lastX, dragState.lastY);
       return;
@@ -8106,6 +8140,13 @@
       if (dropTarget) {
         if (dragState.timerId) {
           clearTimeout(dragState.timerId);
+        }
+        if (dragState.sourceEl) {
+          dragState.sourceEl.style.pointerEvents = dragState.originalPointerEvents || "";
+          dragState.sourceEl.style.transform = "";
+          dragState.sourceEl.style.transition = "";
+          dragState.sourceEl.style.zIndex = "";
+          dragState.sourceEl.classList.remove("touch-drag-active");
         }
         await handlePipelineStageDrop({
           target: dropTarget,
@@ -11114,6 +11155,9 @@
       preserveFunnelSidebarState: false
     });
     renderAll();
+    requestAnimationFrame(() => {
+      scrollFunnelDetailToTop();
+    });
   }
 
   function renderNotifications() {
@@ -14670,6 +14714,12 @@
 
       closeBrandedSelects();
     });
+
+    document.addEventListener("pointerdown", (event) => {
+      if (!els.funnelContextMenu || els.funnelContextMenu.classList.contains("hidden")) return;
+      if (els.funnelContextMenu.contains(event.target)) return;
+      closeFunnelContextMenu();
+    }, { passive: true });
 
     document.addEventListener("click", (event) => {
       if (els.funnelContextMenu?.contains(event.target)) {
