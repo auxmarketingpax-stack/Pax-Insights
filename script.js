@@ -534,6 +534,7 @@
   const SIDEBAR_COLLAPSE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.sidebar-collapsed`;
   const FUNNEL_WORKSPACE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-workspace`;
   const FUNNEL_UI_STATE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-ui-state`;
+  const FUNNEL_STORAGE_SCHEMA_VERSION_KEY = `${APP_STORAGE_PREFIX}.funnel-storage-schema-version`;
   const OWNER_RECONCILIATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.owner-reconciliation-v6`;
   const SOCIAL_SOURCE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.social-source-catalog-v1`;
   const APP_DATA_CACHE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.app-data-cache-v1`;
@@ -544,6 +545,7 @@
   const DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY = `${APP_STORAGE_PREFIX}.demo-pipeline-reminder-seeded-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
+  const FUNNEL_STORAGE_SCHEMA_VERSION = "20260728-remote-truth-v1";
   const DEFAULT_SOCIAL_SOURCE = "Instagram";
   const DEMO_PIPELINE_REMINDER_LEAD_NAME = "Lead demonstracao notificacao";
   const DEMO_PIPELINE_REMINDER_OWNER = "Wendller";
@@ -3311,8 +3313,34 @@
     }
   }
 
+  function resetDeprecatedFunnelStorageIfNeeded() {
+    try {
+      const storedVersion = String(window.localStorage.getItem(FUNNEL_STORAGE_SCHEMA_VERSION_KEY) || "").trim();
+      if (storedVersion === FUNNEL_STORAGE_SCHEMA_VERSION) return;
+
+      [
+        FUNNEL_WORKSPACE_STORAGE_KEY,
+        FUNNEL_UI_STATE_STORAGE_KEY,
+        APP_DATA_CACHE_STORAGE_KEY,
+        DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY,
+        FUNNEL_ROUTE_MIGRATION_STORAGE_KEY,
+        EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY,
+        LEGACY_FUNNEL_WORKSPACE_STORAGE_KEY,
+        LEGACY_FUNNEL_UI_STATE_STORAGE_KEY,
+        LEGACY_FUNNEL_ROUTE_MIGRATION_STORAGE_KEY
+      ].forEach((storageKey) => {
+        window.localStorage.removeItem(storageKey);
+      });
+
+      window.localStorage.setItem(FUNNEL_STORAGE_SCHEMA_VERSION_KEY, FUNNEL_STORAGE_SCHEMA_VERSION);
+    } catch (_error) {
+      // Ignore storage failures and continue boot.
+    }
+  }
+
   function runPeriodicStorageCleanup() {
     try {
+      resetDeprecatedFunnelStorageIfNeeded();
       importLegacyStorageNamespaceOnce();
       const now = Date.now();
       const lastCleanup = Number(window.localStorage.getItem(STORAGE_CLEANUP_KEY) || 0);
@@ -4478,20 +4506,9 @@
       };
     };
 
-    const scoreWorkspace = (workspace) => {
-      if (!workspace) return -1;
-      return (
-        (Array.isArray(workspace.groups) ? workspace.groups.length : 0) * 10000
-        + (Array.isArray(workspace.funnels) ? workspace.funnels.length : 0) * 100
-        + Object.keys(workspace.stageAssignments || {}).length
-        + Object.keys(workspace.leadAssignments || {}).length
-        + Object.keys(workspace.stageReminderConfigs || {}).length
-      );
-    };
-
     const primaryWorkspace = normalizeWorkspace(readJsonStorageValue(FUNNEL_WORKSPACE_STORAGE_KEY));
-    const legacyWorkspace = normalizeWorkspace(readJsonStorageValue(LEGACY_FUNNEL_WORKSPACE_STORAGE_KEY));
-    return scoreWorkspace(legacyWorkspace) > scoreWorkspace(primaryWorkspace) ? legacyWorkspace : primaryWorkspace;
+    if (primaryWorkspace) return primaryWorkspace;
+    return normalizeWorkspace(readJsonStorageValue(LEGACY_FUNNEL_WORKSPACE_STORAGE_KEY));
   }
 
   function readDeletedFunnelWorkspaceIds() {
