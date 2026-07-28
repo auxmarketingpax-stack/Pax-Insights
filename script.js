@@ -464,6 +464,7 @@
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
     funnelSyncQueued: false,
+    socialSourceBackfillInFlight: false,
     suppressFunnelSync: false,
     funnelModalContext: null,
     structureFunnelId: null,
@@ -543,6 +544,7 @@
   const DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY = `${APP_STORAGE_PREFIX}.demo-pipeline-reminder-seeded-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
+  const DEFAULT_SOCIAL_SOURCE = "Instagram";
   const DEMO_PIPELINE_REMINDER_LEAD_NAME = "Lead demonstracao notificacao";
   const DEMO_PIPELINE_REMINDER_OWNER = "Wendller";
   const DEMO_PIPELINE_REMINDER_DAYS = 1;
@@ -3731,11 +3733,12 @@
     const computedValue = getPlansTotalValue(meta.plans || []);
     const ownerMap = options.ownerMap || state.ownerCanonicalMap;
     const socialSourceMap = options.socialSourceMap || state.socialSourceCanonicalMap;
+    const normalizedSocialSource = normalizeSpacing(lead?.social_source || "") || DEFAULT_SOCIAL_SOURCE;
     return {
       ...lead,
       owner_raw: lead?.owner ?? null,
       owner: getCanonicalMappedValue(lead?.owner || "", ownerMap, "owner"),
-      social_source: getCanonicalMappedValue(lead?.social_source || "", socialSourceMap, "social_source"),
+      social_source: getCanonicalMappedValue(normalizedSocialSource, socialSourceMap, "social_source"),
       value: computedValue || Number(lead?.value || 0) || 0,
       start_date: normalizeDateInput(lead?.start_date || "") || String(lead?.start_date || "").trim(),
       _meta: meta
@@ -4565,6 +4568,49 @@
       }));
     } catch (_error) {
       // ignore local storage failures
+    }
+  }
+
+  async function ensureDefaultSocialSourceForMissingLeads(leadIds = []) {
+    const ids = normalizeIdList(leadIds);
+    if (!ids.length || state.socialSourceBackfillInFlight) return;
+    if (!state.currentUser || !isApprovedUser()) return;
+
+    const editableIds = ids.filter((leadId) => {
+      const lead = state.leads.find((item) => item.id === leadId);
+      return lead && canEditLeads(lead);
+    });
+    if (!editableIds.length) return;
+
+    state.socialSourceBackfillInFlight = true;
+
+    try {
+      for (const batch of chunkArray(editableIds, 200)) {
+        const { error } = await state.supabase
+          .from("leads")
+          .update({ social_source: DEFAULT_SOCIAL_SOURCE })
+          .in("id", batch);
+
+        if (error) throw error;
+      }
+
+      state.leads = state.leads.map((lead) => (
+        editableIds.includes(lead.id)
+          ? normalizeLead({ ...lead, social_source: DEFAULT_SOCIAL_SOURCE }, {
+              ownerMap: state.ownerCanonicalMap,
+              socialSourceMap: state.socialSourceCanonicalMap
+            })
+          : lead
+      ));
+      state.socialSourceCanonicalMap.set(getCanonicalValueKey(DEFAULT_SOCIAL_SOURCE), DEFAULT_SOCIAL_SOURCE);
+      state.socialSources = normalizeSocialSources([...(state.socialSources || []), DEFAULT_SOCIAL_SOURCE]);
+      writeStoredSocialSources();
+      writeStoredAppDataCache();
+      renderAll();
+    } catch (error) {
+      console.error("Erro ao preencher canal de origem padrão:", error);
+    } finally {
+      state.socialSourceBackfillInFlight = false;
     }
   }
 
@@ -8256,6 +8302,9 @@
 
     state.stages = (stagesRes.data || []).map(normalizeStage);
     const rawLeads = leadsRes.data || [];
+    const missingSocialSourceLeadIds = rawLeads
+      .filter((lead) => !normalizeSpacing(lead?.social_source || ""))
+      .map((lead) => lead.id);
     const profileOwnerNames = includeProfiles ? (profilesRes.data || []) : state.profiles;
     state.ownerCanonicalMap = buildOwnerCanonicalMap(rawLeads.map((lead) => lead?.owner), profileOwnerNames);
     state.socialSourceCanonicalMap = buildCanonicalValueMap(rawLeads.map((lead) => lead?.social_source), "social_source");
@@ -8266,6 +8315,7 @@
     state.leadSources = normalizeLeadSources(leadSourcesRes.data || []);
     state.socialSources = normalizeSocialSources([
       ...readStoredSocialSources(),
+      DEFAULT_SOCIAL_SOURCE,
       ...rawLeads.map((lead) => lead?.social_source || "")
     ]);
     writeStoredSocialSources();
@@ -8287,6 +8337,7 @@
     renderDepartmentSelects();
     syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
     writeStoredAppDataCache();
+    void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds);
 
     if (runRouteMigration) {
       try {
