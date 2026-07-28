@@ -9997,13 +9997,18 @@ body[data-theme="dark"] .profile-menu-badge{
 
 @media (min-width: 701px) and (max-width: 1180px){
   .shell-header{
-    position:static !important;
+    position:sticky !important;
+    top:0 !important;
+    z-index:140 !important;
+    display:grid !important;
+    grid-template-columns:auto 1fr auto !important;
+    align-items:center !important;
   }
 
   .mobile-topbar{
     display:block !important;
-    position:sticky;
-    top:0 !important;
+    position:static !important;
+    top:auto !important;
     z-index:132;
     padding:10px 16px !important;
     background:var(--app-bg, #f5f7f5);
@@ -10077,17 +10082,31 @@ body[data-theme="dark"] .profile-menu-badge{
   }
 
   .shell-header{
-    grid-template-columns:minmax(0, 1fr) auto auto;
-    gap:14px;
-    padding:16px 18px;
+    gap:12px;
+    padding:12px 16px;
+  }
+
+  .shell-brand{
+    justify-self:start !important;
   }
 
   .shell-brand-logo{
-    width:174px;
+    width:48px !important;
+    max-width:48px !important;
   }
 
   .shell-tabs{
-    justify-self:center;
+    justify-self:center !important;
+    width:max-content !important;
+  }
+
+  .shell-profile{
+    justify-self:end !important;
+    margin-left:auto;
+  }
+
+  .shell-notifications{
+    display:none !important;
   }
 
   .main{
@@ -10106,9 +10125,9 @@ body[data-theme="dark"] .profile-menu-badge{
   .crm-funnel-sidebar{
     left:16px !important;
     right:16px !important;
-    top:calc(var(--mobile-topbar-height, 0px) + 8px) !important;
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px) !important;
     width:auto !important;
-    max-height:calc(100vh - var(--mobile-topbar-height, 0px) - 20px) !important;
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 20px) !important;
   }
 
   .topbar{
@@ -10138,8 +10157,14 @@ body[data-theme="dark"] .profile-menu-badge{
     padding:16px 14px !important;
   }
 
+  .report-card span,
+  .report-card p{
+    font-size:11px !important;
+    line-height:1.2 !important;
+  }
+
   .report-card strong{
-    font-size:clamp(26px, 3.6vw, 34px) !important;
+    font-size:clamp(18px, 3vw, 26px) !important;
     line-height:1.05 !important;
     overflow-wrap:anywhere;
   }
@@ -10147,7 +10172,12 @@ body[data-theme="dark"] .profile-menu-badge{
 
 @media (max-width: 700px){
   .shell-header{
-    position:static !important;
+    position:sticky !important;
+    top:0 !important;
+    z-index:140 !important;
+    display:grid !important;
+    grid-template-columns:auto 1fr auto !important;
+    align-items:center !important;
   }
 
   .mobile-nav{
@@ -10166,8 +10196,8 @@ body[data-theme="dark"] .profile-menu-badge{
 
   .mobile-topbar{
     display:block !important;
-    position:sticky;
-    top:0 !important;
+    position:static !important;
+    top:auto !important;
     z-index:132;
     padding:10px 12px !important;
     background:var(--app-bg, #f5f7f5);
@@ -10213,35 +10243,25 @@ body[data-theme="dark"] .profile-menu-badge{
     white-space:nowrap;
   }
 
-  .shell-header{
-    grid-template-columns:minmax(0, 1fr) auto;
-    grid-template-areas:
-      "brand profile"
-      "tabs tabs";
-    align-items:center;
-    gap:12px;
-    padding:14px 12px 12px;
-  }
-
   .shell-brand{
-    grid-area:brand;
+    grid-area:auto;
+    justify-self:start !important;
   }
 
   .shell-profile{
-    grid-area:profile;
     gap:0;
+    justify-self:end !important;
+    margin-left:auto;
   }
 
   .shell-tabs{
-    grid-area:tabs;
-    width:100%;
-    justify-content:center;
+    width:max-content !important;
+    justify-self:center !important;
   }
 
   .shell-tab{
-    flex:1 1 0;
-    padding:10px 12px;
-    font-size:14px;
+    padding:8px 12px;
+    font-size:13px;
   }
 
   .shell-brand-logo{
@@ -10281,16 +10301,16 @@ body[data-theme="dark"] .profile-menu-badge{
     position:fixed;
     left:12px;
     right:12px;
-    top:calc(var(--mobile-topbar-height, 0px) + 8px);
-    max-height:calc(100vh - var(--mobile-topbar-height, 0px) - 20px);
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px);
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 20px);
     overflow:auto;
     z-index:138;
     border-radius:22px;
   }
 
   .crm-funnel-sidebar{
-    top:calc(var(--mobile-topbar-height, 0px) + 8px) !important;
-    max-height:calc(100vh - var(--mobile-topbar-height, 0px) - 18px) !important;
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px) !important;
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 18px) !important;
     z-index:136;
   }
 
@@ -10298,10 +10318,10 @@ body[data-theme="dark"] .profile-menu-badge{
     position:fixed !important;
     left:12px !important;
     right:12px !important;
-    top:calc(var(--mobile-topbar-height, 0px) + 8px) !important;
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px) !important;
     width:auto !important;
     max-width:none !important;
-    max-height:calc(100vh - var(--mobile-topbar-height, 0px) - 22px);
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 22px);
     overflow:auto;
     z-index:142;
   }
@@ -10333,7 +10353,7 @@ body[data-theme="dark"] .profile-menu-badge{
   .report-card span,
   .report-card p{
     display:block;
-    font-size:12px !important;
+    font-size:10px !important;
     line-height:1.25 !important;
     overflow-wrap:anywhere;
     word-break:break-word;
@@ -10343,7 +10363,7 @@ body[data-theme="dark"] .profile-menu-badge{
     display:block;
     width:100%;
     margin-top:8px;
-    font-size:clamp(18px, 8vw, 34px) !important;
+    font-size:clamp(16px, 6vw, 24px) !important;
     line-height:1.02 !important;
     overflow-wrap:anywhere;
     word-break:break-word;
@@ -10368,6 +10388,192 @@ body[data-theme="dark"] .profile-menu-badge{
   .funnel-inline-action,
   .funnel-back-inline{
     min-height:40px;
+  }
+}
+
+@media (max-width: 1180px){
+  body.compact-admin-overlay .mobile-topbar{
+    display:none !important;
+  }
+
+  body.compact-admin-overlay .admin-overlay-view.active-view{
+    top:calc(var(--shell-header-height, 0px) + 8px) !important;
+  }
+}
+
+/* Final compact layout overrides */
+@media (max-width: 1180px){
+  .shell-header{
+    position:sticky !important;
+    top:0 !important;
+    z-index:180 !important;
+    display:grid !important;
+    grid-template-columns:minmax(44px, 1fr) auto minmax(44px, 1fr) !important;
+    align-items:center !important;
+    gap:12px !important;
+    padding:10px 12px !important;
+  }
+
+  .shell-brand{
+    justify-self:start !important;
+    min-width:44px !important;
+  }
+
+  .shell-brand-logo{
+    width:42px !important;
+    max-width:42px !important;
+  }
+
+  .shell-tabs{
+    justify-self:center !important;
+    width:max-content !important;
+    margin:0 auto !important;
+  }
+
+  .shell-tab{
+    padding:8px 12px !important;
+    font-size:13px !important;
+  }
+
+  .shell-profile{
+    justify-self:end !important;
+    margin-left:0 !important;
+    min-width:44px !important;
+  }
+
+  .shell-notifications{
+    display:none !important;
+  }
+
+  .mobile-topbar{
+    display:block !important;
+    position:sticky !important;
+    top:calc(var(--shell-header-height, 0px) - 1px) !important;
+    z-index:170 !important;
+    margin:0 !important;
+    padding:10px 12px !important;
+  }
+
+  .mobile-topbar-main{
+    display:grid !important;
+    grid-template-columns:auto auto auto auto !important;
+    align-items:center !important;
+    justify-content:flex-start !important;
+    gap:6px !important;
+  }
+
+  .mobile-brand-block{
+    display:none !important;
+  }
+
+  .mobile-brand-block strong{
+    font-size:13px !important;
+    font-weight:800 !important;
+    white-space:nowrap !important;
+    overflow:hidden !important;
+    text-overflow:ellipsis !important;
+  }
+
+  .mobile-nav{
+    display:none !important;
+  }
+
+  .mobile-nav-item[data-view]:not([data-view="relatorios"]){
+    display:none !important;
+  }
+
+  .mobile-nav-item{
+    border-radius:999px !important;
+  }
+
+  .mobile-topbar-view-btn{
+    display:inline-flex !important;
+    align-items:center !important;
+    justify-content:center !important;
+    min-height:42px !important;
+    padding:0 10px !important;
+    font-size:13px !important;
+    font-weight:800 !important;
+    white-space:nowrap !important;
+  }
+
+  .topbar{
+    display:none !important;
+  }
+
+  .topbar-actions{
+    display:none !important;
+  }
+
+  .crm-content{
+    padding-top:8px !important;
+  }
+
+  .crm-funnel-sidebar{
+    position:fixed !important;
+    left:12px !important;
+    right:12px !important;
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px) !important;
+    width:auto !important;
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 18px) !important;
+    z-index:176 !important;
+  }
+
+  .crm-funnel-sidebar.hidden{
+    display:none !important;
+  }
+
+  .crm-funnel-sidebar:not(.hidden){
+    display:block !important;
+  }
+
+  .mobile-filters-panel{
+    top:calc(var(--shell-header-height, 0px) + var(--mobile-topbar-height, 0px) + 8px) !important;
+    max-height:calc(100vh - var(--shell-header-height, 0px) - var(--mobile-topbar-height, 0px) - 20px) !important;
+  }
+
+  .admin-overlay-view.active-view{
+    top:calc(var(--shell-header-height, 0px) + 8px) !important;
+  }
+
+  body.compact-admin-overlay .mobile-topbar{
+    display:none !important;
+  }
+
+  .report-card{
+    min-width:0 !important;
+    overflow:hidden !important;
+  }
+
+  .report-card span,
+  .report-card p{
+    font-size:10px !important;
+    line-height:1.2 !important;
+    overflow-wrap:anywhere !important;
+    word-break:break-word !important;
+  }
+
+  .report-card strong{
+    font-size:clamp(15px, 2.6vw, 22px) !important;
+    line-height:1.05 !important;
+    overflow-wrap:anywhere !important;
+    word-break:break-word !important;
+  }
+}
+
+@media (max-width: 700px){
+  .report-grid,
+  .report-grid-extended{
+    grid-template-columns:repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .charts-grid,
+  .charts-grid-extended{
+    grid-template-columns:1fr !important;
+  }
+
+  .report-card strong{
+    font-size:clamp(14px, 5vw, 20px) !important;
   }
 }
 

@@ -456,6 +456,8 @@
     pipelineCardInteractionsBound: false,
     pipelineStageDrag: null,
     pipelineStageInteractionsBound: false,
+    touchPipelineDrag: null,
+    touchPipelineDragSuppressContextUntil: 0,
     stageConfigDrag: null,
     subfunnelCardDrag: null,
     pipelineDragAutoScroll: {
@@ -4462,6 +4464,11 @@
   }
 
   function syncResponsiveHeaderState() {
+    document.body.classList.toggle(
+      "compact-admin-overlay",
+      isCompactViewport() && isAdminOverlayView(state.activeView)
+    );
+
     if (els.shellBrandLogo) {
       const useSymbol = isCompactViewport();
       const nextSrc = useSymbol ? "assets/pax-insights-symbol.png" : "assets/pax-insights-logo.png";
@@ -7958,6 +7965,158 @@
     window.addEventListener("blur", stopPipelineCardPan);
 
     state.pipelineCardInteractionsBound = true;
+  }
+
+  function isTouchPipelinePointerEvent(event) {
+    return isCompactViewport() && (event?.pointerType === "touch" || event?.pointerType === "pen");
+  }
+
+  function clearTouchPipelineDragState() {
+    const dragState = state.touchPipelineDrag;
+    if (dragState?.timerId) {
+      clearTimeout(dragState.timerId);
+    }
+    document.querySelectorAll(".column.drag-over").forEach((item) => item.classList.remove("drag-over"));
+    if (dragState?.kind === "lead") {
+      dragState.sourceEl?.classList.remove("dragging", "card-panning");
+      stopPipelineDragAutoScroll();
+    }
+    if (dragState?.kind === "stage") {
+      clearPipelineStageDragIndicators();
+      stopPipelineDragAutoScroll();
+      state.pipelineStageDrag = null;
+    }
+    state.touchPipelineDrag = null;
+  }
+
+  function beginTouchPipelineDrag(kind, id, sourceEl, event) {
+    if (!isTouchPipelinePointerEvent(event) || !sourceEl) return;
+
+    clearTouchPipelineDragState();
+    const pointerId = Number(event.pointerId);
+    const startX = Number(event.clientX);
+    const startY = Number(event.clientY);
+    const timerId = window.setTimeout(() => {
+      const activeDrag = state.touchPipelineDrag;
+      if (!activeDrag || activeDrag.pointerId !== pointerId) return;
+      activeDrag.activated = true;
+      if (kind === "lead") {
+        sourceEl.classList.add("dragging");
+      } else if (kind === "stage") {
+        state.pipelineStageDrag = { stageId: id };
+        clearPipelineStageDragIndicators();
+        markPipelineStageElements(id, "is-dragging");
+      }
+    }, 220);
+
+    state.touchPipelineDrag = {
+      kind,
+      id,
+      sourceEl,
+      pointerId,
+      startX,
+      startY,
+      lastX: startX,
+      lastY: startY,
+      activated: false,
+      timerId
+    };
+  }
+
+  function updateTouchPipelineLeadDrag(clientX, clientY) {
+    document.querySelectorAll(".column.drag-over").forEach((item) => item.classList.remove("drag-over"));
+    const targetColumn = document.elementFromPoint(clientX, clientY)?.closest?.(".column[data-stage-id]");
+    if (targetColumn) {
+      targetColumn.classList.add("drag-over");
+    }
+    updatePipelineDragAutoScroll(clientX);
+  }
+
+  function updateTouchPipelineStageDrag(clientX, clientY) {
+    const dropTarget = getPipelineStageDropTarget(document.elementFromPoint(clientX, clientY));
+    const draggedStageId = String(state.touchPipelineDrag?.id || "").trim();
+    clearPipelineStageDragIndicators();
+    if (!draggedStageId) return;
+    markPipelineStageElements(draggedStageId, "is-dragging");
+    if (!dropTarget) return;
+
+    const targetStageId = String(dropTarget.dataset.stageId || "").trim();
+    if (!targetStageId || targetStageId === draggedStageId) return;
+
+    markPipelineStageElements(targetStageId, "dragging-target");
+    const rect = dropTarget.getBoundingClientRect();
+    const placeAfter = clientX > rect.left + (rect.width / 2);
+    markPipelineStageElements(targetStageId, placeAfter ? "drag-after" : "drag-before");
+  }
+
+  function handleTouchPipelinePointerMove(event) {
+    const dragState = state.touchPipelineDrag;
+    if (!dragState || Number(event.pointerId) !== dragState.pointerId) return;
+
+    dragState.lastX = Number(event.clientX);
+    dragState.lastY = Number(event.clientY);
+
+    if (!dragState.activated) {
+      const deltaX = Math.abs(dragState.lastX - dragState.startX);
+      const deltaY = Math.abs(dragState.lastY - dragState.startY);
+      if (deltaX > 10 || deltaY > 10) {
+        clearTouchPipelineDragState();
+      }
+      return;
+    }
+
+    event.preventDefault();
+    if (dragState.kind === "lead") {
+      updateTouchPipelineLeadDrag(dragState.lastX, dragState.lastY);
+      return;
+    }
+    if (dragState.kind === "stage") {
+      updateTouchPipelineStageDrag(dragState.lastX, dragState.lastY);
+    }
+  }
+
+  async function handleTouchPipelinePointerUp(event) {
+    const dragState = state.touchPipelineDrag;
+    if (!dragState || Number(event.pointerId) !== dragState.pointerId) return;
+
+    const wasActivated = dragState.activated;
+    const dropX = Number(event.clientX);
+    const dropY = Number(event.clientY);
+
+    if (!wasActivated) {
+      clearTouchPipelineDragState();
+      return;
+    }
+
+    event.preventDefault();
+    state.touchPipelineDragSuppressContextUntil = Date.now() + 400;
+
+    if (dragState.kind === "lead") {
+      const targetColumn = document.elementFromPoint(dropX, dropY)?.closest?.(".column[data-stage-id]");
+      const targetStageId = String(targetColumn?.dataset?.stageId || "").trim();
+      clearTouchPipelineDragState();
+      if (targetStageId) {
+        await moveLeadToStage(dragState.id, targetStageId);
+      }
+      return;
+    }
+
+    if (dragState.kind === "stage") {
+      const dropTarget = getPipelineStageDropTarget(document.elementFromPoint(dropX, dropY));
+      if (dropTarget) {
+        if (dragState.timerId) {
+          clearTimeout(dragState.timerId);
+        }
+        await handlePipelineStageDrop({
+          target: dropTarget,
+          clientX: dropX,
+          preventDefault() {}
+        });
+        state.touchPipelineDrag = null;
+      } else {
+        clearTouchPipelineDragState();
+      }
+    }
   }
 
   function clearPipelineStageDragIndicators() {
@@ -13384,6 +13543,7 @@
     }
     state.activeView = name;
     els.app?.classList.toggle("admin-overlay-mode", enteringAdminOverlay);
+    syncResponsiveHeaderState();
     syncPrimaryMenuState();
 
     document.querySelectorAll(".view").forEach((view) => {
@@ -13506,6 +13666,7 @@
         openStageContextMenu({ stageId, x: event.clientX, y: event.clientY });
       };
       tab.ontouchend = (event) => {
+        if (Date.now() < state.touchPipelineDragSuppressContextUntil || state.touchPipelineDrag?.activated) return;
         const stageId = String(tab.dataset.stageId || "").trim();
         if (!stageId || event.target.closest("button, input, select, textarea, a, label")) return;
         event.preventDefault();
@@ -13513,6 +13674,10 @@
         registerTouchContextTap("pipeline-stage", stageId, tab, ({ x, y }) => {
           openStageContextMenu({ stageId, x, y });
         });
+      };
+      tab.onpointerdown = (event) => {
+        if (!canReorderPipelineStages || event.target.closest("button, input, select, textarea, a, label")) return;
+        beginTouchPipelineDrag("stage", String(tab.dataset.stageId || "").trim(), tab, event);
       };
       tab.ondragstart = (event) => {
         if (!canReorderPipelineStages) {
@@ -13539,6 +13704,7 @@
         openLeadContextMenu({ lead, x: event.clientX, y: event.clientY });
       };
       card.ontouchend = (event) => {
+        if (Date.now() < state.touchPipelineDragSuppressContextUntil || state.touchPipelineDrag?.activated) return;
         if (event.target.closest(".card-actions, button, input, select, textarea, a, label")) return;
         const lead = state.leads.find((item) => item.id === card.dataset.leadId);
         if (!lead) return;
@@ -13547,6 +13713,10 @@
         registerTouchContextTap("pipeline-lead", lead.id, card, ({ x, y }) => {
           openLeadContextMenu({ lead, x, y });
         });
+      };
+      card.onpointerdown = (event) => {
+        if (!canReorderPipelineLeads || event.target.closest(".card-actions, button, input, select, textarea, a, label")) return;
+        beginTouchPipelineDrag("lead", String(card.dataset.leadId || "").trim(), card, event);
       };
       card.ondragstart = (event) => {
         if (!canReorderPipelineLeads) {
@@ -13581,6 +13751,7 @@
         openStageContextMenu({ stageId, x: event.clientX, y: event.clientY });
       };
       column.ontouchend = (event) => {
+        if (Date.now() < state.touchPipelineDragSuppressContextUntil || state.touchPipelineDrag?.activated) return;
         if (event.target.closest(".card, button, input, select, textarea, a, label")) return;
         const stageId = String(column.dataset.stageId || "").trim();
         if (!stageId) return;
@@ -13589,6 +13760,10 @@
         registerTouchContextTap("pipeline-stage-column", stageId, column, ({ x, y }) => {
           openStageContextMenu({ stageId, x, y });
         });
+      };
+      column.onpointerdown = (event) => {
+        if (!canReorderPipelineStages || event.target.closest(".card, button, input, select, textarea, a, label")) return;
+        beginTouchPipelineDrag("stage", String(column.dataset.stageId || "").trim(), column, event);
       };
       column.ondragstart = (event) => {
         if (!canReorderPipelineStages || event.target.closest("button, input, select, textarea, a, label")) {
@@ -13874,17 +14049,20 @@
       setMobileFiltersOpen(false);
       if (isCompactViewport()) {
         if (state.activeView !== "funil") {
+          state.funnelSidebarOpen = true;
           bindView("funil", {
             resetFunnelDetail: false,
             preserveFunnelSidebarState: true,
             keepFunnelSidebarOpen: true
           });
+          syncFunnelSidebarVisibility();
           renderAll();
           return;
         }
 
         state.funnelSidebarOpen = !state.funnelSidebarOpen;
         syncPrimaryMenuState();
+        syncFunnelSidebarVisibility();
         writeStoredFunnelUiState();
         renderAll();
         return;
@@ -14302,6 +14480,11 @@
         syncPipelineScrollBars();
       });
     });
+    document.addEventListener("pointermove", handleTouchPipelinePointerMove, { passive: false });
+    document.addEventListener("pointerup", (event) => {
+      void handleTouchPipelinePointerUp(event);
+    }, { passive: false });
+    document.addEventListener("pointercancel", clearTouchPipelineDragState, { passive: false });
 
     document.addEventListener("click", (event) => {
       if (!els.notificationsBtn?.contains(event.target) && !els.notificationsPanel?.contains(event.target)) {
