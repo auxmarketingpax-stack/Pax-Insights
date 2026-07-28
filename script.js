@@ -47,6 +47,8 @@
     profileMenuAvatar: $("profileMenuAvatar"),
     profileMenuName: $("profileMenuName"),
     profileMenuRole: $("profileMenuRole"),
+    profileNotificationsBtn: $("profileNotificationsBtn"),
+    profileNotificationsCount: $("profileNotificationsCount"),
     openAccountBtn: $("openAccountBtn"),
     profileTeamBtn: $("profileTeamBtn"),
     profileSettingsBtn: $("profileSettingsBtn"),
@@ -460,6 +462,10 @@
       frameId: null,
       speed: 0
     },
+    renderComputationCache: null,
+    reportChartsRenderFrame: null,
+    reportChartsBatchFrame: null,
+    reportChartsBatchToken: 0,
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -478,6 +484,7 @@
     funnelGroupModalContext: null,
     funnelContextMenuState: null,
     funnelNavDrag: null,
+    touchContextTap: null,
     notificationPanelOpen: false,
     highlightedLeadId: null
   };
@@ -4191,12 +4198,28 @@
   }
 
   function getClosedLeads(leads) {
+    const cache = getRenderComputationCache();
+    if (Array.isArray(leads) && cache.closedLeads.has(leads)) {
+      return cache.closedLeads.get(leads);
+    }
     const closedIds = getClosedStageIds();
-    return (Array.isArray(leads) ? leads : []).filter((lead) => closedIds.includes(lead.stage_id));
+    const result = (Array.isArray(leads) ? leads : []).filter((lead) => closedIds.includes(lead.stage_id));
+    if (Array.isArray(leads)) {
+      cache.closedLeads.set(leads, result);
+    }
+    return result;
   }
 
   function getQualifiedClosedLeads(leads) {
-    return getClosedLeads(leads).filter((lead) => hasLeadValue(lead));
+    const cache = getRenderComputationCache();
+    if (Array.isArray(leads) && cache.qualifiedClosedLeads.has(leads)) {
+      return cache.qualifiedClosedLeads.get(leads);
+    }
+    const result = getClosedLeads(leads).filter((lead) => hasLeadValue(lead));
+    if (Array.isArray(leads)) {
+      cache.qualifiedClosedLeads.set(leads, result);
+    }
+    return result;
   }
 
   function syncSelectedLeadIds() {
@@ -4438,6 +4461,36 @@
     return window.matchMedia("(max-width: 1100px)").matches;
   }
 
+  function syncResponsiveHeaderState() {
+    if (els.shellBrandLogo) {
+      const useSymbol = isCompactViewport();
+      const nextSrc = useSymbol ? "assets/pax-insights-symbol.png" : "assets/pax-insights-logo.png";
+      const currentSrc = String(els.shellBrandLogo.getAttribute("src") || "").trim();
+      if (currentSrc !== nextSrc) {
+        els.shellBrandLogo.setAttribute("src", nextSrc);
+      }
+    }
+
+    if (els.mobileOrgName) {
+      const activeFunnel = getFunnelById(state.activeFunnelId);
+      let compactLabel = "Relatórios";
+      if (state.activeView === "funil") {
+        compactLabel = activeFunnel?.name || "Funis";
+      } else if (state.activeView === "leads") {
+        compactLabel = "Leads";
+      } else if (state.activeView === "equipe") {
+        compactLabel = "Acessos";
+      } else if (state.activeView === "estrutura") {
+        compactLabel = "Estrutura";
+      } else if (state.activeView === "configuracoes") {
+        compactLabel = "Configurações";
+      }
+      els.mobileOrgName.textContent = compactLabel;
+    }
+
+    els.profileNotificationsBtn?.classList.toggle("hidden", !isCompactViewport());
+  }
+
   function supportsCollapsibleCrmNavbar() {
     return window.matchMedia("(min-width: 1181px)").matches;
   }
@@ -4449,6 +4502,111 @@
       return crypto.randomUUID();
     }
     return `funnel-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  }
+
+  function createRenderComputationCache() {
+    return {
+      filteredLeads: new Map(),
+      closedLeads: new WeakMap(),
+      qualifiedClosedLeads: new WeakMap(),
+      dashboardMetrics: new WeakMap()
+    };
+  }
+
+  function resetRenderComputationCache() {
+    state.renderComputationCache = createRenderComputationCache();
+  }
+
+  function getRenderComputationCache() {
+    if (!state.renderComputationCache) {
+      resetRenderComputationCache();
+    }
+    return state.renderComputationCache;
+  }
+
+  function clampNumber(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function hexToRgb(hex) {
+    const normalized = String(hex || "").replace("#", "").trim();
+    if (!/^[0-9a-f]{6}$/i.test(normalized)) return { r: 0, g: 0, b: 0 };
+    return {
+      r: Number.parseInt(normalized.slice(0, 2), 16),
+      g: Number.parseInt(normalized.slice(2, 4), 16),
+      b: Number.parseInt(normalized.slice(4, 6), 16)
+    };
+  }
+
+  function rgbToHex({ r = 0, g = 0, b = 0 } = {}) {
+    return `#${[r, g, b].map((value) => clampNumber(Math.round(value), 0, 255).toString(16).padStart(2, "0")).join("")}`;
+  }
+
+  function interpolateHexColor(startHex, endHex, progress) {
+    const start = hexToRgb(startHex);
+    const end = hexToRgb(endHex);
+    const ratio = clampNumber(Number(progress) || 0, 0, 1);
+    return rgbToHex({
+      r: start.r + ((end.r - start.r) * ratio),
+      g: start.g + ((end.g - start.g) * ratio),
+      b: start.b + ((end.b - start.b) * ratio)
+    });
+  }
+
+  function getFunnelFlowPalette(total, { dark = false } = {}) {
+    const count = Math.max(1, Number(total) || 1);
+    const start = dark ? "#7fb98c" : "#d7ecd9";
+    const end = dark ? "#274031" : "#6ea973";
+    return Array.from({ length: count }, (_, index) => {
+      const progress = count === 1 ? 0 : index / (count - 1);
+      return interpolateHexColor(start, end, progress);
+    });
+  }
+
+  function getElementContextMenuPoint(element) {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect) {
+      return { x: 24, y: 24 };
+    }
+    return {
+      x: Math.round(rect.left + Math.min(rect.width / 2, Math.max(28, rect.width - 28))),
+      y: Math.round(rect.top + Math.min(rect.height / 2, Math.max(28, rect.height - 28)))
+    };
+  }
+
+  function clearTouchContextTap() {
+    if (state.touchContextTap?.timerId) {
+      window.clearTimeout(state.touchContextTap.timerId);
+    }
+    state.touchContextTap = null;
+  }
+
+  function registerTouchContextTap(scope, id, element, onActivate) {
+    const normalizedId = String(id || "").trim();
+    if (!normalizedId || typeof onActivate !== "function") return false;
+
+    const now = Date.now();
+    const lastTap = state.touchContextTap;
+    if (lastTap && lastTap.scope === scope && lastTap.id === normalizedId && (now - lastTap.time) <= 420) {
+      clearTouchContextTap();
+      onActivate(getElementContextMenuPoint(element));
+      return true;
+    }
+
+    clearTouchContextTap();
+    const timerId = window.setTimeout(() => {
+      if (state.touchContextTap?.timerId === timerId) {
+        state.touchContextTap = null;
+      }
+    }, 480);
+
+    state.touchContextTap = {
+      scope,
+      id: normalizedId,
+      time: now,
+      timerId
+    };
+    return false;
   }
 
   function createSubfunnelId() {
@@ -6456,7 +6614,11 @@
       return;
     }
 
-    const palette = ["#d4ebd8", "#c7e3cd", "#b9dbc1", "#acd3b6", "#9ecbaa", "#90c39f", "#83bb93", "#75b388"];
+    const isDarkTheme = (
+      document.documentElement.getAttribute("data-theme") === "dark"
+      || document.body.getAttribute("data-theme") === "dark"
+    );
+    const palette = getFunnelFlowPalette(subfunnels.length, { dark: isDarkTheme });
     const total = subfunnels.length;
     const maxInset = Math.min(42, 18 + (total * 3.4));
     const columnsTemplate = subfunnels
@@ -6466,6 +6628,8 @@
     const segmentsMarkup = subfunnels.map((subfunnel, index) => `
       <div
         class="funnel-diagram-segment${index === 0 ? " is-first" : ""}${index === total - 1 ? " is-last" : ""}"
+        tabindex="0"
+        aria-label="Subfunil ${index + 1}: ${escapeHtml(subfunnel.name)}"
         style="
           --segment-bg:${palette[index % palette.length]};
           --left-inset:${((index / total) * maxInset).toFixed(2)}%;
@@ -8173,6 +8337,42 @@
       email: state.currentUser.email
     };
 
+    const { data: existingProfile, error: profileFetchError } = await state.supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", state.currentUser.id)
+      .maybeSingle();
+
+    if (profileFetchError && !isMissingRelationError(profileFetchError)) {
+      console.error("Erro ao consultar profile:", profileFetchError);
+    }
+
+    if (existingProfile) {
+      state.profile = {
+        ...payload,
+        ...existingProfile,
+        role: existingProfile?.role || USER_ROLE.USER,
+        access_status: existingProfile?.access_status || ACCESS_STATUS.PENDING
+      };
+      applyRoleBasedUi();
+
+      const shouldRefreshProfile =
+        String(existingProfile.full_name || "").trim() !== String(payload.full_name || "").trim()
+        || String(existingProfile.email || "").trim() !== String(payload.email || "").trim();
+
+      if (shouldRefreshProfile) {
+        void state.supabase
+          .from("profiles")
+          .upsert(payload, { onConflict: "id" })
+          .then(({ error }) => {
+            if (error) {
+              console.error("Erro ao atualizar profile em segundo plano:", error);
+            }
+          });
+      }
+      return;
+    }
+
     const { data: profile, error: upsertError } = await state.supabase
       .from("profiles")
       .upsert(payload, { onConflict: "id" })
@@ -8529,8 +8729,32 @@
     const indicators = getFilterValues("indicator", els.indicatorFilter);
     const indicatorSectors = getFilterValues("indicatorSector", els.indicatorSectorFilter);
     const baseLeads = isFunnelDetailActive() ? getScopedLeads() : getScopedLeads();
+    const cache = getRenderComputationCache();
+    const cacheKey = JSON.stringify({
+      ignoreMonth: options.ignoreMonth === true,
+      search,
+      categories,
+      groupIds,
+      funnelIds,
+      subfunnelIds,
+      owners,
+      months,
+      stageIds,
+      leadSources,
+      socialSources,
+      indicators,
+      indicatorSectors,
+      activeFunnelId: state.activeFunnelId || "",
+      activeSubfunnelId: state.activeSubfunnelId || "",
+      detail: isFunnelDetailActive(),
+      leadCount: baseLeads.length
+    });
 
-    return baseLeads.filter((lead) => {
+    if (cache.filteredLeads.has(cacheKey)) {
+      return cache.filteredLeads.get(cacheKey);
+    }
+
+    const result = baseLeads.filter((lead) => {
       const leadSubfunnelId = getLeadSubfunnelId(lead);
       const leadFunnelId = getLeadFunnelId(lead);
       const leadFunnel = getFunnelById(leadFunnelId);
@@ -8550,6 +8774,9 @@
 
       return matchesSearch && matchesCategory && matchesGroup && matchesFunnel && matchesSubfunnel && matchesOwner && matchesMonth && matchesStage && matchesLeadSource && matchesSocialSource && matchesIndicator && matchesIndicatorSector;
     });
+
+    cache.filteredLeads.set(cacheKey, result);
+    return result;
   }
 
   function getGroupFilterDisplayLabel(groupId) {
@@ -8941,6 +9168,11 @@
   }
 
   function getDashboardMetrics(filtered = getFilteredLeads()) {
+    const cache = getRenderComputationCache();
+    if (Array.isArray(filtered) && cache.dashboardMetrics.has(filtered)) {
+      return cache.dashboardMetrics.get(filtered);
+    }
+
     const total = filtered.length;
     const closedLeads = getClosedLeads(filtered);
     const qualifiedClosed = getQualifiedClosedLeads(filtered);
@@ -9006,7 +9238,11 @@
     const planSummary = Object.values(planSummaryMap)
       .sort((a, b) => (b.totalValue - a.totalValue) || a.plan.localeCompare(b.plan, "pt-BR"));
 
-    return { total, totalValue, closed, conversion, avgTicket, paidCount, organicCount, referralCount, waitingCount, byStage, topStage, topOwner, topReferral, bestMonth, planSummary };
+    const result = { total, totalValue, closed, conversion, avgTicket, paidCount, organicCount, referralCount, waitingCount, byStage, topStage, topOwner, topReferral, bestMonth, planSummary };
+    if (Array.isArray(filtered)) {
+      cache.dashboardMetrics.set(filtered, result);
+    }
+    return result;
   }
 
   function renderStats() {
@@ -9813,8 +10049,27 @@
     return getChartPalette(state.stages.length);
   }
 
+  function scheduleReportChartsRender() {
+    if (state.reportChartsRenderFrame) {
+      cancelAnimationFrame(state.reportChartsRenderFrame);
+    }
+
+    state.reportChartsRenderFrame = requestAnimationFrame(() => {
+      state.reportChartsRenderFrame = null;
+      if (state.activeView !== "relatorios") return;
+      renderCharts();
+    });
+  }
+
   function renderCharts() {
     if (typeof Chart === "undefined") return;
+
+    if (state.reportChartsBatchFrame) {
+      cancelAnimationFrame(state.reportChartsBatchFrame);
+      state.reportChartsBatchFrame = null;
+    }
+    state.reportChartsBatchToken += 1;
+    const batchToken = state.reportChartsBatchToken;
 
     ["pipeline", "traffic", "owner", "yearlyDaily", "monthly", "social", "ownerMonthlyAverage", "referralSector", "planCount", "planRevenue"].forEach(destroyChart);
 
@@ -9899,6 +10154,7 @@
     if (yearChartTitle) yearChartTitle.textContent = `Contatos diários de ${reportYear} (dia a dia)`;
 
     const create = (key, id, config) => {
+      if (batchToken !== state.reportChartsBatchToken) return;
       const canvas = $(id);
       if (!canvas) return;
       state.charts[key] = new Chart(canvas, config);
@@ -9916,53 +10172,52 @@
     const chartTextColor = isDarkTheme() ? "#dce8e0" : "#31453b";
     const chartGridColor = isDarkTheme() ? "rgba(220,232,224,0.14)" : "rgba(19,33,28,0.10)";
 
-    create("pipeline", "pipelineChart", makeChartConfig("bar", metrics.byStage.map((item) => item.name), [{ label: "Leads", data: metrics.byStage.map((item) => item.count), backgroundColor: pipelinePalette.fills, borderColor: pipelinePalette.borders, borderWidth: 1.5 }]));
-    create("traffic", "trafficChart", makeChartConfig("doughnut", Object.keys(trafficMap), [{ label: "Origem", data: Object.values(trafficMap), backgroundColor: trafficPalette.fills, borderColor: trafficPalette.borders, borderWidth: 1.5 }], { scales: {} }));
-    create("owner", "ownerChart", makeChartConfig("bar", Object.keys(ownerMap), [{ label: shouldUseOwnerRevenue ? "Receita fechada" : "Fechamentos", data: Object.values(ownerMap), backgroundColor: ownerPalette.fills, borderColor: ownerPalette.borders, borderWidth: 1.5 }], { indexAxis: "y" }));
-    create("yearlyDaily", "yearlyDailyChart", makeChartConfig("line", yearLabels, [{
-      label: "Contatos diários",
-      data: yearDateKeys.map((key) => yearDayMap[key] || 0),
-      tension: 0.2,
-      fill: true,
-      pointRadius: 0,
-      pointHoverRadius: 4,
-      borderWidth: 2,
-      backgroundColor: yearlyPalette.fill,
-      borderColor: yearlyPalette.border,
-      pointBackgroundColor: yearlyPalette.border,
-      pointBorderColor: yearlyPalette.border
-    }], {
-      scales: {
-        x: {
-          ticks: {
-            color: chartTextColor,
-            maxRotation: 0,
-            autoSkip: false,
-            callback: (value, index) => (monthStartIndexes.has(index) ? yearLabels[index] : "")
-          },
-          grid: { color: chartGridColor }
-        },
-        y: {
-          ticks: { color: chartTextColor, precision: 0 },
-          grid: { color: chartGridColor },
-          beginAtZero: true
-        }
-      }
-    }));
-
     const monthLabels = Object.keys(monthMap).sort();
     const monthlyPalette = getSingleSeriesColors(2, { fillAlpha: 0.16, borderAlpha: 1 });
-    create("monthly", "monthlyChart", makeChartConfig("line", monthLabels, [{ label: "Leads por mês", data: monthLabels.map((key) => monthMap[key]), tension: 0.3, fill: true, backgroundColor: monthlyPalette.fill, borderColor: monthlyPalette.border, pointBackgroundColor: monthlyPalette.border, pointBorderColor: monthlyPalette.border, borderWidth: 2 }]));
-
     const socialEntries = Object.entries(socialMap).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const socialPalette = getChartPalette(socialEntries.length);
     const ownerMonthlyAveragePalette = getChartPalette(ownerMonthlyAverageEntries.length);
     const referralSectorPalette = getChartPalette(referralSectorEntries.length);
     const planCountPalette = getChartPalette(planLabels.length);
     const planRevenuePalette = getChartPalette(planLabels.length, { fillAlpha: 0.62, borderAlpha: 1 });
-    create("social", "socialChart", makeChartConfig("bar", socialEntries.map(([key]) => key), [{ label: "Leads", data: socialEntries.map(([, value]) => value), backgroundColor: socialPalette.fills, borderColor: socialPalette.borders, borderWidth: 1.5 }]));
-    create("ownerMonthlyAverage", "ownerMonthlyAverageChart", makeChartConfig("bar", ownerMonthlyAverageEntries.map(([key]) => key), [{ label: "Média mensal", data: ownerMonthlyAverageEntries.map(([, value]) => value), backgroundColor: ownerMonthlyAveragePalette.fills, borderColor: ownerMonthlyAveragePalette.borders, borderWidth: 1.5 }], { indexAxis: "y" }));
-    create("referralSector", "referralSectorChart", makeChartConfig("bar", referralSectorEntries.map(([key]) => key), [{ label: "Indicações", data: referralSectorEntries.map(([, value]) => value), backgroundColor: referralSectorPalette.fills, borderColor: referralSectorPalette.borders, borderWidth: 1.5 }], {
+    const chartJobs = [
+      () => create("pipeline", "pipelineChart", makeChartConfig("bar", metrics.byStage.map((item) => item.name), [{ label: "Leads", data: metrics.byStage.map((item) => item.count), backgroundColor: pipelinePalette.fills, borderColor: pipelinePalette.borders, borderWidth: 1.5 }])),
+      () => create("traffic", "trafficChart", makeChartConfig("doughnut", Object.keys(trafficMap), [{ label: "Origem", data: Object.values(trafficMap), backgroundColor: trafficPalette.fills, borderColor: trafficPalette.borders, borderWidth: 1.5 }], { scales: {} })),
+      () => create("owner", "ownerChart", makeChartConfig("bar", Object.keys(ownerMap), [{ label: shouldUseOwnerRevenue ? "Receita fechada" : "Fechamentos", data: Object.values(ownerMap), backgroundColor: ownerPalette.fills, borderColor: ownerPalette.borders, borderWidth: 1.5 }], { indexAxis: "y" })),
+      () => create("yearlyDaily", "yearlyDailyChart", makeChartConfig("line", yearLabels, [{
+        label: "Contatos diários",
+        data: yearDateKeys.map((key) => yearDayMap[key] || 0),
+        tension: 0.2,
+        fill: true,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+        backgroundColor: yearlyPalette.fill,
+        borderColor: yearlyPalette.border,
+        pointBackgroundColor: yearlyPalette.border,
+        pointBorderColor: yearlyPalette.border
+      }], {
+        scales: {
+          x: {
+            ticks: {
+              color: chartTextColor,
+              maxRotation: 0,
+              autoSkip: false,
+              callback: (value, index) => (monthStartIndexes.has(index) ? yearLabels[index] : "")
+            },
+            grid: { color: chartGridColor }
+          },
+          y: {
+            ticks: { color: chartTextColor, precision: 0 },
+            grid: { color: chartGridColor },
+            beginAtZero: true
+          }
+        }
+      })),
+      () => create("monthly", "monthlyChart", makeChartConfig("line", monthLabels, [{ label: "Leads por mês", data: monthLabels.map((key) => monthMap[key]), tension: 0.3, fill: true, backgroundColor: monthlyPalette.fill, borderColor: monthlyPalette.border, pointBackgroundColor: monthlyPalette.border, pointBorderColor: monthlyPalette.border, borderWidth: 2 }])),
+      () => create("social", "socialChart", makeChartConfig("bar", socialEntries.map(([key]) => key), [{ label: "Leads", data: socialEntries.map(([, value]) => value), backgroundColor: socialPalette.fills, borderColor: socialPalette.borders, borderWidth: 1.5 }])),
+      () => create("ownerMonthlyAverage", "ownerMonthlyAverageChart", makeChartConfig("bar", ownerMonthlyAverageEntries.map(([key]) => key), [{ label: "Média mensal", data: ownerMonthlyAverageEntries.map(([, value]) => value), backgroundColor: ownerMonthlyAveragePalette.fills, borderColor: ownerMonthlyAveragePalette.borders, borderWidth: 1.5 }], { indexAxis: "y" })),
+      () => create("referralSector", "referralSectorChart", makeChartConfig("bar", referralSectorEntries.map(([key]) => key), [{ label: "Indicações", data: referralSectorEntries.map(([, value]) => value), backgroundColor: referralSectorPalette.fills, borderColor: referralSectorPalette.borders, borderWidth: 1.5 }], {
       indexAxis: "y",
       layout: {
         padding: {
@@ -9988,13 +10243,28 @@
           }
         }
       }
-    }));
-    create("planCount", "planCountChart", makeChartConfig("bar", planLabels, [{ label: "Fechamentos", data: metrics.planSummary.map((item) => item.count), backgroundColor: planCountPalette.fills, borderColor: planCountPalette.borders, borderWidth: 1.5 }]));
-    create("planRevenue", "planRevenueChart", makeChartConfig("bar", planLabels, [{ label: "Receita", data: metrics.planSummary.map((item) => item.totalValue), backgroundColor: planRevenuePalette.fills, borderColor: planRevenuePalette.borders, borderWidth: 1.5 }]));
+      })),
+      () => create("planCount", "planCountChart", makeChartConfig("bar", planLabels, [{ label: "Fechamentos", data: metrics.planSummary.map((item) => item.count), backgroundColor: planCountPalette.fills, borderColor: planCountPalette.borders, borderWidth: 1.5 }])),
+      () => create("planRevenue", "planRevenueChart", makeChartConfig("bar", planLabels, [{ label: "Receita", data: metrics.planSummary.map((item) => item.totalValue), backgroundColor: planRevenuePalette.fills, borderColor: planRevenuePalette.borders, borderWidth: 1.5 }]))
+    ];
 
-    setTimeout(() => {
-      Object.values(state.charts).forEach((chart) => chart?.resize?.());
-    }, 50);
+    const renderChartBatch = (startIndex = 0) => {
+      if (batchToken !== state.reportChartsBatchToken) return;
+      const batchSize = 2;
+      chartJobs.slice(startIndex, startIndex + batchSize).forEach((job) => job());
+      const nextIndex = startIndex + batchSize;
+      if (nextIndex < chartJobs.length) {
+        state.reportChartsBatchFrame = requestAnimationFrame(() => renderChartBatch(nextIndex));
+        return;
+      }
+      state.reportChartsBatchFrame = null;
+      window.setTimeout(() => {
+        if (batchToken !== state.reportChartsBatchToken) return;
+        Object.values(state.charts).forEach((chart) => chart?.resize?.());
+      }, 40);
+    };
+
+    renderChartBatch(0);
   }
 
 
@@ -10310,6 +10580,7 @@
   }
 
   function closeFunnelContextMenu() {
+    clearTouchContextTap();
     state.funnelContextMenuState = null;
     els.funnelContextMenu?.classList.add("hidden");
     els.funnelContextMenu?.setAttribute("aria-hidden", "true");
@@ -10694,6 +10965,10 @@
       els.notificationsCount.classList.toggle("hidden", notifications.length === 0);
     }
     els.notificationsBtn?.classList.toggle("has-alert", notifications.length > 0);
+    if (els.profileNotificationsCount) {
+      els.profileNotificationsCount.textContent = String(notifications.length);
+      els.profileNotificationsCount.classList.toggle("hidden", notifications.length === 0);
+    }
     if (els.notificationsPanelMeta) {
       els.notificationsPanelMeta.textContent = notifications.length
         ? `${notifications.length} pendência(s)`
@@ -10996,33 +11271,67 @@
   }
 
   function renderAll() {
+    resetRenderComputationCache();
     syncSelectedLeadIds();
     applyRoleBasedUi();
+    syncResponsiveHeaderState();
     if (!isViewAllowed(state.activeView)) {
       bindView(getDefaultAllowedView(), { resetFunnelDetail: false });
     }
     populateFilters();
     renderDesktopFilterSummary();
     renderStats();
-    renderFunnelNav();
-    renderFunnelHub();
-    if (isFunnelDetailActive()) {
-      renderPipeline();
-    } else if (els.pipeline) {
-      els.pipeline.innerHTML = "";
-      if (els.pipelineStageStrip) els.pipelineStageStrip.innerHTML = "";
+
+    const shouldRenderFunnelNav = state.activeView === "funil" || state.funnelSidebarOpen;
+    if (shouldRenderFunnelNav) {
+      renderFunnelNav();
     }
-    renderLeadTable();
-    renderTeam();
-    renderStagesConfig();
-    renderLeadSourcesConfig();
-    renderSocialSourcesConfig();
-    renderDepartmentsConfig();
-    renderRequests();
-    renderHistoryText();
+
+    if (state.activeView === "funil") {
+      renderFunnelHub();
+      if (isFunnelDetailActive()) {
+        renderPipeline();
+      } else if (els.pipeline) {
+        els.pipeline.innerHTML = "";
+        if (els.pipelineStageStrip) els.pipelineStageStrip.innerHTML = "";
+      }
+    }
+
+    if (state.activeView === "leads") {
+      renderLeadTable();
+    }
+
+    if (state.activeView === "equipe") {
+      renderTeam();
+      renderRequests();
+    }
+
+    if (state.activeView === "estrutura") {
+      renderStagesConfig();
+      renderLeadSourcesConfig();
+      renderSocialSourcesConfig();
+      renderDepartmentsConfig();
+    }
+
+    if (state.activeView === "configuracoes") {
+      renderHistoryText();
+    }
+
     renderNotifications();
-    if (state.activeView === "relatorios" && typeof window.Chart !== "undefined") {
-      renderCharts();
+    if (state.activeView === "relatorios") {
+      if (typeof window.Chart !== "undefined") {
+        scheduleReportChartsRender();
+      } else {
+        void ensureChartLibrary()
+          .then(() => {
+            if (state.activeView === "relatorios") {
+              scheduleReportChartsRender();
+            }
+          })
+          .catch((error) => {
+            console.error("Erro ao carregar biblioteca de gráficos:", error);
+          });
+      }
     }
     bindGeneralActionEvents();
     requestAnimationFrame(() => {
@@ -13131,8 +13440,9 @@
       setTimeout(async () => {
         try {
           await ensureChartLibrary();
-          renderStats();
-          renderCharts();
+          if (state.activeView === "relatorios") {
+            scheduleReportChartsRender();
+          }
         } catch (error) {
           console.error(error);
         }
@@ -13152,14 +13462,26 @@
   function bindPipelineEvents() {
     const canReorderPipelineLeads = canMoveLeads();
     const canReorderPipelineStages = canManageStages();
-    const openStageContextMenu = (event, stageId) => {
+    const buildLeadContextActions = (lead) => {
+      if (!lead) return [];
+      const actions = [];
+      if (canEditLeads(lead)) {
+        actions.push({ id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) });
+        if (!leadHasStageNotification(lead)) {
+          actions.push({ id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) });
+        }
+      }
+      if (canDeleteLeads(lead)) {
+        actions.push({ id: `delete-lead-${lead.id}`, label: "Excluir", danger: true, handler: () => deleteLead(lead.id) });
+      }
+      return actions;
+    };
+    const openStageContextMenu = ({ stageId, x = 0, y = 0 } = {}) => {
       const stage = state.stages.find((item) => item.id === stageId);
       if (!stage || !canManageStages()) return;
-      event.preventDefault();
-      event.stopPropagation();
       openFunnelContextMenu({
-        x: event.clientX,
-        y: event.clientY,
+        x,
+        y,
         actions: [
           { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
           { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) },
@@ -13168,13 +13490,29 @@
         ]
       });
     };
+    const openLeadContextMenu = ({ lead, x = 0, y = 0 } = {}) => {
+      const actions = buildLeadContextActions(lead);
+      if (!actions.length) return;
+      openFunnelContextMenu({ x, y, actions });
+    };
 
     document.querySelectorAll(".pipeline-stage-tab").forEach((tab) => {
       tab.draggable = canReorderPipelineStages;
       tab.oncontextmenu = (event) => {
         const stageId = String(tab.dataset.stageId || "").trim();
         if (!stageId) return;
-        openStageContextMenu(event, stageId);
+        event.preventDefault();
+        event.stopPropagation();
+        openStageContextMenu({ stageId, x: event.clientX, y: event.clientY });
+      };
+      tab.ontouchend = (event) => {
+        const stageId = String(tab.dataset.stageId || "").trim();
+        if (!stageId || event.target.closest("button, input, select, textarea, a, label")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        registerTouchContextTap("pipeline-stage", stageId, tab, ({ x, y }) => {
+          openStageContextMenu({ stageId, x, y });
+        });
       };
       tab.ondragstart = (event) => {
         if (!canReorderPipelineStages) {
@@ -13196,20 +13534,19 @@
       card.oncontextmenu = (event) => {
         const lead = state.leads.find((item) => item.id === card.dataset.leadId);
         if (!lead) return;
-        const actions = [];
-        if (canEditLeads(lead)) {
-          actions.push({ id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) });
-          if (!leadHasStageNotification(lead)) {
-            actions.push({ id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) });
-          }
-        }
-        if (canDeleteLeads(lead)) {
-          actions.push({ id: `delete-lead-${lead.id}`, label: "Excluir", danger: true, handler: () => deleteLead(lead.id) });
-        }
-        if (!actions.length) return;
         event.preventDefault();
         event.stopPropagation();
-        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions });
+        openLeadContextMenu({ lead, x: event.clientX, y: event.clientY });
+      };
+      card.ontouchend = (event) => {
+        if (event.target.closest(".card-actions, button, input, select, textarea, a, label")) return;
+        const lead = state.leads.find((item) => item.id === card.dataset.leadId);
+        if (!lead) return;
+        event.preventDefault();
+        event.stopPropagation();
+        registerTouchContextTap("pipeline-lead", lead.id, card, ({ x, y }) => {
+          openLeadContextMenu({ lead, x, y });
+        });
       };
       card.ondragstart = (event) => {
         if (!canReorderPipelineLeads) {
@@ -13239,7 +13576,19 @@
         if (event.target.closest(".card")) return;
         const stageId = String(column.dataset.stageId || "").trim();
         if (!stageId) return;
-        openStageContextMenu(event, stageId);
+        event.preventDefault();
+        event.stopPropagation();
+        openStageContextMenu({ stageId, x: event.clientX, y: event.clientY });
+      };
+      column.ontouchend = (event) => {
+        if (event.target.closest(".card, button, input, select, textarea, a, label")) return;
+        const stageId = String(column.dataset.stageId || "").trim();
+        if (!stageId) return;
+        event.preventDefault();
+        event.stopPropagation();
+        registerTouchContextTap("pipeline-stage-column", stageId, column, ({ x, y }) => {
+          openStageContextMenu({ stageId, x, y });
+        });
       };
       column.ondragstart = (event) => {
         if (!canReorderPipelineStages || event.target.closest("button, input, select, textarea, a, label")) {
@@ -13299,6 +13648,7 @@
   function bindEvents() {
     normalizeMobileFilterTexts();
     syncSidebarCollapsedForViewport();
+    syncResponsiveHeaderState();
     window.addEventListener("scroll", syncStickyChrome, { passive: true });
     syncStickyChrome();
 
@@ -13312,6 +13662,12 @@
     });
 
     els.notificationsBtn?.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeProfileMenu();
+      setNotificationsPanelOpen(!state.notificationPanelOpen);
+    });
+
+    els.profileNotificationsBtn?.addEventListener("click", (event) => {
       event.stopPropagation();
       closeProfileMenu();
       setNotificationsPanelOpen(!state.notificationPanelOpen);
@@ -13516,6 +13872,24 @@
 
     els.mobileMenuBtn?.addEventListener("click", () => {
       setMobileFiltersOpen(false);
+      if (isCompactViewport()) {
+        if (state.activeView !== "funil") {
+          bindView("funil", {
+            resetFunnelDetail: false,
+            preserveFunnelSidebarState: true,
+            keepFunnelSidebarOpen: true
+          });
+          renderAll();
+          return;
+        }
+
+        state.funnelSidebarOpen = !state.funnelSidebarOpen;
+        syncPrimaryMenuState();
+        writeStoredFunnelUiState();
+        renderAll();
+        return;
+      }
+
       els.sidebar.classList.toggle("open");
     });
     els.sidebarCollapseBtn?.addEventListener("click", () => toggleSidebarCollapsed(true));
@@ -13921,6 +14295,7 @@
     window.addEventListener("resize", () => {
       if (!isCompactViewport()) setMobileFiltersOpen(false);
       syncSidebarCollapsedForViewport();
+      syncResponsiveHeaderState();
       requestAnimationFrame(() => {
         syncPipelineColumnHeights();
         updateStickyLayout();
@@ -14278,9 +14653,9 @@
       state.security = getSecurityConfig();
       applySecurityConfigToUi();
       createClient();
-      await loadDepartments(true);
       bindEvents();
       requestAnimationFrame(updateStickyLayout);
+      void loadDepartments(true);
       await bootstrap();
     } catch (error) {
       console.error(error);
