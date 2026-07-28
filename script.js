@@ -298,6 +298,27 @@
     savedStageTypeActions: $("savedStageTypeActions"),
     removeSelectedStageTypeBtn: $("removeSelectedStageTypeBtn"),
     stageReminderSummary: $("stageReminderSummary"),
+    stageDuplicateModalOverlay: $("stageDuplicateModalOverlay"),
+    closeStageDuplicateModalBtn: $("closeStageDuplicateModalBtn"),
+    cancelStageDuplicateBtn: $("cancelStageDuplicateBtn"),
+    stageDuplicateForm: $("stageDuplicateForm"),
+    stageDuplicateModalTitle: $("stageDuplicateModalTitle"),
+    stageDuplicateSourceId: $("stageDuplicateSourceId"),
+    stageDuplicateCategory: $("stageDuplicateCategory"),
+    stageDuplicateGroup: $("stageDuplicateGroup"),
+    stageDuplicateFunnel: $("stageDuplicateFunnel"),
+    stageDuplicateSubfunnel: $("stageDuplicateSubfunnel"),
+    saveStageDuplicateBtn: $("saveStageDuplicateBtn"),
+    stageDeleteModalOverlay: $("stageDeleteModalOverlay"),
+    closeStageDeleteModalBtn: $("closeStageDeleteModalBtn"),
+    cancelStageDeleteBtn: $("cancelStageDeleteBtn"),
+    stageDeleteForm: $("stageDeleteForm"),
+    stageDeleteModalTitle: $("stageDeleteModalTitle"),
+    stageDeleteSourceId: $("stageDeleteSourceId"),
+    stageDeleteTargetGroup: $("stageDeleteTargetGroup"),
+    stageDeleteTargetStage: $("stageDeleteTargetStage"),
+    stageDeleteTargetHint: $("stageDeleteTargetHint"),
+    confirmStageDeleteBtn: $("confirmStageDeleteBtn"),
     addLeadSourceBtn: $("addLeadSourceBtn"),
     leadSourceName: $("leadSourceName"),
     leadSourcesConfigList: $("leadSourcesConfigList"),
@@ -431,6 +452,8 @@
     pipelineScrollbarDrag: null,
     pipelineCardPan: null,
     pipelineCardInteractionsBound: false,
+    pipelineStageDrag: null,
+    pipelineStageInteractionsBound: false,
     stageConfigDrag: null,
     subfunnelCardDrag: null,
     pipelineDragAutoScroll: {
@@ -467,6 +490,7 @@
 
   const DEFAULT_STAGE_COLOR = "#1F9D55";
   const DEPARTMENT_ACCESS_ALL_VALUE = "__all__";
+  const FUNNEL_UNGROUPED_OPTION = "__no_group__";
   const DEVELOPER_EMAIL = "auxmarketingpax@gmail.com";
   const FUNNEL_ACCESS_LEVEL = {
     VIEW: "view",
@@ -3065,7 +3089,7 @@
   }
 
   function closeAllModals() {
-    [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay].forEach((overlay) => {
+    [els.modalOverlay, els.stageModalOverlay, els.stageDuplicateModalOverlay, els.stageDeleteModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay].forEach((overlay) => {
       overlay?.classList.add("hidden");
     });
     document.body.classList.remove("modal-open");
@@ -3091,7 +3115,7 @@
     if (!overlay) return;
     overlay.classList.add("hidden");
     overlay.scrollTop = 0;
-    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay]
+    const hasOpenOverlay = [els.modalOverlay, els.stageModalOverlay, els.stageDuplicateModalOverlay, els.stageDeleteModalOverlay, els.notificationModalOverlay, els.historyModalOverlay, els.permissionModalOverlay, els.accountModalOverlay, els.funnelModalOverlay, els.funnelGroupModalOverlay]
       .some((item) => item && !item.classList.contains("hidden"));
     if (!hasOpenOverlay) document.body.classList.remove("modal-open");
   }
@@ -4278,7 +4302,12 @@
       els.structureFunnelSelect,
       els.structureSubfunnelSelect,
       els.stageFunnelSelect,
-      els.stageSubfunnelSelect
+      els.stageSubfunnelSelect,
+      els.stageDuplicateCategory,
+      els.stageDuplicateGroup,
+      els.stageDuplicateFunnel,
+      els.stageDuplicateSubfunnel,
+      els.stageDeleteTargetStage
     ];
 
     const dynamicSelects = [...document.querySelectorAll(".plan-select-input, .team-role-select, .team-department-select, .team-department-secondary-select, [data-access-role], [data-access-department], [data-access-department-secondary], .department-select")];
@@ -4898,6 +4927,55 @@
 
   function getSubfunnelsForFunnel(funnelId) {
     return getFunnelById(funnelId)?.subfunnels || [];
+  }
+
+  function getStageScope(stageId) {
+    const subfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim() || null;
+    const subfunnel = getSubfunnelById(subfunnelId);
+    const funnel = getFunnelById(subfunnel?.funnel_id || "");
+    const group = funnel?.group_id ? getGroupById(funnel.group_id) : null;
+    return { subfunnelId, subfunnel, funnel, group };
+  }
+
+  function getFunnelsByCategory(category) {
+    return (state.funnelWorkspace?.funnels || [])
+      .filter((funnel) => !category || String(funnel.category || "") === String(category))
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+  }
+
+  function getStageDuplicateGroupOptions(category) {
+    const funnels = getFunnelsByCategory(category);
+    const groups = [];
+    const seen = new Set();
+    let hasUngrouped = false;
+
+    funnels.forEach((funnel) => {
+      const groupId = String(funnel.group_id || "").trim();
+      if (!groupId) {
+        hasUngrouped = true;
+        return;
+      }
+      if (seen.has(groupId)) return;
+      const group = getGroupById(groupId);
+      if (!group) return;
+      seen.add(groupId);
+      groups.push(group);
+    });
+
+    groups.sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+
+    return [
+      ...(hasUngrouped ? [{ id: FUNNEL_UNGROUPED_OPTION, name: "Sem grupo" }] : []),
+      ...groups
+    ];
+  }
+
+  function getFunnelsByDuplicateGroup(category, groupId) {
+    return getFunnelsByCategory(category).filter((funnel) => {
+      const currentGroupId = String(funnel.group_id || "").trim();
+      if (groupId === FUNNEL_UNGROUPED_OPTION) return !currentGroupId;
+      return currentGroupId === String(groupId || "").trim();
+    });
   }
 
   function getStagesForSubfunnel(subfunnelId) {
@@ -7601,6 +7679,130 @@
     state.pipelineCardInteractionsBound = true;
   }
 
+  function clearPipelineStageDragIndicators() {
+    document.querySelectorAll(".pipeline-stage-tab, .column").forEach((item) => {
+      item.classList.remove("is-dragging", "drag-before", "drag-after", "dragging-target");
+    });
+  }
+
+  function getPipelineStageDropTarget(target) {
+    return target?.closest?.(".pipeline-stage-tab[data-stage-id], .column[data-stage-id]") || null;
+  }
+
+  function markPipelineStageElements(stageId, ...classNames) {
+    const normalizedStageId = String(stageId || "").trim();
+    if (!normalizedStageId || !classNames.length) return;
+    document.querySelectorAll(`.pipeline-stage-tab[data-stage-id="${normalizedStageId}"], .column[data-stage-id="${normalizedStageId}"]`).forEach((item) => {
+      item.classList.add(...classNames);
+    });
+  }
+
+  function handlePipelineStageDragStart(event) {
+    const item = getPipelineStageDropTarget(event.target);
+    if (!item || !canManageStages()) {
+      event.preventDefault();
+      return;
+    }
+
+    if (!els.pipeline?.contains(item) && !els.pipelineStageStrip?.contains(item)) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.target.closest("button, input, select, textarea, a, label")) {
+      event.preventDefault();
+      return;
+    }
+
+    if (event.target.closest(".card")) return;
+
+    const stageId = String(item.dataset.stageId || "").trim();
+    if (!stageId) {
+      event.preventDefault();
+      return;
+    }
+
+    stopPipelineDragAutoScroll();
+    state.pipelineStageDrag = { stageId };
+    clearPipelineStageDragIndicators();
+    markPipelineStageElements(stageId, "is-dragging");
+
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", stageId);
+    }
+  }
+
+  function handlePipelineStageDragOver(event) {
+    const draggedStageId = state.pipelineStageDrag?.stageId;
+    const item = getPipelineStageDropTarget(event.target);
+    if (!draggedStageId || !item) return;
+
+    const targetStageId = String(item.dataset.stageId || "").trim();
+    if (!targetStageId || targetStageId === draggedStageId) return;
+
+    event.preventDefault();
+    clearPipelineStageDragIndicators();
+    markPipelineStageElements(draggedStageId, "is-dragging");
+    markPipelineStageElements(targetStageId, "dragging-target");
+
+    const rect = item.getBoundingClientRect();
+    const placeAfter = event.clientX > rect.left + (rect.width / 2);
+    markPipelineStageElements(targetStageId, placeAfter ? "drag-after" : "drag-before");
+
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+  }
+
+  async function handlePipelineStageDrop(event) {
+    const draggedStageId = state.pipelineStageDrag?.stageId;
+    const item = getPipelineStageDropTarget(event.target);
+    clearPipelineStageDragIndicators();
+
+    if (!draggedStageId || !item) {
+      state.pipelineStageDrag = null;
+      return;
+    }
+
+    const targetStageId = String(item.dataset.stageId || "").trim();
+    if (!targetStageId || targetStageId === draggedStageId) {
+      state.pipelineStageDrag = null;
+      return;
+    }
+
+    event.preventDefault();
+
+    const scopedStages = getScopedStages();
+    const currentIndex = scopedStages.findIndex((stage) => stage.id === draggedStageId);
+    const targetIndex = scopedStages.findIndex((stage) => stage.id === targetStageId);
+    if (currentIndex === -1 || targetIndex === -1) {
+      state.pipelineStageDrag = null;
+      return;
+    }
+
+    const rect = item.getBoundingClientRect();
+    const placeAfter = event.clientX > rect.left + (rect.width / 2);
+    const nextIndex = placeAfter
+      ? (currentIndex < targetIndex ? targetIndex : targetIndex + 1)
+      : (currentIndex < targetIndex ? targetIndex - 1 : targetIndex);
+
+    state.pipelineStageDrag = null;
+    await moveStageToIndex(draggedStageId, nextIndex, state.activeSubfunnelId);
+  }
+
+  function handlePipelineStageDragEnd() {
+    state.pipelineStageDrag = null;
+    clearPipelineStageDragIndicators();
+    stopPipelineDragAutoScroll();
+  }
+
+  function attachPipelineStageInteractionEvents() {
+    if (state.pipelineStageInteractionsBound) return;
+    window.addEventListener("blur", handlePipelineStageDragEnd);
+    state.pipelineStageInteractionsBound = true;
+  }
+
   function stopPipelineDragAutoScroll() {
     const autoScroll = state.pipelineDragAutoScroll;
     if (autoScroll.frameId) {
@@ -7707,9 +7909,14 @@
   }
 
   async function persistStagePositions(stages) {
-    const updates = stages.map((stage, index) =>
-      state.supabase.from("stages").update({ position: index }).eq("id", stage.id)
-    );
+    const updates = stages
+      .map((stage, index) => ({ stage, index }))
+      .filter(({ stage, index }) => Number(stage?.position) !== index)
+      .map(({ stage, index }) =>
+        state.supabase.from("stages").update({ position: index }).eq("id", stage.id)
+      );
+
+    if (!updates.length) return;
 
     const results = await Promise.all(updates);
     const failed = results.find((result) => result.error);
@@ -7750,9 +7957,18 @@
       }
     }
 
+    const previousStages = state.stages.map((item) => normalizeStage(item));
+    const optimisticStages = reordered.map((item, index) => normalizeStage({
+      ...item,
+      position: index
+    }));
+
+    state.stages = optimisticStages;
+    renderAll();
+
     try {
-      await persistStagePositions(reordered);
-      await logChange(
+      await persistStagePositions(optimisticStages);
+      void logChange(
         "reorder",
         "stage",
         stageId,
@@ -7763,9 +7979,10 @@
           from_position: currentIndex,
           to_position: normalizedTargetIndex
         }
-      );
-      await loadAppData({ includeProfiles: state.profilesLoaded });
+      ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
     } catch (error) {
+      state.stages = previousStages;
+      renderAll();
       alert(error.message || "Não foi possível reordenar o pipeline.");
     }
   }
@@ -8693,11 +8910,12 @@
   function renderPipelineStageStrip(filtered = getFilteredLeads()) {
     if (!els.pipelineStageStrip) return;
     const stages = getScopedStages();
+    const canReorderPipelineStages = canManageStages();
 
     els.pipelineStageStrip.innerHTML = stages.map((stage) => {
       const count = filtered.filter((lead) => lead.stage_id === stage.id).length;
       return `
-        <article class="pipeline-stage-tab" data-stage-id="${stage.id}">
+        <article class="pipeline-stage-tab" data-stage-id="${stage.id}" draggable="${canReorderPipelineStages ? "true" : "false"}">
           <div class="pipeline-stage-tab-main">
             <div class="pipeline-stage-tab-title">
               <span class="pipeline-stage-tab-accent" style="background:${stage.color}"></span>
@@ -8736,6 +8954,7 @@
   function renderPipeline() {
     const filtered = getFilteredLeads();
     const canReorderPipelineLeads = canMoveLeads();
+    const canReorderPipelineStages = canManageStages();
     const stages = getScopedStages();
     renderPipelineStageStrip(filtered);
 
@@ -8783,7 +9002,7 @@
         : '<div class="empty-state">Nenhum lead nesta etapa.</div>';
 
       return `
-        <section class="column" data-stage-id="${stage.id}">
+        <section class="column" data-stage-id="${stage.id}" draggable="${canReorderPipelineStages ? "true" : "false"}">
           <div class="column-body">${cards}</div>
         </section>
       `;
@@ -9087,6 +9306,7 @@
   }
 
   function renderStagesConfig() {
+    if (!els.stagesConfigList) return;
     if (!canManageStages()) {
       els.stagesConfigList.innerHTML = '<div class="stage-config-item">Somente administradores podem gerenciar pipelines.</div>';
       return;
@@ -10800,6 +11020,160 @@
     closeModalOverlay(els.stageModalOverlay);
   }
 
+  function closeStageDuplicateModal() {
+    closeModalOverlay(els.stageDuplicateModalOverlay);
+  }
+
+  function closeStageDeleteModal() {
+    closeModalOverlay(els.stageDeleteModalOverlay);
+  }
+
+  function getNextStageDuplicateName(baseName, targetSubfunnelId) {
+    const normalizedBase = String(baseName || "").trim() || "Pipeline";
+    const targetStages = getStagesForSubfunnel(targetSubfunnelId);
+    const hasExactName = targetStages.some((stage) => normalizeComparisonText(stage.name || "") === normalizeComparisonText(normalizedBase));
+    if (!hasExactName) return normalizedBase;
+
+    const baseCopyName = `${normalizedBase} (Cópia)`;
+    const hasBaseCopy = targetStages.some((stage) => normalizeComparisonText(stage.name || "") === normalizeComparisonText(baseCopyName));
+    if (!hasBaseCopy) return baseCopyName;
+
+    let index = 2;
+    while (targetStages.some((stage) => normalizeComparisonText(stage.name || "") === normalizeComparisonText(`${normalizedBase} (Cópia ${index})`))) {
+      index += 1;
+    }
+    return `${normalizedBase} (Cópia ${index})`;
+  }
+
+  function renderStageDuplicateCategoryOptions(selectedCategory) {
+    if (!els.stageDuplicateCategory) return;
+    const categories = FUNNEL_CATEGORIES.filter((category) => getFunnelsByCategory(category).length);
+    els.stageDuplicateCategory.innerHTML = categories.map((category) => `
+      <option value="${category}">${category}</option>
+    `).join("");
+    if (selectedCategory && categories.includes(selectedCategory)) {
+      els.stageDuplicateCategory.value = selectedCategory;
+    } else if (categories[0]) {
+      els.stageDuplicateCategory.value = categories[0];
+    }
+  }
+
+  function syncStageDuplicateDestination(options = {}) {
+    const preferredGroupId = String(options.groupId || "").trim() || null;
+    const preferredFunnelId = String(options.funnelId || "").trim() || null;
+    const preferredSubfunnelId = String(options.subfunnelId || "").trim() || null;
+    const selectedCategory = String(els.stageDuplicateCategory?.value || "").trim();
+    const groupOptions = getStageDuplicateGroupOptions(selectedCategory);
+
+    if (els.stageDuplicateGroup) {
+      els.stageDuplicateGroup.innerHTML = groupOptions.map((group) => `
+        <option value="${group.id}">${escapeHtml(group.name)}</option>
+      `).join("");
+      const nextGroupId = groupOptions.some((group) => String(group.id) === preferredGroupId)
+        ? preferredGroupId
+        : String(groupOptions[0]?.id || "");
+      if (nextGroupId) els.stageDuplicateGroup.value = nextGroupId;
+    }
+
+    const selectedGroupId = String(els.stageDuplicateGroup?.value || "").trim();
+    const funnels = getFunnelsByDuplicateGroup(selectedCategory, selectedGroupId);
+    if (els.stageDuplicateFunnel) {
+      els.stageDuplicateFunnel.innerHTML = funnels.map((funnel) => `
+        <option value="${funnel.id}">${escapeHtml(funnel.name)}</option>
+      `).join("");
+      const nextFunnelId = funnels.some((funnel) => String(funnel.id) === preferredFunnelId)
+        ? preferredFunnelId
+        : String(funnels[0]?.id || "");
+      if (nextFunnelId) els.stageDuplicateFunnel.value = nextFunnelId;
+    }
+
+    const selectedFunnelId = String(els.stageDuplicateFunnel?.value || "").trim();
+    const subfunnels = getSubfunnelsForFunnel(selectedFunnelId);
+    if (els.stageDuplicateSubfunnel) {
+      els.stageDuplicateSubfunnel.innerHTML = subfunnels.map((subfunnel) => `
+        <option value="${subfunnel.id}">${escapeHtml(subfunnel.name)}</option>
+      `).join("");
+      const nextSubfunnelId = subfunnels.some((subfunnel) => String(subfunnel.id) === preferredSubfunnelId)
+        ? preferredSubfunnelId
+        : String(subfunnels[0]?.id || "");
+      if (nextSubfunnelId) els.stageDuplicateSubfunnel.value = nextSubfunnelId;
+    }
+
+    syncBrandedSelects();
+  }
+
+  function openStageDuplicateModal(stage) {
+    if (!stage || !canManageStages()) return;
+    const scope = getStageScope(stage.id);
+    const category = String(scope.funnel?.category || FUNNEL_CATEGORIES[0] || "B2C");
+    const groupId = String(scope.group?.id || (scope.funnel?.group_id ? scope.funnel.group_id : FUNNEL_UNGROUPED_OPTION)).trim() || FUNNEL_UNGROUPED_OPTION;
+    closeAllModals();
+    els.stageDuplicateForm?.reset();
+    if (els.stageDuplicateSourceId) els.stageDuplicateSourceId.value = stage.id || "";
+    if (els.stageDuplicateModalTitle) els.stageDuplicateModalTitle.textContent = `Duplicar pipeline ${stage.name || ""}`.trim();
+    renderStageDuplicateCategoryOptions(category);
+    syncStageDuplicateDestination({
+      groupId,
+      funnelId: scope.funnel?.id || "",
+      subfunnelId: scope.subfunnelId || ""
+    });
+    syncBrandedSelects();
+    openModalOverlay(els.stageDuplicateModalOverlay, "#stageDuplicateCategory");
+    requestAnimationFrame(syncBrandedSelects);
+  }
+
+  function getNearestStageForDeletion(stageId) {
+    const scope = getStageScope(stageId);
+    const scopedStages = getStagesForSubfunnel(scope.subfunnelId);
+    const currentIndex = scopedStages.findIndex((stage) => stage.id === stageId);
+    if (currentIndex < 0) return null;
+    return scopedStages[currentIndex + 1] || scopedStages[currentIndex - 1] || null;
+  }
+
+  function toggleStageDeleteTargetField() {
+    if (!els.stageDeleteTargetGroup) return;
+    const mode = document.querySelector('input[name="stageDeleteMode"]:checked')?.value || "move_leads";
+    els.stageDeleteTargetGroup.classList.toggle("hidden", mode !== "move_leads");
+  }
+
+  function renderStageDeleteTargets(stage) {
+    if (!els.stageDeleteTargetStage || !els.stageDeleteTargetHint) return;
+    const scope = getStageScope(stage.id);
+    const currentStages = getStagesForSubfunnel(scope.subfunnelId).filter((item) => item.id !== stage.id);
+    const nearestStage = getNearestStageForDeletion(stage.id);
+
+    if (!currentStages.length) {
+      els.stageDeleteTargetStage.innerHTML = "";
+      els.stageDeleteTargetHint.textContent = "Não existe outra pipeline nesse subfunil. Se mantiver os leads, o sistema criará uma pipeline padrão automaticamente.";
+      syncBrandedSelects();
+      return;
+    }
+
+    els.stageDeleteTargetStage.innerHTML = currentStages.map((item) => `
+      <option value="${item.id}">${escapeHtml(item.name)}</option>
+    `).join("");
+    if (nearestStage?.id) {
+      els.stageDeleteTargetStage.value = nearestStage.id;
+    }
+    els.stageDeleteTargetHint.textContent = "Os leads serão movidos para a pipeline selecionada.";
+    syncBrandedSelects();
+  }
+
+  function openStageDeleteModal(stage) {
+    if (!stage || !canManageStages()) return;
+    closeAllModals();
+    els.stageDeleteForm?.reset();
+    if (els.stageDeleteSourceId) els.stageDeleteSourceId.value = stage.id || "";
+    if (els.stageDeleteModalTitle) els.stageDeleteModalTitle.textContent = `Excluir pipeline ${stage.name || ""}`.trim();
+    const moveRadio = document.querySelector('input[name="stageDeleteMode"][value="move_leads"]');
+    if (moveRadio) moveRadio.checked = true;
+    renderStageDeleteTargets(stage);
+    toggleStageDeleteTargetField();
+    syncBrandedSelects();
+    openModalOverlay(els.stageDeleteModalOverlay, 'input[name="stageDeleteMode"][value="move_leads"]');
+    requestAnimationFrame(syncBrandedSelects);
+  }
+
   function closeNotificationModal() {
     toggleNotificationDeleteButton(false);
     closeModalOverlay(els.notificationModalOverlay);
@@ -12136,6 +12510,308 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
+  async function createStageForSubfunnel(payload, subfunnelId) {
+    const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
+    if (error) throw error;
+    const normalizedStage = normalizeStage(data);
+    state.stages.push(normalizedStage);
+    if (data?.id) assignStageToSubfunnel(data.id, subfunnelId);
+    return normalizedStage;
+  }
+
+  async function ensureFallbackStageForStageDelete(stage) {
+    const existingFallback = getNearestStageForDeletion(stage.id);
+    if (existingFallback) return existingFallback;
+
+    const scope = getStageScope(stage.id);
+    const targetSubfunnelId = scope.subfunnelId;
+    if (!targetSubfunnelId) return null;
+
+    let name = "Pipeline padrão";
+    const targetStages = getStagesForSubfunnel(targetSubfunnelId);
+    let suffix = 2;
+    while (targetStages.some((item) => normalizeComparisonText(item.name || "") === normalizeComparisonText(name))) {
+      name = `Pipeline padrão ${suffix}`;
+      suffix += 1;
+    }
+
+    const payload = {
+      name,
+      color: sanitizeHexColor(stage.color),
+      stage_type: "andamento",
+      custom_stage_type: null,
+      position: Number(stage.position ?? state.stages.length),
+      created_by: state.currentUser?.id || stage.created_by || null
+    };
+
+    const fallback = await createStageForSubfunnel(payload, targetSubfunnelId);
+    await logChange(
+      "insert",
+      "stage",
+      fallback.id,
+      `Pipeline padrão "${fallback.name}" foi criada automaticamente por ${getUserDisplayName()} durante a exclusão de "${stage.name}".`,
+      { source_stage_id: stage.id, source_stage_name: stage.name, fallback_stage: fallback }
+    );
+    return fallback;
+  }
+
+  async function duplicateStageLeads(sourceStage, targetStage, targetSubfunnelId) {
+    const sourceLeads = state.leads.filter((lead) => lead.stage_id === sourceStage.id);
+    if (!sourceLeads.length) return 0;
+
+    const insertRows = sourceLeads.map((lead) => {
+      const meta = getLeadMeta(lead?.notes || "", lead?.value || 0);
+      const nextTracking = normalizeLeadStageTracking(meta.stage_tracking || {});
+      nextTracking[targetStage.id] = getLocalIsoDate();
+
+      return {
+        assigned_to: lead.assigned_to || null,
+        created_by: lead.created_by || state.currentUser?.id || null,
+        stage_id: targetStage.id,
+        name: lead.name,
+        contact: lead.contact,
+        owner: lead.owner_raw || lead.owner || "",
+        value: Number(lead.value || 0) || 0,
+        start_date: normalizeDateInput(lead.start_date || "") || String(lead.start_date || "").trim(),
+        social_source: lead.social_source || "",
+        traffic_type: lead.traffic_type || "",
+        notes: serializeLeadMeta({
+          ...meta,
+          reminder: meta.reminder || null,
+          stage_tracking: nextTracking
+        })
+      };
+    });
+
+    const insertedIds = [];
+    for (const chunk of chunkArray(insertRows, 50)) {
+      const { data, error } = await state.supabase
+        .from("leads")
+        .insert(chunk)
+        .select("id");
+
+      if (error) throw error;
+
+      (data || []).forEach((row) => {
+        if (row?.id) {
+          insertedIds.push(row.id);
+          assignLeadToSubfunnel(row.id, targetSubfunnelId);
+        }
+      });
+    }
+
+    await logChange(
+      "duplicate_stage_leads",
+      "stage",
+      targetStage.id,
+      `${insertRows.length} lead(s) da pipeline "${sourceStage.name}" foram duplicados por ${getUserDisplayName()} para "${targetStage.name}".`,
+      {
+        source_stage_id: sourceStage.id,
+        source_stage_name: sourceStage.name,
+        target_stage_id: targetStage.id,
+        target_stage_name: targetStage.name,
+        duplicated_lead_count: insertRows.length
+      }
+    );
+
+    return insertedIds.length;
+  }
+
+  async function submitStageDuplicate(event) {
+    event.preventDefault();
+    if (!canManageStages()) {
+      alert("Somente administradores podem duplicar pipelines.");
+      return;
+    }
+
+    const sourceStageId = String(els.stageDuplicateSourceId?.value || "").trim();
+    const targetSubfunnelId = String(els.stageDuplicateSubfunnel?.value || "").trim();
+    const duplicateMode = document.querySelector('input[name="stageDuplicateMode"]:checked')?.value || "stage_only";
+    const sourceStage = state.stages.find((stage) => stage.id === sourceStageId);
+
+    if (!sourceStage) return alert("Pipeline de origem não encontrada.");
+    if (!targetSubfunnelId) return alert("Selecione o subfunil de destino.");
+
+    const targetName = getNextStageDuplicateName(sourceStage.name, targetSubfunnelId);
+    const payload = {
+      name: targetName,
+      color: sanitizeHexColor(sourceStage.color),
+      stage_type: sourceStage.stage_type || "andamento",
+      custom_stage_type: sourceStage.custom_stage_type || null,
+      position: state.stages.length,
+      created_by: state.currentUser?.id || sourceStage.created_by || null
+    };
+
+    try {
+      const createdStage = await createStageForSubfunnel(payload, targetSubfunnelId);
+      await logChange(
+        "duplicate",
+        "stage",
+        createdStage.id,
+        `Pipeline "${sourceStage.name}" foi duplicada por ${getUserDisplayName()} como "${createdStage.name}".`,
+        {
+          source_stage_id: sourceStage.id,
+          source_stage_name: sourceStage.name,
+          target_stage_id: createdStage.id,
+          target_stage_name: createdStage.name,
+          target_subfunnel_id: targetSubfunnelId,
+          duplicate_mode: duplicateMode
+        }
+      );
+
+      if (duplicateMode === "stage_with_leads") {
+        await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId);
+      }
+
+      closeStageDuplicateModal();
+      await loadAppData({ includeProfiles: state.profilesLoaded });
+    } catch (error) {
+      alert(`Erro ao duplicar pipeline: ${formatSupabaseError(error)}`);
+    }
+  }
+
+  async function deleteStageWithStrategy(stageId, options = {}) {
+    const stage = state.stages.find((item) => item.id === stageId);
+    if (!stage) return;
+
+    const deleteWithLeads = Boolean(options.deleteWithLeads);
+    let targetStageId = String(options.targetStageId || "").trim();
+    const affectedLeads = state.leads.filter((lead) => lead.stage_id === stageId);
+
+    if (!canManageStages()) {
+      requestAdminAuthorization({
+        requestType: "delete_stage",
+        title: "Solicitar exclusao de pipeline",
+        description: `Voce nao tem permissao para excluir a etapa "${stage.name}". Sua solicitacao sera enviada para o administrador.`,
+        entityType: "stage",
+        entityId: stage.id,
+        payload: {
+          stage_id: stage.id,
+          stage_name: stage.name,
+          delete_with_leads: deleteWithLeads,
+          target_stage_id: targetStageId || null
+        }
+      });
+      return;
+    }
+
+    if (!deleteWithLeads && affectedLeads.length && !targetStageId) {
+      const fallback = await ensureFallbackStageForStageDelete(stage);
+      targetStageId = fallback?.id || "";
+    }
+
+    const targetStage = targetStageId ? state.stages.find((item) => item.id === targetStageId) || null : null;
+
+    if (!deleteWithLeads && affectedLeads.length && !targetStage) {
+      alert("Não foi possível definir a pipeline de destino para os leads.");
+      return;
+    }
+
+    if (deleteWithLeads && affectedLeads.length) {
+      const { error: deleteLeadError } = await deleteLeadsByIds(affectedLeads.map((lead) => lead.id));
+      if (deleteLeadError) {
+        alert(`Erro ao excluir leads da pipeline: ${formatSupabaseError(deleteLeadError)}`);
+        return;
+      }
+
+      await logChange(
+        "bulk_delete_stage_leads",
+        "lead",
+        null,
+        `${affectedLeads.length} lead(s) da pipeline "${stage.name}" foram excluídos por ${getUserDisplayName()}.`,
+        {
+          stage_id: stage.id,
+          stage_name: stage.name,
+          deleted_lead_count: affectedLeads.length
+        }
+      );
+    }
+
+    if (!deleteWithLeads && affectedLeads.length) {
+      const { error: moveError } = await state.supabase
+        .from("leads")
+        .update({ stage_id: targetStage.id })
+        .eq("stage_id", stage.id);
+
+      if (moveError) {
+        alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
+        return;
+      }
+
+      affectedLeads.forEach((lead) => {
+        const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
+        if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId);
+      });
+
+      await logChange(
+        "bulk_move_stage",
+        "lead",
+        null,
+        `${affectedLeads.length} lead(s) foram movidos automaticamente de "${stage.name}" para "${targetStage.name}" porque a pipeline foi excluída por ${getUserDisplayName()}.`,
+        {
+          from_stage_id: stage.id,
+          from_stage_name: stage.name,
+          to_stage_id: targetStage.id,
+          to_stage_name: targetStage.name,
+          affected_count: affectedLeads.length
+        }
+      );
+    }
+
+    const { error } = await state.supabase
+      .from("stages")
+      .delete()
+      .eq("id", stage.id);
+
+    if (error) {
+      alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
+      return;
+    }
+
+    if (state.funnelWorkspace?.stageAssignments) {
+      delete state.funnelWorkspace.stageAssignments[stage.id];
+      writeStoredFunnelWorkspace();
+    }
+    if (state.funnelWorkspace?.stageReminderConfigs) {
+      delete state.funnelWorkspace.stageReminderConfigs[stage.id];
+      writeStoredFunnelWorkspace();
+    }
+
+    await logChange(
+      "delete",
+      "stage",
+      stage.id,
+      `Etapa "${stage.name}" foi excluída por ${getUserDisplayName()}.`,
+      {
+        ...stage,
+        delete_with_leads: deleteWithLeads,
+        moved_to_stage_id: targetStage?.id || null
+      }
+    );
+
+    closeStageDeleteModal();
+    await loadAppData({ includeProfiles: state.profilesLoaded });
+  }
+
+  async function submitStageDelete(event) {
+    event.preventDefault();
+    const stageId = String(els.stageDeleteSourceId?.value || "").trim();
+    const mode = document.querySelector('input[name="stageDeleteMode"]:checked')?.value || "move_leads";
+    const targetStageId = String(els.stageDeleteTargetStage?.value || "").trim();
+    const stage = state.stages.find((item) => item.id === stageId);
+    if (!stage) return alert("Pipeline não encontrada.");
+
+    const actionLabel = mode === "delete_with_leads"
+      ? `excluir a pipeline "${stage.name}" com todos os leads`
+      : `excluir a pipeline "${stage.name}" e mover os leads`;
+    if (!confirm(`Tem certeza que deseja ${actionLabel}?`)) return;
+
+    await deleteStageWithStrategy(stageId, {
+      deleteWithLeads: mode === "delete_with_leads",
+      targetStageId
+    });
+  }
+
   async function sendResetPasswordEmail() {
     const email = $("loginEmail").value.trim();
     if (!email) return setMessage(els.authMessage, "Digite seu e-mail para recuperar a senha.", true);
@@ -12282,6 +12958,7 @@
 
   function bindPipelineEvents() {
     const canReorderPipelineLeads = canMoveLeads();
+    const canReorderPipelineStages = canManageStages();
     const openStageContextMenu = (event, stageId) => {
       const stage = state.stages.find((item) => item.id === stageId);
       if (!stage || !canManageStages()) return;
@@ -12292,18 +12969,33 @@
         y: event.clientY,
         actions: [
           { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
+          { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) },
           { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) },
-          { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => deleteStage(stage.id) }
+          { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => openStageDeleteModal(stage) }
         ]
       });
     };
 
     document.querySelectorAll(".pipeline-stage-tab").forEach((tab) => {
+      tab.draggable = canReorderPipelineStages;
       tab.oncontextmenu = (event) => {
         const stageId = String(tab.dataset.stageId || "").trim();
         if (!stageId) return;
         openStageContextMenu(event, stageId);
       };
+      tab.ondragstart = (event) => {
+        if (!canReorderPipelineStages) {
+          event.preventDefault();
+          return false;
+        }
+        handlePipelineStageDragStart(event);
+        return true;
+      };
+      tab.ondragover = handlePipelineStageDragOver;
+      tab.ondrop = async (event) => {
+        await handlePipelineStageDrop(event);
+      };
+      tab.ondragend = handlePipelineStageDragEnd;
     });
 
     document.querySelectorAll(".card").forEach((card) => {
@@ -12349,30 +13041,45 @@
     });
 
     document.querySelectorAll(".column").forEach((column) => {
+      column.draggable = canReorderPipelineStages;
       column.oncontextmenu = (event) => {
         if (event.target.closest(".card")) return;
         const stageId = String(column.dataset.stageId || "").trim();
         if (!stageId) return;
         openStageContextMenu(event, stageId);
       };
-      if (!canReorderPipelineLeads) {
-        column.ondragover = null;
-        column.ondragleave = null;
-        column.ondrop = null;
-        return;
-      }
+      column.ondragstart = (event) => {
+        if (!canReorderPipelineStages || event.target.closest("button, input, select, textarea, a, label")) {
+          event.preventDefault();
+          return false;
+        }
+        if (event.target.closest(".card")) return true;
+        handlePipelineStageDragStart(event);
+        return true;
+      };
 
       column.ondragover = (e) => {
+        if (state.pipelineStageDrag?.stageId) {
+          handlePipelineStageDragOver(e);
+          return;
+        }
+        if (!canReorderPipelineLeads) return;
         e.preventDefault();
         column.classList.add("drag-over");
         updatePipelineDragAutoScroll(e.clientX);
       };
 
       column.ondragleave = () => {
+        if (state.pipelineStageDrag?.stageId) return;
         column.classList.remove("drag-over");
       };
 
       column.ondrop = async (e) => {
+        if (state.pipelineStageDrag?.stageId) {
+          await handlePipelineStageDrop(e);
+          return;
+        }
+        if (!canReorderPipelineLeads) return;
         e.preventDefault();
         column.classList.remove("drag-over");
         stopPipelineDragAutoScroll();
@@ -12381,6 +13088,7 @@
         const stageId = column.dataset.stageId;
         if (leadId && stageId) await moveLeadToStage(leadId, stageId);
       };
+      column.ondragend = handlePipelineStageDragEnd;
     });
 
   }
@@ -12958,6 +13666,23 @@
     els.stageForm.addEventListener("submit", submitStage);
     els.stageColor.addEventListener("input", (e) => updateStageColorPreview(e.target.value));
     els.stageType.addEventListener("change", toggleCustomStageTypeField);
+    els.closeStageDuplicateModalBtn?.addEventListener("click", closeStageDuplicateModal);
+    els.cancelStageDuplicateBtn?.addEventListener("click", closeStageDuplicateModal);
+    els.stageDuplicateForm?.addEventListener("submit", submitStageDuplicate);
+    els.stageDuplicateCategory?.addEventListener("change", () => syncStageDuplicateDestination());
+    els.stageDuplicateGroup?.addEventListener("change", () => syncStageDuplicateDestination({
+      groupId: els.stageDuplicateGroup?.value || ""
+    }));
+    els.stageDuplicateFunnel?.addEventListener("change", () => syncStageDuplicateDestination({
+      groupId: els.stageDuplicateGroup?.value || "",
+      funnelId: els.stageDuplicateFunnel?.value || ""
+    }));
+    els.closeStageDeleteModalBtn?.addEventListener("click", closeStageDeleteModal);
+    els.cancelStageDeleteBtn?.addEventListener("click", closeStageDeleteModal);
+    els.stageDeleteForm?.addEventListener("submit", submitStageDelete);
+    document.querySelectorAll('input[name="stageDeleteMode"]').forEach((input) => {
+      input.addEventListener("change", toggleStageDeleteTargetField);
+    });
     els.closeNotificationModalBtn?.addEventListener("click", closeNotificationModal);
     els.cancelNotificationBtn?.addEventListener("click", closeNotificationModal);
     els.notificationForm?.addEventListener("submit", submitNotification);
@@ -12999,6 +13724,7 @@
     setupObservationListEvents();
     attachPipelineScrollEvents();
     attachPipelineCardInteractionEvents();
+    attachPipelineStageInteractionEvents();
     window.addEventListener("resize", () => {
       if (!isCompactViewport()) setMobileFiltersOpen(false);
       syncSidebarCollapsedForViewport();
@@ -13156,6 +13882,8 @@
 
     bindOverlayDismiss(els.modalOverlay, closeLeadModal);
     bindOverlayDismiss(els.stageModalOverlay, closeStageModal);
+    bindOverlayDismiss(els.stageDuplicateModalOverlay, closeStageDuplicateModal);
+    bindOverlayDismiss(els.stageDeleteModalOverlay, closeStageDeleteModal);
     bindOverlayDismiss(els.notificationModalOverlay, closeNotificationModal);
     bindOverlayDismiss(els.historyModalOverlay, closeHistoryModal);
     bindOverlayDismiss(els.permissionModalOverlay, closePermissionRequestModal);

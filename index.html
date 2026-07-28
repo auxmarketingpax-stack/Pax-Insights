@@ -10,7 +10,7 @@
   <title>Pax Insights</title>
   <script src="theme-init.js?v=20260724-01"></script>
   <link rel="icon" type="image/png" href="assets/pax-insights-symbol.png" />
-  <link rel="stylesheet" href="style.css?v=20260728-02" />
+  <link rel="stylesheet" href="style.css?v=20260728-07" />
 </head>
 <body>
   <div id="bootScreen" class="boot-screen">Carregando sistema...</div>
@@ -671,23 +671,8 @@
             <div class="panel-header">
               <div>
                 <h3>Estrutura do CRM</h3>
-                <p class="section-note">Gerencie pipelines e a lista de origens de lead usadas no CRM.</p>
+                <p class="section-note">Gerencie as listas de origem e os catálogos usados no CRM.</p>
               </div>
-            </div>
-
-            <div class="config-box">
-              <p>Apenas administradores podem alterar estruturas compartilhadas e catalogos dinamicos do CRM.</p>
-              <div class="structure-scope-bar">
-                <div class="form-group">
-                  <label for="structureFunnelSelect">Funil</label>
-                  <select id="structureFunnelSelect"></select>
-                </div>
-                <div class="form-group">
-                  <label for="structureSubfunnelSelect">Subfunil</label>
-                  <select id="structureSubfunnelSelect"></select>
-                </div>
-              </div>
-              <div id="stagesConfigList" class="stages-config-list"></div>
             </div>
 
             <div class="config-box">
@@ -1120,6 +1105,108 @@
     </div>
   </div>
 
+  <div class="crm-modal-overlay hidden" id="stageDuplicateModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="stageDuplicateModalTitle">Duplicar pipeline</h3>
+        <button class="close-btn" id="closeStageDuplicateModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="stageDuplicateForm" class="lead-form">
+        <input type="hidden" id="stageDuplicateSourceId" />
+
+        <div class="form-group form-group-full">
+          <label for="stageDuplicateCategory">Categoria</label>
+          <select id="stageDuplicateCategory" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="stageDuplicateGroup">Grupo</label>
+          <select id="stageDuplicateGroup" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="stageDuplicateFunnel">Funil</label>
+          <select id="stageDuplicateFunnel" required></select>
+        </div>
+
+        <div class="form-group form-group-full">
+          <label for="stageDuplicateSubfunnel">Subfunil</label>
+          <select id="stageDuplicateSubfunnel" required></select>
+        </div>
+
+        <div class="form-group form-group-full">
+          <label>O que duplicar</label>
+          <div class="choice-stack">
+            <label class="choice-card">
+              <input type="radio" name="stageDuplicateMode" value="stage_only" checked />
+              <div>
+                <strong>Somente a pipeline</strong>
+                <p>Cria a pipeline no destino sem copiar os leads.</p>
+              </div>
+            </label>
+            <label class="choice-card">
+              <input type="radio" name="stageDuplicateMode" value="stage_with_leads" />
+              <div>
+                <strong>Pipeline com leads</strong>
+                <p>Cria a pipeline e duplica os leads vinculados a ela.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelStageDuplicateBtn">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="saveStageDuplicateBtn">Duplicar pipeline</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="crm-modal-overlay hidden" id="stageDeleteModalOverlay">
+    <div class="crm-modal crm-small-modal">
+      <div class="modal-header">
+        <h3 id="stageDeleteModalTitle">Excluir pipeline</h3>
+        <button class="close-btn" id="closeStageDeleteModalBtn" type="button">&times;</button>
+      </div>
+
+      <form id="stageDeleteForm" class="lead-form">
+        <input type="hidden" id="stageDeleteSourceId" />
+
+        <div class="form-group form-group-full">
+          <label>Como deseja excluir</label>
+          <div class="choice-stack">
+            <label class="choice-card">
+              <input type="radio" name="stageDeleteMode" value="move_leads" checked />
+              <div>
+                <strong>Excluir somente a pipeline</strong>
+                <p>Os leads serão movidos para a pipeline mais próxima ou para uma pipeline padrão criada automaticamente.</p>
+              </div>
+            </label>
+            <label class="choice-card choice-card-danger">
+              <input type="radio" name="stageDeleteMode" value="delete_with_leads" />
+              <div>
+                <strong>Excluir a pipeline com os leads</strong>
+                <p>Remove a pipeline e todos os leads vinculados a ela.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group form-group-full" id="stageDeleteTargetGroup">
+          <label for="stageDeleteTargetStage">Pipeline de destino para os leads</label>
+          <select id="stageDeleteTargetStage"></select>
+          <p class="helper-text" id="stageDeleteTargetHint">Se não houver outra pipeline, o sistema criará uma pipeline padrão automaticamente.</p>
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelStageDeleteBtn">Cancelar</button>
+          <button type="submit" class="btn btn-danger" id="confirmStageDeleteBtn">Excluir pipeline</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="crm-modal-overlay hidden" id="notificationModalOverlay">
     <div class="crm-modal crm-small-modal">
       <div class="modal-header">
@@ -1269,6 +1356,6 @@
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
   <script src="config.js?v=20260415-02"></script>
-  <script src="script.js?v=20260727-22"></script>
+  <script src="script.js?v=20260728-12"></script>
 </body>
 </html>
