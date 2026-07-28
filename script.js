@@ -535,6 +535,7 @@
   const FUNNEL_UI_STATE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-ui-state`;
   const OWNER_RECONCILIATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.owner-reconciliation-v6`;
   const SOCIAL_SOURCE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.social-source-catalog-v1`;
+  const APP_DATA_CACHE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.app-data-cache-v1`;
   const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
   const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
   const DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.deleted-funnel-workspace-ids-v1`;
@@ -1097,7 +1098,8 @@
 
   const STORAGE_CACHE_KEYS = [
     CUSTOM_STAGE_TYPES_STORAGE_KEY,
-    HIDDEN_PRESET_STAGE_TYPES_STORAGE_KEY
+    HIDDEN_PRESET_STAGE_TYPES_STORAGE_KEY,
+    APP_DATA_CACHE_STORAGE_KEY
   ];
 
   const STORAGE_CLEANUP_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
@@ -4521,6 +4523,58 @@
     if (state.funnelDataLoadedFromSupabase) {
       queueFunnelWorkspaceSync();
     }
+  }
+
+  function readStoredAppDataCache() {
+    const parsed = readJsonStorageValue(APP_DATA_CACHE_STORAGE_KEY);
+    if (!parsed) return null;
+
+    return {
+      stages: Array.isArray(parsed.stages) ? parsed.stages : [],
+      leads: Array.isArray(parsed.leads) ? parsed.leads : [],
+      leadSources: Array.isArray(parsed.leadSources) ? parsed.leadSources : [],
+      departments: Array.isArray(parsed.departments) ? parsed.departments : [],
+      socialSources: Array.isArray(parsed.socialSources) ? parsed.socialSources : [],
+      cachedAt: parsed.cachedAt || null
+    };
+  }
+
+  function writeStoredAppDataCache() {
+    try {
+      window.localStorage.setItem(APP_DATA_CACHE_STORAGE_KEY, JSON.stringify({
+        stages: state.stages || [],
+        leads: state.leads || [],
+        leadSources: state.leadSources || [],
+        departments: state.departments || [],
+        socialSources: state.socialSources || [],
+        cachedAt: new Date().toISOString()
+      }));
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
+  function hydrateAppDataFromCache() {
+    const cached = readStoredAppDataCache();
+    if (!cached?.stages?.length && !cached?.leads?.length) return false;
+
+    state.stages = (cached.stages || []).map(normalizeStage);
+    const rawLeads = cached.leads || [];
+    state.ownerCanonicalMap = buildOwnerCanonicalMap(rawLeads.map((lead) => lead?.owner), state.profiles || []);
+    state.socialSourceCanonicalMap = buildCanonicalValueMap(rawLeads.map((lead) => lead?.social_source), "social_source");
+    state.leads = rawLeads.map((lead) => normalizeLead(lead, {
+      ownerMap: state.ownerCanonicalMap,
+      socialSourceMap: state.socialSourceCanonicalMap
+    }));
+    state.leadSources = normalizeLeadSources(cached.leadSources || []);
+    state.socialSources = normalizeSocialSources([
+      ...(cached.socialSources || []),
+      ...rawLeads.map((lead) => lead?.social_source || "")
+    ]);
+    state.departments = Array.isArray(cached.departments) ? cached.departments : [];
+    syncFunnelWorkspaceWithData(readStoredFunnelWorkspace());
+    syncSelectedLeadIds();
+    return state.stages.length > 0 || state.leads.length > 0;
   }
 
   function readNotificationDismissals() {
@@ -8102,23 +8156,41 @@
     setShellTab("crm");
     syncStickyChrome();
 
-    await loadAppData({ includeProfiles: false, includeAdminData: false, runRouteMigration: false });
-    bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
-    renderAll();
-    showScreen("appScreen");
+    const finalizePrimaryRender = () => {
+      bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
+      renderAll();
+      showScreen("appScreen");
+    };
 
-    void (async () => {
-      await waitForNextPaint();
-      try {
-        await Promise.allSettled([
-          loadProfilesIfNeeded(),
-          loadAdminDataIfNeeded(),
-          runDeferredFunnelRouteMigration()
-        ]);
-      } catch (error) {
-        console.error("Erro ao finalizar o carregamento secundário:", error);
-      }
-    })();
+    const runSecondaryLoads = () => {
+      void (async () => {
+        await waitForNextPaint();
+        try {
+          await Promise.allSettled([
+            loadProfilesIfNeeded(),
+            loadAdminDataIfNeeded(),
+            runDeferredFunnelRouteMigration()
+          ]);
+        } catch (error) {
+          console.error("Erro ao finalizar o carregamento secundário:", error);
+        }
+      })();
+    };
+
+    const hydratedFromCache = hydrateAppDataFromCache();
+    if (hydratedFromCache) {
+      finalizePrimaryRender();
+      void (async () => {
+        await loadAppData({ includeProfiles: false, includeAdminData: false, runRouteMigration: false });
+        finalizePrimaryRender();
+        runSecondaryLoads();
+      })();
+      return;
+    }
+
+    await loadAppData({ includeProfiles: false, includeAdminData: false, runRouteMigration: false });
+    finalizePrimaryRender();
+    runSecondaryLoads();
   }
 
   async function loadAppData(options = {}) {
@@ -8200,6 +8272,7 @@
     }
     renderDepartmentSelects();
     syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
+    writeStoredAppDataCache();
 
     if (runRouteMigration) {
       try {
