@@ -641,6 +641,8 @@
       instagran: "Instagram",
       instgran: "Instagram",
       facebook: "Facebook",
+      pap: "PAP",
+      interesseproprio: "Interesse Próprio",
       whatsapp: "WhatsApp",
       whatsap: "WhatsApp",
       whats: "WhatsApp",
@@ -10148,7 +10150,7 @@
     }
 
     const payload = rows
-      .map((row) => {
+      .map((row, index) => {
         const name = row.nome || row.name || "";
         const contact = row.contato || row.contact || "";
         const owner = canAssignLeadOwner()
@@ -10165,6 +10167,7 @@
         const importedClosedAt = normalizeDateInput(row.data_fechamento || row.fechado_em || row.data || "") || "";
         const plan = String(row.plano || row.plan || "").trim();
         const planName = plan || (importedValue > 0 ? getDefaultPlanName(0) : "");
+        const socialSource = getCanonicalMappedValue(row.rede_social || row.social_source || "", state.socialSourceCanonicalMap, "social_source");
         const plans = planName
           ? [{
               name: planName,
@@ -10183,8 +10186,9 @@
           owner: resolveLeadOwnerForPersistence({ requestedOwner: owner }),
           value: importedValue,
           start_date: normalizedStartDate,
-          social_source: getCanonicalMappedValue(row.rede_social || row.social_source || "", state.socialSourceCanonicalMap, "social_source"),
+          social_source: socialSource,
           traffic_type: String(trafficType).trim(),
+          _importRowNumber: index + 2,
           notes: serializeLeadMeta({
             plan: planName,
             plans,
@@ -10196,10 +10200,23 @@
           })
         };
       })
-      .filter((lead) => lead.name && lead.contact && lead.stage_id && lead.traffic_type);
+      .filter((lead) => lead.name && lead.contact && lead.stage_id && lead.traffic_type && lead.social_source);
 
     if (!payload.length) {
-      alert("Nenhuma linha valida encontrada. Use colunas como nome, contato, data_inicio, origem e pipeline.");
+      alert("Nenhuma linha válida encontrada. Use colunas como nome, contato, data_inicio, origem, canal de origem e pipeline.");
+      return;
+    }
+
+    const rowsWithoutSocialSource = rows
+      .map((row, index) => ({
+        rowNumber: index + 2,
+        socialSource: getCanonicalMappedValue(row.rede_social || row.social_source || "", state.socialSourceCanonicalMap, "social_source")
+      }))
+      .filter((item) => !item.socialSource);
+
+    if (rowsWithoutSocialSource.length) {
+      const preview = rowsWithoutSocialSource.slice(0, 8).map((item) => item.rowNumber).join(", ");
+      alert(`Preencha o canal de origem no CSV. Linhas sem canal: ${preview}${rowsWithoutSocialSource.length > 8 ? "..." : ""}.`);
       return;
     }
 
@@ -12144,8 +12161,11 @@
     }
     if (!payload.stage_id) return alert("Selecione uma etapa.");
     const requiresOwner = canAssignLeadOwner(existingLead) || !existingLead;
-    if (!payload.name || !payload.contact || !payload.start_date || !payload.traffic_type || (requiresOwner && !payload.owner)) {
+    if (!payload.name || !payload.contact || !payload.start_date || !payload.traffic_type || !payload.social_source || (requiresOwner && !payload.owner)) {
       return alert("Preencha os campos obrigatorios.");
+    }
+    if (!payload.social_source) {
+      return alert("Selecione o canal de origem.");
     }
     if (isReferralLeadSource(payload.traffic_type) && !referralName) {
       return alert("Informe o nome de quem indicou.");
