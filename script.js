@@ -12513,20 +12513,54 @@
     const leadMeta = getLeadMeta(lead?.notes || "", lead?.value || 0);
     const nextStageTracking = normalizeLeadStageTracking(leadMeta.stage_tracking || {});
     nextStageTracking[stageId] = getLocalIsoDate();
+    const nextNotes = serializeLeadMeta({
+      ...leadMeta,
+      stage_tracking: nextStageTracking
+    });
+    const previousLead = { ...lead };
+    const previousAssignedSubfunnelId = String(state.funnelWorkspace?.leadAssignments?.[lead.id] || "").trim();
+    const targetSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim() || previousAssignedSubfunnelId;
+
+    state.leads = state.leads.map((item) => (
+      item.id === lead.id
+        ? normalizeLead({ ...item, stage_id: stageId, notes: nextNotes }, {
+            ownerMap: state.ownerCanonicalMap,
+            socialSourceMap: state.socialSourceCanonicalMap
+          })
+        : item
+    ));
+    if (targetSubfunnelId) {
+      assignLeadToSubfunnel(lead.id, targetSubfunnelId);
+    }
+    writeStoredAppDataCache();
+    renderAll();
+
     const { error } = await state.supabase
       .from("leads")
       .update({
         stage_id: stageId,
-        notes: serializeLeadMeta({
-          ...leadMeta,
-          stage_tracking: nextStageTracking
-        })
+        notes: nextNotes
       })
       .eq("id", lead.id);
 
-    if (error) return alert(`Erro no Supabase: ${error.message}`);
+    if (error) {
+      state.leads = state.leads.map((item) => (
+        item.id === lead.id
+          ? normalizeLead(previousLead, {
+              ownerMap: state.ownerCanonicalMap,
+              socialSourceMap: state.socialSourceCanonicalMap
+            })
+          : item
+      ));
+      if (previousAssignedSubfunnelId) {
+        assignLeadToSubfunnel(lead.id, previousAssignedSubfunnelId);
+      }
+      writeStoredAppDataCache();
+      renderAll();
+      return alert(`Erro no Supabase: ${error.message}`);
+    }
 
-    await logChange(
+    void logChange(
       "move_stage",
       "lead",
       lead.id,
@@ -12538,9 +12572,9 @@
         to_stage_id: stage.id,
         to_stage_name: stage.name
       }
-    );
-
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    ).catch((historyError) => {
+      console.error("Erro ao registrar movimentação de lead:", historyError);
+    });
   }
 
   async function deleteLead(id) {
