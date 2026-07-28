@@ -9557,7 +9557,7 @@ body[data-theme="dark"] .funnel-diagram-segment-shape,
 body[data-theme="dark"] .funnel-diagram-segment:nth-child(2) .funnel-diagram-segment-shape,
 body[data-theme="dark"] .funnel-diagram-segment:nth-child(3) .funnel-diagram-segment-shape,
 body[data-theme="dark"] .funnel-diagram-segment:nth-child(4) .funnel-diagram-segment-shape{
-  background:#274031 !important;
+  background:linear-gradient(90deg, #355842 0%, #274031 100%) !important;
   border-color:rgba(143,186,153,.12) !important;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.05), 0 10px 22px rgba(0,0,0,.18) !important;
 }
