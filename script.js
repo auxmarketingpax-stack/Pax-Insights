@@ -4757,7 +4757,8 @@
     }
   }
 
-  async function ensureDefaultSocialSourceForMissingLeads(leadIds = []) {
+  async function ensureDefaultSocialSourceForMissingLeads(leadIds = [], options = {}) {
+    const silent = options.silent === true;
     const ids = normalizeIdList(leadIds);
     if (!ids.length || state.socialSourceBackfillInFlight) return;
     if (!state.currentUser || !isApprovedUser()) return;
@@ -4792,7 +4793,9 @@
       state.socialSources = normalizeSocialSources([...(state.socialSources || []), DEFAULT_SOCIAL_SOURCE]);
       writeStoredSocialSources();
       writeStoredAppDataCache();
-      renderAll();
+      if (!silent) {
+        renderAll();
+      }
     } catch (error) {
       console.error("Erro ao preencher canal de origem padrão:", error);
     } finally {
@@ -8695,21 +8698,29 @@
     setShellTab("crm");
     syncStickyChrome();
 
-    const finalizePrimaryRender = () => {
-      bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
+    const finalizePrimaryRender = ({ rebindView = true, revealScreen = true } = {}) => {
+      if (rebindView) {
+        bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
+      }
       renderAll();
-      showScreen("appScreen");
+      if (revealScreen) {
+        showScreen("appScreen");
+      }
     };
 
     const runSecondaryLoads = () => {
       void (async () => {
         await waitForNextPaint();
         try {
-          await Promise.allSettled([
-            loadProfilesIfNeeded(),
-            loadAdminDataIfNeeded(),
-            runDeferredFunnelRouteMigration()
+          const results = await Promise.allSettled([
+            loadProfilesIfNeeded(false, { silent: true }),
+            loadAdminDataIfNeeded(false, { silent: true }),
+            runDeferredFunnelRouteMigration({ silent: true })
           ]);
+          const shouldRerender = results.some((result) => result.status === "fulfilled" && result.value === true);
+          if (shouldRerender) {
+            renderAll();
+          }
         } catch (error) {
           console.error("Erro ao finalizar o carregamento secundário:", error);
         }
@@ -8718,16 +8729,29 @@
 
     const hydratedFromCache = hydrateAppDataFromCache();
     if (hydratedFromCache) {
+      restoreStoredFunnelUiState();
       finalizePrimaryRender();
       void (async () => {
-        await loadAppData({ includeProfiles: false, includeAdminData: false, runRouteMigration: false });
-        finalizePrimaryRender();
+        await loadAppData({
+          includeProfiles: false,
+          includeAdminData: false,
+          runRouteMigration: false,
+          restoreUiState: false,
+          silentRender: true
+        });
+        finalizePrimaryRender({ rebindView: false, revealScreen: false });
         runSecondaryLoads();
       })();
       return;
     }
 
-    await loadAppData({ includeProfiles: false, includeAdminData: false, runRouteMigration: false });
+    await loadAppData({
+      includeProfiles: false,
+      includeAdminData: false,
+      runRouteMigration: false,
+      restoreUiState: true,
+      silentRender: true
+    });
     finalizePrimaryRender();
     runSecondaryLoads();
   }
@@ -8736,6 +8760,8 @@
     const includeProfiles = options.includeProfiles === true;
     const includeAdminData = options.includeAdminData === true || (options.includeAdminData !== false && canManageAdminAreas());
     const runRouteMigration = options.runRouteMigration === true || (options.runRouteMigration !== false);
+    const restoreUiState = options.restoreUiState === true;
+    const silentRender = options.silentRender === true;
     const leadsPromise = fetchAllLeads();
     const funnelWorkspacePromise = loadFunnelWorkspaceFromSupabase();
     const [stagesRes, leadsRes, profilesRes, stageTypesRes, leadSourcesRes, accessRequestsRes, adminRequestsRes, departmentsRes, remoteFunnelWorkspace] = await Promise.all([
@@ -8816,7 +8842,7 @@
     renderDepartmentSelects();
     syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
     writeStoredAppDataCache();
-    void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds);
+    void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
 
     if (runRouteMigration) {
       try {
@@ -8843,7 +8869,9 @@
       console.warn("Erro ao consolidar funis de Ações Externas:", mergeError);
     }
 
-    restoreStoredFunnelUiState();
+    if (restoreUiState) {
+      restoreStoredFunnelUiState();
+    }
     syncSelectedLeadIds();
 
     if (includeProfiles) {
@@ -8856,11 +8884,15 @@
       return loadAppData({ includeProfiles, includeAdminData, runRouteMigration });
     }
 
-    renderAll();
+    if (!silentRender) {
+      renderAll();
+    }
+    return true;
   }
 
-  async function loadProfilesIfNeeded(force = false) {
-    if (!force && state.profilesLoaded) return;
+  async function loadProfilesIfNeeded(force = false, options = {}) {
+    const silent = options.silent === true;
+    if (!force && state.profilesLoaded) return false;
 
     const { data, error } = await state.supabase
       .from("profiles")
@@ -8869,7 +8901,7 @@
 
     if (error) {
       console.error(error);
-      return;
+      return false;
     }
 
     state.profiles = data || [];
@@ -8879,19 +8911,23 @@
       ownerMap: state.ownerCanonicalMap,
       socialSourceMap: state.socialSourceCanonicalMap
     }));
-    renderAll();
-    if (!els.historyModalOverlay.classList.contains("hidden")) renderHistoryText();
+    if (!silent) {
+      renderAll();
+      if (!els.historyModalOverlay.classList.contains("hidden")) renderHistoryText();
+    }
+    return true;
   }
 
-  async function loadAdminDataIfNeeded(force = false) {
+  async function loadAdminDataIfNeeded(force = false, options = {}) {
+    const silent = options.silent === true;
     if (!canManageAdminAreas()) {
       state.accessRequests = [];
       state.adminRequests = [];
       state.adminDataLoaded = true;
-      return;
+      return true;
     }
 
-    if (!force && state.adminDataLoaded) return;
+    if (!force && state.adminDataLoaded) return false;
 
     const [accessRequestsRes, adminRequestsRes] = await Promise.all([
       state.supabase.from("access_requests").select("*").order("created_at", { ascending: false }),
@@ -8900,24 +8936,26 @@
 
     if (accessRequestsRes.error && !isMissingRelationError(accessRequestsRes.error)) {
       console.error(accessRequestsRes.error);
-      return;
+      return false;
     }
 
     if (adminRequestsRes.error && !isMissingRelationError(adminRequestsRes.error)) {
       console.error(adminRequestsRes.error);
-      return;
+      return false;
     }
 
     state.accessRequests = accessRequestsRes.data || [];
     state.adminRequests = adminRequestsRes.data || [];
     state.adminDataLoaded = true;
 
-    if (state.activeView === "equipe") {
+    if (!silent && state.activeView === "equipe") {
       renderTeam();
     }
+    return true;
   }
 
-  async function runDeferredFunnelRouteMigration() {
+  async function runDeferredFunnelRouteMigration(options = {}) {
+    const silent = options.silent === true;
     if (readStoredFunnelRouteMigrationDone()) return false;
     if (!canManageStages()) return false;
 
@@ -8928,14 +8966,18 @@
       await loadAppData({
         includeProfiles: state.profilesLoaded,
         includeAdminData: state.adminDataLoaded,
-        runRouteMigration: false
+        runRouteMigration: false,
+        restoreUiState: false,
+        silentRender: true
       });
-      bindView(state.activeView, {
-        resetFunnelDetail: false,
-        keepFunnelSidebarOpen: state.funnelSidebarOpen,
-        preserveFunnelSidebarState: true
-      });
-      renderAll();
+      if (!silent) {
+        bindView(state.activeView, {
+          resetFunnelDetail: false,
+          keepFunnelSidebarOpen: state.funnelSidebarOpen,
+          preserveFunnelSidebarState: true
+        });
+        renderAll();
+      }
       return true;
     } catch (error) {
       console.error("Erro ao executar migração adiada dos funis:", error);
