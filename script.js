@@ -6022,30 +6022,22 @@
   }
 
   function mergeRemoteSubfunnelsWithStored(localSubfunnels = [], remoteSubfunnels = [], deletedSubfunnelIds = new Set()) {
-    const mergedSubfunnels = (Array.isArray(localSubfunnels) ? localSubfunnels : [])
+    return (Array.isArray(remoteSubfunnels) ? remoteSubfunnels : [])
       .filter((item) => !deletedSubfunnelIds.has(String(item?.id || "")))
-      .map((item) => ({ ...item }));
+      .map((remoteSubfunnel) => {
+        const localSubfunnel = (Array.isArray(localSubfunnels) ? localSubfunnels : []).find((item) => (
+          !deletedSubfunnelIds.has(String(item?.id || ""))
+          && (
+            (item?.id && remoteSubfunnel?.id && String(item.id) === String(remoteSubfunnel.id))
+            || getFunnelLabelCompareKey(item?.name || "") === getFunnelLabelCompareKey(remoteSubfunnel?.name || "")
+          )
+        )) || null;
 
-    (Array.isArray(remoteSubfunnels) ? remoteSubfunnels : [])
-      .filter((item) => !deletedSubfunnelIds.has(String(item?.id || "")))
-      .forEach((remoteSubfunnel) => {
-        const existingIndex = mergedSubfunnels.findIndex((localSubfunnel) => (
-          (localSubfunnel?.id && remoteSubfunnel?.id && String(localSubfunnel.id) === String(remoteSubfunnel.id))
-          || getFunnelLabelCompareKey(localSubfunnel?.name || "") === getFunnelLabelCompareKey(remoteSubfunnel?.name || "")
-        ));
-
-        if (existingIndex === -1) {
-          mergedSubfunnels.push(remoteSubfunnel);
-          return;
-        }
-
-        mergedSubfunnels[existingIndex] = {
-          ...mergedSubfunnels[existingIndex],
+        return {
+          ...(localSubfunnel || {}),
           ...remoteSubfunnel
         };
       });
-
-    return mergedSubfunnels;
   }
 
   function syncFunnelWorkspaceWithData(workspaceInput = null) {
@@ -6065,59 +6057,53 @@
       if (!remoteWorkspace) return localWorkspace || null;
       if (!localWorkspace) return remoteWorkspace;
 
-      const localFunnels = (Array.isArray(localWorkspace.funnels) ? localWorkspace.funnels : [])
-        .filter((item) => !deletedFunnelIds.has(String(item?.id || "")));
-      const mergedFunnels = [...localFunnels];
-
-      (Array.isArray(remoteWorkspace.funnels) ? remoteWorkspace.funnels : [])
+      const mergedFunnels = (Array.isArray(remoteWorkspace.funnels) ? remoteWorkspace.funnels : [])
         .filter((item) => !deletedFunnelIds.has(String(item?.id || "")))
-        .forEach((remoteFunnel) => {
-        const existingIndex = mergedFunnels.findIndex((localFunnel) => (
-          (localFunnel?.id && remoteFunnel?.id && String(localFunnel.id) === String(remoteFunnel.id))
-          || (
-            getFunnelLabelCompareKey(localFunnel?.name || "") === getFunnelLabelCompareKey(remoteFunnel?.name || "")
-            && String(localFunnel?.category || "").trim() === String(remoteFunnel?.category || "").trim()
+        .map((remoteFunnel) => {
+        const localFunnel = (Array.isArray(localWorkspace.funnels) ? localWorkspace.funnels : []).find((item) => (
+          !deletedFunnelIds.has(String(item?.id || ""))
+          && (
+            (item?.id && remoteFunnel?.id && String(item.id) === String(remoteFunnel.id))
+            || (
+              getFunnelLabelCompareKey(item?.name || "") === getFunnelLabelCompareKey(remoteFunnel?.name || "")
+              && String(item?.category || "").trim() === String(remoteFunnel?.category || "").trim()
+            )
           )
-        ));
+        )) || null;
 
-        if (existingIndex === -1) {
-          mergedFunnels.push(remoteFunnel);
-          return;
-        }
-
-        const localFunnel = mergedFunnels[existingIndex];
-        mergedFunnels[existingIndex] = {
-          ...localFunnel,
+        return {
+          ...(localFunnel || {}),
           ...remoteFunnel,
-          group_id: localFunnel?.group_id || localFunnel?.groupId || remoteFunnel?.group_id || remoteFunnel?.groupId || null,
+          group_id: remoteFunnel?.group_id || remoteFunnel?.groupId || localFunnel?.group_id || localFunnel?.groupId || null,
           subfunnels: mergeRemoteSubfunnelsWithStored(localFunnel?.subfunnels || [], remoteFunnel?.subfunnels || [], deletedSubfunnelIds)
         };
       });
 
       return {
-        groups: (Array.isArray(localWorkspace.groups) ? localWorkspace.groups : [])
-          .filter((item) => !normalizeIdList(deletedWorkspaceIds.groups).includes(String(item?.id || ""))),
+        groups: (Array.isArray(remoteWorkspace.groups) ? remoteWorkspace.groups : [])
+          .filter((item) => !normalizeIdList(deletedWorkspaceIds.groups).includes(String(item?.id || "")))
+          .map((remoteGroup) => {
+            const localGroup = (Array.isArray(localWorkspace.groups) ? localWorkspace.groups : []).find((item) => (
+              String(item?.id || "").trim() === String(remoteGroup?.id || "").trim()
+            )) || null;
+
+            return {
+              ...(localGroup || {}),
+              ...remoteGroup
+            };
+          }),
         funnels: mergedFunnels,
-        stageAssignments: {
-          ...(localWorkspace.stageAssignments || {}),
-          ...(remoteWorkspace.stageAssignments || {})
-        },
-        leadAssignments: {
-          ...(localWorkspace.leadAssignments || {}),
-          ...(remoteWorkspace.leadAssignments || {})
-        },
-        stageReminderConfigs: {
-          ...(remoteWorkspace.stageReminderConfigs || {}),
-          ...(localWorkspace.stageReminderConfigs || {})
-        }
+        stageAssignments: { ...(remoteWorkspace.stageAssignments || {}) },
+        leadAssignments: { ...(remoteWorkspace.leadAssignments || {}) },
+        stageReminderConfigs: { ...(remoteWorkspace.stageReminderConfigs || {}) }
       };
     };
     const existingWorkspace = remoteHasContent
       ? mergeWorkspaceWithStored(workspaceInput, storedWorkspace)
       : (storedWorkspace || workspaceInput || null);
     const workspace = existingWorkspace || getDefaultFunnelWorkspace();
-    const normalizedGroups = normalizeStoredFunnelGroups(storedWorkspace?.groups || workspace.groups || []);
-    const storedFunnels = Array.isArray(storedWorkspace?.funnels) ? storedWorkspace.funnels : [];
+    const normalizedGroups = normalizeStoredFunnelGroups((remoteHasContent ? workspace.groups : (storedWorkspace?.groups || workspace.groups)) || []);
+    const storedFunnels = Array.isArray(remoteHasContent ? workspace.funnels : storedWorkspace?.funnels) ? (remoteHasContent ? workspace.funnels : storedWorkspace.funnels) : [];
     const legacySubfunnelIdMap = new Map();
     const normalizedFunnels = (workspace.funnels || []).map((item) => {
       const storedMatch = storedFunnels.find((storedFunnel) => (
