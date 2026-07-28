@@ -5410,6 +5410,8 @@ input,select,textarea{
 }
 
 .report-card{
+  min-width:0;
+  overflow:hidden;
   background:#ffffff!important;
   border:1px solid rgba(19,33,28,.09)!important;
   box-shadow:0 16px 34px rgba(19,33,28,.06)!important;
@@ -5417,16 +5419,35 @@ input,select,textarea{
 
 .report-card span{
   color:#41534a;
-  font-size:13px;
+  font-size:clamp(11px, .92vw, 13px);
   font-weight:700;
   letter-spacing:.01em;
+  line-height:1.25;
+  overflow-wrap:anywhere;
+  word-break:break-word;
 }
 
 .report-card strong{
+  display:block;
+  width:100%;
+  max-width:100%;
   color:#13211c;
-  font-size:34px;
+  font-size:clamp(22px, 2.55vw, 34px);
   font-weight:800;
-  line-height:1.1;
+  line-height:1.06;
+  overflow-wrap:anywhere;
+  word-break:break-word;
+}
+
+@media (max-width: 1480px){
+  .report-grid,
+  .report-grid-extended{
+    grid-template-columns:repeat(3, minmax(0, 1fr));
+  }
+
+  .report-card strong{
+    font-size:clamp(20px, 2.25vw, 30px);
+  }
 }
 
 .chart-card,

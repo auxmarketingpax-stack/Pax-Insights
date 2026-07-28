@@ -468,6 +468,8 @@
     reportChartsRenderFrame: null,
     reportChartsBatchFrame: null,
     reportChartsBatchToken: 0,
+    reportChartsSignature: null,
+    reportStatsSignature: null,
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -9565,6 +9567,27 @@
 
   function renderStats() {
     const metrics = getDashboardMetrics();
+    const nextSignature = JSON.stringify({
+      total: metrics.total,
+      totalValue: Number(metrics.totalValue || 0).toFixed(2),
+      closed: metrics.closed,
+      conversion: Number(metrics.conversion || 0).toFixed(1),
+      avgTicket: Number(metrics.avgTicket || 0).toFixed(2),
+      topStage: metrics.topStage?.name || "-",
+      paidCount: metrics.paidCount,
+      organicCount: metrics.organicCount,
+      referralCount: metrics.referralCount,
+      waitingCount: metrics.waitingCount,
+      topOwner: metrics.topOwner?.[0] || "-",
+      topReferral: metrics.topReferral?.[0] || "-",
+      bestMonth: metrics.bestMonth?.[0] || "-",
+      closedPlans: metrics.planSummary.reduce((sum, item) => sum + item.count, 0),
+      planSummary: metrics.planSummary.map((item) => [item.plan, item.unitValue, item.count, item.totalValue])
+    });
+    if (state.reportStatsSignature === nextSignature) {
+      return;
+    }
+    state.reportStatsSignature = nextSignature;
 
     if (els.totalLeads) els.totalLeads.textContent = metrics.total;
     if (els.totalValue) els.totalValue.textContent = brMoney(metrics.totalValue);
@@ -10381,15 +10404,12 @@
 
   function renderCharts() {
     if (typeof Chart === "undefined") return;
+    const reportChartKeys = ["pipeline", "traffic", "owner", "yearlyDaily", "monthly", "social", "ownerMonthlyAverage", "referralSector", "planCount", "planRevenue"];
 
     if (state.reportChartsBatchFrame) {
       cancelAnimationFrame(state.reportChartsBatchFrame);
       state.reportChartsBatchFrame = null;
     }
-    state.reportChartsBatchToken += 1;
-    const batchToken = state.reportChartsBatchToken;
-
-    ["pipeline", "traffic", "owner", "yearlyDaily", "monthly", "social", "ownerMonthlyAverage", "referralSector", "planCount", "planRevenue"].forEach(destroyChart);
 
     const reportView = $("view-relatorios");
     if (!reportView || !reportView.classList.contains("active-view")) return;
@@ -10470,7 +10490,6 @@
     const planLabels = metrics.planSummary.map((item) => `${item.plan} - ${formatPlanValue(item.unitValue)}`);
     const yearChartTitle = $("yearlyChartTitle");
     if (yearChartTitle) yearChartTitle.textContent = `Contatos diários de ${reportYear} (dia a dia)`;
-
     const create = (key, id, config) => {
       if (batchToken !== state.reportChartsBatchToken) return;
       const canvas = $(id);
@@ -10498,6 +10517,32 @@
     const referralSectorPalette = getChartPalette(referralSectorEntries.length);
     const planCountPalette = getChartPalette(planLabels.length);
     const planRevenuePalette = getChartPalette(planLabels.length, { fillAlpha: 0.62, borderAlpha: 1 });
+    const nextChartsSignature = JSON.stringify({
+      theme: isDarkTheme() ? "dark" : "light",
+      year: reportYear,
+      byStage: metrics.byStage.map((item) => [item.name, item.count]),
+      traffic: Object.entries(trafficMap),
+      owner: Object.entries(ownerMap),
+      yearDay: yearDateKeys.map((key) => yearDayMap[key] || 0),
+      month: monthLabels.map((key) => [key, monthMap[key]]),
+      social: socialEntries,
+      ownerMonthlyAverage: ownerMonthlyAverageEntries,
+      referralSector: referralSectorEntries,
+      planCount: metrics.planSummary.map((item) => [item.plan, item.unitValue, item.count]),
+      planRevenue: metrics.planSummary.map((item) => [item.plan, item.unitValue, item.totalValue])
+    });
+    const hasAllRenderedCharts = reportChartKeys.every((key) => Boolean(state.charts[key]));
+    if (hasAllRenderedCharts && state.reportChartsSignature === nextChartsSignature) {
+      requestAnimationFrame(() => {
+        Object.values(state.charts).forEach((chart) => chart?.resize?.());
+      });
+      return;
+    }
+
+    state.reportChartsBatchToken += 1;
+    const batchToken = state.reportChartsBatchToken;
+
+    reportChartKeys.forEach(destroyChart);
     const chartJobs = [
       () => create("pipeline", "pipelineChart", makeChartConfig("bar", metrics.byStage.map((item) => item.name), [{ label: "Leads", data: metrics.byStage.map((item) => item.count), backgroundColor: pipelinePalette.fills, borderColor: pipelinePalette.borders, borderWidth: 1.5 }])),
       () => create("traffic", "trafficChart", makeChartConfig("doughnut", Object.keys(trafficMap), [{ label: "Origem", data: Object.values(trafficMap), backgroundColor: trafficPalette.fills, borderColor: trafficPalette.borders, borderWidth: 1.5 }], { scales: {} })),
@@ -10576,6 +10621,7 @@
         return;
       }
       state.reportChartsBatchFrame = null;
+      state.reportChartsSignature = nextChartsSignature;
       window.setTimeout(() => {
         if (batchToken !== state.reportChartsBatchToken) return;
         Object.values(state.charts).forEach((chart) => chart?.resize?.());
