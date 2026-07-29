@@ -470,6 +470,11 @@
     reportChartsBatchToken: 0,
     reportChartsSignature: null,
     reportStatsSignature: null,
+    liveSyncChannel: null,
+    liveSyncRefreshTimer: null,
+    liveSyncRefreshInFlight: false,
+    liveSyncRefreshQueued: false,
+    liveSyncPollTimer: null,
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -3092,6 +3097,7 @@
   }
 
   function resetAppState() {
+    stopLiveSync();
     state.currentUser = null;
     state.profile = null;
     state.stages = [];
@@ -3117,6 +3123,128 @@
     state.permissionRequestContext = null;
     setPasswordRecoveryMode(false);
     setShellTab("crm");
+  }
+
+  function stopLiveSync() {
+    if (state.liveSyncRefreshTimer) {
+      clearTimeout(state.liveSyncRefreshTimer);
+      state.liveSyncRefreshTimer = null;
+    }
+    if (state.liveSyncPollTimer) {
+      clearInterval(state.liveSyncPollTimer);
+      state.liveSyncPollTimer = null;
+    }
+    state.liveSyncRefreshInFlight = false;
+    state.liveSyncRefreshQueued = false;
+    if (state.liveSyncChannel && state.supabase?.removeChannel) {
+      try {
+        state.supabase.removeChannel(state.liveSyncChannel);
+      } catch (_error) {
+        // ignore realtime cleanup failures
+      }
+    }
+    state.liveSyncChannel = null;
+  }
+
+  function isLiveSyncRefreshBlocked() {
+    return Boolean(
+      document.body.classList.contains("modal-open")
+      || state.touchPipelineDrag
+      || state.pipelineStageDrag
+      || state.pipelineCardPan?.isPanning
+      || state.stageConfigDrag
+      || state.subfunnelCardDrag
+      || state.funnelNavDrag
+    );
+  }
+
+  function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
+    if (!state.currentUser || !isApprovedUser()) return;
+    const immediate = options.immediate === true;
+    const delayMs = immediate ? 80 : 700;
+
+    if (state.liveSyncRefreshTimer) {
+      clearTimeout(state.liveSyncRefreshTimer);
+      state.liveSyncRefreshTimer = null;
+    }
+
+    state.liveSyncRefreshTimer = window.setTimeout(async () => {
+      state.liveSyncRefreshTimer = null;
+
+      if (!state.currentUser || !isApprovedUser()) return;
+      if (isLiveSyncRefreshBlocked()) {
+        scheduleLiveDataRefresh(`${reason}:blocked`, { immediate: false });
+        return;
+      }
+      if (state.liveSyncRefreshInFlight) {
+        state.liveSyncRefreshQueued = true;
+        return;
+      }
+
+      state.liveSyncRefreshInFlight = true;
+      try {
+        await loadAppData({
+          includeProfiles: state.profilesLoaded,
+          includeAdminData: state.adminDataLoaded,
+          runRouteMigration: false,
+          restoreUiState: false,
+          silentRender: true
+        });
+        renderAll();
+      } catch (error) {
+        console.error(`Erro ao sincronizar dados (${reason}):`, error);
+      } finally {
+        state.liveSyncRefreshInFlight = false;
+        if (state.liveSyncRefreshQueued) {
+          state.liveSyncRefreshQueued = false;
+          scheduleLiveDataRefresh(`${reason}:queued`, { immediate: true });
+        }
+      }
+    }, delayMs);
+  }
+
+  function startLiveSync() {
+    if (!state.currentUser || !isApprovedUser() || !state.supabase?.channel) return;
+
+    stopLiveSync();
+
+    const tables = [
+      "leads",
+      "stages",
+      "profiles",
+      "departments",
+      "access_requests",
+      "admin_requests",
+      "lead_source_catalog",
+      "stage_type_catalog",
+      "crm_funnels",
+      "crm_subfunnels",
+      "crm_funnel_department_permissions",
+      "crm_stage_subfunnel_assignments",
+      "crm_lead_subfunnel_assignments"
+    ];
+
+    const channel = state.supabase.channel(`crm-live-sync-${state.currentUser.id}`);
+    tables.forEach((table) => {
+      channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        () => {
+          scheduleLiveDataRefresh(`realtime:${table}`);
+        }
+      );
+    });
+    channel.subscribe((status) => {
+      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.warn("Realtime indisponível. Mantendo sincronização por polling.");
+      }
+    });
+    state.liveSyncChannel = channel;
+
+    state.liveSyncPollTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      scheduleLiveDataRefresh("poll");
+    }, 30000);
   }
 
   function closeAllModals() {
@@ -8705,6 +8833,7 @@
         bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
       }
       renderAll();
+      startLiveSync();
       if (revealScreen) {
         showScreen("appScreen");
       }
@@ -14884,6 +15013,15 @@
       if (els.funnelContextMenu.contains(event.target)) return;
       closeFunnelContextMenu();
     }, { passive: true });
+
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        scheduleLiveDataRefresh("visibility", { immediate: true });
+      }
+    });
+    window.addEventListener("focus", () => {
+      scheduleLiveDataRefresh("focus", { immediate: true });
+    });
 
     document.addEventListener("click", (event) => {
       if (els.funnelContextMenu?.contains(event.target)) {
