@@ -6582,6 +6582,33 @@
     }
   }
 
+  async function persistStageReminderConfigToSupabase(stageId, nextReminder) {
+    const normalizedStageId = String(stageId || "").trim();
+    if (!normalizedStageId || !state.supabase) return false;
+
+    if (!nextReminder) {
+      const { error } = await state.supabase
+        .from("crm_stage_reminder_configs")
+        .delete()
+        .eq("stage_id", normalizedStageId);
+      if (error && !isMissingRelationError(error)) throw error;
+      return !error || isMissingRelationError(error);
+    }
+
+    const payload = {
+      stage_id: normalizedStageId,
+      days: Number(nextReminder.days || 0) || 0,
+      message: String(nextReminder.message || "").trim(),
+      created_by: state.currentUser?.id || null
+    };
+
+    const { error } = await state.supabase
+      .from("crm_stage_reminder_configs")
+      .upsert(payload, { onConflict: "stage_id" });
+    if (error && !isMissingRelationError(error)) throw error;
+    return !error || isMissingRelationError(error);
+  }
+
   async function persistSubfunnelOrderToSupabase(funnelId) {
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
@@ -13568,6 +13595,7 @@
 
       if (error) return alert(`Erro no Supabase: ${error.message}`);
       applyLeadReminderLocally(targetId, nextReminder);
+      writeStoredAppDataCache();
       renderNotifications();
 
       await logChange(
@@ -13615,8 +13643,8 @@
         writeStoredFunnelWorkspace();
         if (state.funnelDataLoadedFromSupabase) {
           try {
-            await persistFunnelWorkspaceToSupabase();
-            notifyLiveSyncChange("funnel-workspace");
+            await persistStageReminderConfigToSupabase(targetId, nextReminder);
+            notifyLiveSyncChange("stage-reminder-config");
           } catch (persistError) {
             console.error("Erro ao persistir notificação da pipeline:", persistError);
             return alert(`Erro ao salvar notificação da pipeline: ${persistError.message || persistError}`);
@@ -13640,6 +13668,7 @@
           if (error) return alert(`Erro no Supabase: ${error.message}`);
           applyLeadReminderLocally(lead.id, null);
         }
+        writeStoredAppDataCache();
       }
 
       renderNotifications();
@@ -13654,7 +13683,7 @@
     }
 
     closeNotificationModal();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    renderAll();
   }
 
   async function moveLeadToStage(leadId, stageId) {
