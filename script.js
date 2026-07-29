@@ -6609,6 +6609,36 @@
     return !error || isMissingRelationError(error);
   }
 
+  async function persistStageAssignmentToSupabase(stageId, subfunnelId) {
+    const normalizedStageId = String(stageId || "").trim();
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    if (!normalizedStageId || !normalizedSubfunnelId || !state.supabase) return;
+
+    const { error } = await state.supabase
+      .from("crm_stage_subfunnel_assignments")
+      .upsert({
+        stage_id: normalizedStageId,
+        subfunnel_id: normalizedSubfunnelId
+      }, { onConflict: "stage_id" });
+    if (error) throw error;
+  }
+
+  async function persistLeadAssignmentsToSupabase(leadIds = [], subfunnelId) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedLeadIds = [...new Set((Array.isArray(leadIds) ? leadIds : []).map((id) => String(id || "").trim()).filter(Boolean))];
+    if (!normalizedLeadIds.length || !normalizedSubfunnelId || !state.supabase) return;
+
+    const rows = normalizedLeadIds.map((leadId) => ({
+      lead_id: leadId,
+      subfunnel_id: normalizedSubfunnelId
+    }));
+
+    const { error } = await state.supabase
+      .from("crm_lead_subfunnel_assignments")
+      .upsert(rows, { onConflict: "lead_id" });
+    if (error) throw error;
+  }
+
   async function persistSubfunnelOrderToSupabase(funnelId) {
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
@@ -13991,7 +14021,7 @@
       }
     );
 
-    return insertedIds.length;
+    return insertedIds;
   }
 
   async function submitStageDuplicate(event) {
@@ -14036,14 +14066,18 @@
         }
       );
 
+      let duplicatedLeadIds = [];
       if (duplicateMode === "stage_with_leads") {
-        await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId, { deferSync: true });
+        duplicatedLeadIds = await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId, { deferSync: true });
       }
 
       state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
       if (state.funnelDataLoadedFromSupabase) {
-        await persistFunnelWorkspaceToSupabase();
+        await persistStageAssignmentToSupabase(createdStage.id, targetSubfunnelId);
+        if (duplicatedLeadIds.length) {
+          await persistLeadAssignmentsToSupabase(duplicatedLeadIds, targetSubfunnelId);
+        }
         notifyLiveSyncChange("funnel-workspace");
       }
 
