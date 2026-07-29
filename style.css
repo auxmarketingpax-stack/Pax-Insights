@@ -4761,6 +4761,7 @@ input,select,textarea{
   flex-direction:column;
   gap:18px;
   padding-top:6px;
+  overflow:visible;
 }
 
 .funnel-hub-header{
@@ -5166,6 +5167,9 @@ input,select,textarea{
 
 .funnel-diagram-panel{
   margin-top:10px;
+  position:relative;
+  z-index:4;
+  overflow:visible;
 }
 
 .funnel-diagram-shell{
@@ -5174,6 +5178,9 @@ input,select,textarea{
   background:#ffffff;
   padding:18px 20px 18px;
   box-shadow:0 14px 30px rgba(19,33,28,.05);
+  position:relative;
+  z-index:1;
+  overflow:visible;
 }
 
 .funnel-diagram-header{
@@ -5283,6 +5290,11 @@ input,select,textarea{
 
 .funnel-diagram-segment.is-last .funnel-diagram-segment-label{
   left:18px;
+}
+
+.funnel-diagram-segment:nth-last-child(-n+3) .funnel-diagram-segment-label{
+  left:auto;
+  right:18px;
 }
 
 .empty-funnel-panel{
