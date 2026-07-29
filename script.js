@@ -8997,7 +8997,6 @@
   async function persistStagePositions(stages) {
     const updates = stages
       .map((stage, index) => ({ stage, index }))
-      .filter(({ stage, index }) => Number(stage?.position) !== index)
       .map(({ stage, index }) =>
         state.supabase.from("stages").update({ position: index }).eq("id", stage.id)
       );
@@ -9053,7 +9052,8 @@
     renderAll();
 
     try {
-      await persistStagePositions(optimisticStages);
+      await persistStagePositions(reordered);
+      notifyLiveSyncChange("stage-order");
       void logChange(
         "reorder",
         "stage",
