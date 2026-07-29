@@ -6435,9 +6435,23 @@
       if (error) throw error;
     }
 
-    if (subfunnelRows.length) {
-      const { error } = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+    if (removedSubfunnelIds.length) {
+      const { error } = await state.supabase.from("crm_subfunnels").delete().in("id", removedSubfunnelIds);
       if (error) throw error;
+    }
+
+    if (subfunnelRows.length) {
+      // Evita conflito com unique (funnel_id, position) ao trocar a ordem
+      // de subfunis já existentes dentro do mesmo funil.
+      const tempSubfunnelRows = subfunnelRows.map((row, index) => ({
+        ...row,
+        position: 1000000 + index
+      }));
+      const tempResult = await state.supabase.from("crm_subfunnels").upsert(tempSubfunnelRows, { onConflict: "id" });
+      if (tempResult.error) throw tempResult.error;
+
+      const finalResult = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+      if (finalResult.error) throw finalResult.error;
     }
 
     const funnelIds = funnelRows.map((item) => item.id);
@@ -6457,11 +6471,6 @@
 
     if (leadRows.length) {
       const { error } = await state.supabase.from("crm_lead_subfunnel_assignments").upsert(leadRows, { onConflict: "lead_id" });
-      if (error) throw error;
-    }
-
-    if (removedSubfunnelIds.length) {
-      const { error } = await state.supabase.from("crm_subfunnels").delete().in("id", removedSubfunnelIds);
       if (error) throw error;
     }
 
