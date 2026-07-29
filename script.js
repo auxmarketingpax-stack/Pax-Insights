@@ -479,6 +479,8 @@
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
     funnelSyncQueued: false,
+    subfunnelOrderSyncInFlight: false,
+    subfunnelOrderSyncQueue: [],
     socialSourceBackfillInFlight: false,
     suppressFunnelSync: false,
     funnelModalContext: null,
@@ -3311,7 +3313,7 @@
   function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
     if (!state.currentUser || !isApprovedUser()) return;
     const immediate = options.immediate === true;
-    const delayMs = immediate ? 80 : 700;
+    const delayMs = immediate ? 20 : 180;
 
     if (state.liveSyncRefreshTimer) {
       clearTimeout(state.liveSyncRefreshTimer);
@@ -6480,6 +6482,32 @@
     }
   }
 
+  async function persistSubfunnelOrderToSupabase(funnelId) {
+    if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
+
+    const funnel = getFunnelById(funnelId);
+    if (!funnel || !canManageStages(funnel)) return;
+
+    const subfunnelRows = (funnel.subfunnels || []).map((subfunnel, index) => ({
+      id: subfunnel.id,
+      funnel_id: funnel.id,
+      name: subfunnel.name,
+      position: index
+    }));
+
+    if (!subfunnelRows.length) return;
+
+    const tempSubfunnelRows = subfunnelRows.map((row, index) => ({
+      ...row,
+      position: 1000000 + index
+    }));
+    const tempResult = await state.supabase.from("crm_subfunnels").upsert(tempSubfunnelRows, { onConflict: "id" });
+    if (tempResult.error) throw tempResult.error;
+
+    const finalResult = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+    if (finalResult.error) throw finalResult.error;
+  }
+
   function queueFunnelWorkspaceSync() {
     if (!state.funnelDataLoadedFromSupabase) return;
     if (state.funnelSyncInFlight) {
@@ -6504,7 +6532,40 @@
           queueFunnelWorkspaceSync();
         }
       }
-    }, 120);
+    }, 40);
+  }
+
+  function queueSubfunnelOrderSync(funnelId) {
+    if (!state.funnelDataLoadedFromSupabase || !funnelId) return;
+
+    const queue = new Set(Array.isArray(state.subfunnelOrderSyncQueue) ? state.subfunnelOrderSyncQueue : []);
+    queue.add(String(funnelId));
+    state.subfunnelOrderSyncQueue = [...queue];
+
+    if (state.subfunnelOrderSyncInFlight) return;
+
+    state.subfunnelOrderSyncInFlight = true;
+    window.setTimeout(async () => {
+      const pendingFunnelIds = [...new Set(state.subfunnelOrderSyncQueue || [])];
+      state.subfunnelOrderSyncQueue = [];
+
+      try {
+        for (const pendingFunnelId of pendingFunnelIds) {
+          await persistSubfunnelOrderToSupabase(pendingFunnelId);
+        }
+        notifyLiveSyncChange("funnel-workspace");
+      } catch (error) {
+        console.error("Erro ao sincronizar ordem dos subfunis com Supabase:", error);
+        if (/row-level security policy/i.test(String(error?.message || ""))) {
+          state.funnelDataLoadedFromSupabase = false;
+        }
+      } finally {
+        state.subfunnelOrderSyncInFlight = false;
+        if ((state.subfunnelOrderSyncQueue || []).length) {
+          queueSubfunnelOrderSync(state.subfunnelOrderSyncQueue[0]);
+        }
+      }
+    }, 20);
   }
 
   function mergeRemoteSubfunnelsWithStored(localSubfunnels = [], remoteSubfunnels = [], deletedSubfunnelIds = new Set()) {
@@ -6906,7 +6967,9 @@
     const [subfunnel] = reordered.splice(currentIndex, 1);
     reordered.splice(normalizedTargetIndex, 0, subfunnel);
     funnel.subfunnels = reordered;
+    state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
+    queueSubfunnelOrderSync(funnelId);
     renderAll();
   }
 
