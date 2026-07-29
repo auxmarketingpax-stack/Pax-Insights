@@ -13557,19 +13557,67 @@
       if (!savedType) return alert("Nao foi possivel salvar o novo tipo personalizado.");
     }
 
-    if (els.stageId.value) {
-      const before = state.stages.find((s) => s.id === els.stageId.value);
-      const { error } = await state.supabase.from("stages").update({ name: payload.name, color: payload.color, stage_type: payload.stage_type, custom_stage_type: payload.custom_stage_type, position: payload.position }).eq("id", els.stageId.value);
-      if (error) return alert(`Erro no Supabase: ${error.message}`);
-      assignStageToSubfunnel(els.stageId.value, selectedSubfunnelId);
-      await logChange("update", "stage", els.stageId.value, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, { before, after: payload });
-    } else {
-      const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
-      if (error) return alert(`Erro no Supabase: ${error.message}`);
-      await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
-      if (data?.id) {
-        assignStageToSubfunnel(data.id, selectedSubfunnelId);
+    try {
+      if (els.stageId.value) {
+        const stageId = String(els.stageId.value || "").trim();
+        const before = state.stages.find((s) => s.id === stageId);
+        const previousAssignedSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
+        const leadIdsInStage = state.leads
+          .filter((lead) => String(lead.stage_id || "").trim() === stageId)
+          .map((lead) => lead.id)
+          .filter(Boolean);
+
+        const { error } = await state.supabase
+          .from("stages")
+          .update({
+            name: payload.name,
+            color: payload.color,
+            stage_type: payload.stage_type,
+            custom_stage_type: payload.custom_stage_type,
+            position: payload.position
+          })
+          .eq("id", stageId);
+        if (error) return alert(`Erro no Supabase: ${error.message}`);
+
+        assignStageToSubfunnel(stageId, selectedSubfunnelId, { deferSync: true });
+        leadIdsInStage.forEach((leadId) => assignLeadToSubfunnel(leadId, selectedSubfunnelId, { deferSync: true }));
+        state.suppressFunnelSync = true;
+        writeStoredFunnelWorkspace();
+
+        if (state.funnelDataLoadedFromSupabase) {
+          await persistStageAssignmentToSupabase(stageId, selectedSubfunnelId);
+          if (leadIdsInStage.length) {
+            await persistLeadAssignmentsToSupabase(leadIdsInStage, selectedSubfunnelId);
+          }
+          if (previousAssignedSubfunnelId !== selectedSubfunnelId) {
+            notifyLiveSyncChange("funnel-workspace");
+          }
+        }
+
+        await logChange("update", "stage", stageId, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
+          before,
+          after: {
+            ...payload,
+            previous_subfunnel_id: previousAssignedSubfunnelId || null,
+            subfunnel_id: selectedSubfunnelId
+          }
+        });
+      } else {
+        const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
+        if (error) return alert(`Erro no Supabase: ${error.message}`);
+        await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
+        if (data?.id) {
+          assignStageToSubfunnel(data.id, selectedSubfunnelId, { deferSync: true });
+          state.suppressFunnelSync = true;
+          writeStoredFunnelWorkspace();
+          if (state.funnelDataLoadedFromSupabase) {
+            await persistStageAssignmentToSupabase(data.id, selectedSubfunnelId);
+            notifyLiveSyncChange("funnel-workspace");
+          }
+        }
       }
+    } catch (error) {
+      return alert(`Erro ao salvar pipeline: ${formatSupabaseError(error)}`);
     }
 
     closeStageModal();
