@@ -6889,15 +6889,17 @@
     return shouldAutoCloseFunnelSidebarOnSelection() ? false : Boolean(state.funnelSidebarOpen);
   }
 
-  function assignStageToSubfunnel(stageId, subfunnelId) {
+  function assignStageToSubfunnel(stageId, subfunnelId, options = {}) {
     if (!stageId || !subfunnelId || !state.funnelWorkspace) return;
     state.funnelWorkspace.stageAssignments[stageId] = subfunnelId;
+    if (options.deferSync === true) return;
     writeStoredFunnelWorkspace();
   }
 
-  function assignLeadToSubfunnel(leadId, subfunnelId) {
+  function assignLeadToSubfunnel(leadId, subfunnelId, options = {}) {
     if (!leadId || !subfunnelId || !state.funnelWorkspace) return;
     state.funnelWorkspace.leadAssignments[leadId] = subfunnelId;
+    if (options.deferSync === true) return;
     writeStoredFunnelWorkspace();
   }
 
@@ -13856,12 +13858,12 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function createStageForSubfunnel(payload, subfunnelId) {
+  async function createStageForSubfunnel(payload, subfunnelId, options = {}) {
     const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
     if (error) throw error;
     const normalizedStage = normalizeStage(data);
     state.stages.push(normalizedStage);
-    if (data?.id) assignStageToSubfunnel(data.id, subfunnelId);
+    if (data?.id) assignStageToSubfunnel(data.id, subfunnelId, { deferSync: options.deferSync === true });
     return normalizedStage;
   }
 
@@ -13901,7 +13903,7 @@
     return fallback;
   }
 
-  async function duplicateStageLeads(sourceStage, targetStage, targetSubfunnelId) {
+  async function duplicateStageLeads(sourceStage, targetStage, targetSubfunnelId, options = {}) {
     const sourceLeads = state.leads.filter((lead) => lead.stage_id === sourceStage.id);
     if (!sourceLeads.length) return 0;
 
@@ -13941,7 +13943,7 @@
       (data || []).forEach((row) => {
         if (row?.id) {
           insertedIds.push(row.id);
-          assignLeadToSubfunnel(row.id, targetSubfunnelId);
+          assignLeadToSubfunnel(row.id, targetSubfunnelId, { deferSync: options.deferSync === true });
         }
       });
     }
@@ -13989,7 +13991,7 @@
     };
 
     try {
-      const createdStage = await createStageForSubfunnel(payload, targetSubfunnelId);
+      const createdStage = await createStageForSubfunnel(payload, targetSubfunnelId, { deferSync: true });
       await logChange(
         "duplicate",
         "stage",
@@ -14006,7 +14008,14 @@
       );
 
       if (duplicateMode === "stage_with_leads") {
-        await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId);
+        await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId, { deferSync: true });
+      }
+
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+      if (state.funnelDataLoadedFromSupabase) {
+        await persistFunnelWorkspaceToSupabase();
+        notifyLiveSyncChange("funnel-workspace");
       }
 
       closeStageDuplicateModal();
