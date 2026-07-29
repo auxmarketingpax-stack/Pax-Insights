@@ -5204,7 +5204,7 @@ input,select,textarea{
   border:1px solid rgba(19,33,28,.08);
   border-radius:18px;
   background:#ffffff;
-  padding:16px 14px;
+  padding:16px 88px 16px 14px;
 }
 
 .funnel-diagram-segment{
@@ -5290,11 +5290,6 @@ input,select,textarea{
 
 .funnel-diagram-segment.is-last .funnel-diagram-segment-label{
   left:18px;
-}
-
-.funnel-diagram-segment:nth-last-child(-n+3) .funnel-diagram-segment-label{
-  left:auto;
-  right:18px;
 }
 
 .empty-funnel-panel{
