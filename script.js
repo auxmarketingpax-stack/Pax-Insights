@@ -6782,6 +6782,10 @@
 
   }
 
+  function getPreservedFunnelSidebarState() {
+    return shouldAutoCloseFunnelSidebarOnSelection() ? false : Boolean(state.funnelSidebarOpen);
+  }
+
   function assignStageToSubfunnel(stageId, subfunnelId) {
     if (!stageId || !subfunnelId || !state.funnelWorkspace) return;
     state.funnelWorkspace.stageAssignments[stageId] = subfunnelId;
@@ -6797,7 +6801,7 @@
   function openFunnelHub(funnelId) {
     const funnel = getFunnelById(funnelId);
     if (!funnel) return;
-    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
+    state.funnelSidebarOpen = getPreservedFunnelSidebarState();
     state.activeFunnelId = funnel.id;
     state.activeSubfunnelId = null;
     bindView("funil", {
@@ -7040,7 +7044,7 @@
     const funnel = getFunnelById(funnelId);
     const subfunnel = getSubfunnelById(subfunnelId);
     if (!funnel || !subfunnel) return;
-    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
+    state.funnelSidebarOpen = getPreservedFunnelSidebarState();
     state.activeFunnelId = funnel.id;
     state.activeSubfunnelId = subfunnelId;
     bindView("funil", {
@@ -7129,7 +7133,7 @@
   }
 
   function closeFunnelDetail() {
-    state.funnelSidebarOpen = !shouldAutoCloseFunnelSidebarOnSelection();
+    state.funnelSidebarOpen = getPreservedFunnelSidebarState();
     state.activeSubfunnelId = null;
     bindView("funil", {
       resetFunnelDetail: false,
@@ -7191,7 +7195,7 @@
     state.activeFunnelId = fallbackState.activeFunnelId || null;
     state.activeSubfunnelId = fallbackState.activeSubfunnelId || null;
     state.funnelSidebarOpen = fallbackState.view === "funil"
-      ? Boolean(fallbackState.funnelSidebarOpen || fallbackState.activeFunnelId || fallbackState.activeSubfunnelId)
+      ? Boolean(fallbackState.funnelSidebarOpen)
       : false;
 
     bindView(fallbackState.view, {
