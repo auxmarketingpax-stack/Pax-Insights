@@ -1137,6 +1137,139 @@
   ];
 
   const STORAGE_CLEANUP_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
+  const LIVE_SYNC_SCOPE_KEY = "__paxLiveSyncScope";
+  const LIVE_SYNC_NOTIFIED_KEY = "__paxLiveSyncNotified";
+  const LIVE_SYNC_DECORATED_KEY = "__paxLiveSyncDecorated";
+
+  function resolveLiveSyncScope(tableName = "") {
+    const normalized = String(tableName || "").trim().toLowerCase();
+    if (!normalized) return "data";
+    if (normalized.startsWith("crm_")) return "funnel-workspace";
+    if (["stages", "leads", "profiles", "departments", "access_requests", "admin_requests"].includes(normalized)) return normalized;
+    if (["lead_source_catalog", "stage_type_catalog"].includes(normalized)) return "catalog";
+    return normalized;
+  }
+
+  function attachLiveSyncNotification(promiseLike, scope) {
+    if (!promiseLike || typeof promiseLike.then !== "function") return promiseLike;
+    if (promiseLike[LIVE_SYNC_DECORATED_KEY]) {
+      if (scope && !promiseLike[LIVE_SYNC_SCOPE_KEY]) {
+        promiseLike[LIVE_SYNC_SCOPE_KEY] = scope;
+      }
+      return promiseLike;
+    }
+
+    promiseLike[LIVE_SYNC_DECORATED_KEY] = true;
+    if (scope) {
+      promiseLike[LIVE_SYNC_SCOPE_KEY] = scope;
+    }
+
+    const originalThen = promiseLike.then?.bind(promiseLike);
+    if (originalThen) {
+      promiseLike.then = (onFulfilled, onRejected) => originalThen(
+        (value) => {
+          if (
+            promiseLike[LIVE_SYNC_SCOPE_KEY]
+            && !promiseLike[LIVE_SYNC_NOTIFIED_KEY]
+            && !value?.error
+          ) {
+            promiseLike[LIVE_SYNC_NOTIFIED_KEY] = true;
+            notifyLiveSyncChange(promiseLike[LIVE_SYNC_SCOPE_KEY]);
+          }
+          return typeof onFulfilled === "function" ? onFulfilled(value) : value;
+        },
+        onRejected
+      );
+    }
+
+    return promiseLike;
+  }
+
+  function decorateSupabaseBuilder(builder, tableName = "", inheritedScope = "") {
+    if (!builder || typeof builder !== "object") return builder;
+    if (builder[LIVE_SYNC_DECORATED_KEY]) {
+      if (inheritedScope && !builder[LIVE_SYNC_SCOPE_KEY]) {
+        builder[LIVE_SYNC_SCOPE_KEY] = inheritedScope;
+      }
+      return builder;
+    }
+
+    const mutationScope = inheritedScope || resolveLiveSyncScope(tableName);
+    const mutationMethods = new Set(["insert", "update", "upsert", "delete"]);
+    const chainMethods = [
+      "select", "single", "maybeSingle", "eq", "neq", "in", "order", "limit",
+      "range", "is", "not", "match", "or", "filter", "textSearch", "lte", "gte",
+      "lt", "gt", "like", "ilike", "contains", "containedBy", "overlaps"
+    ];
+
+    Object.defineProperty(builder, LIVE_SYNC_DECORATED_KEY, {
+      value: true,
+      configurable: true,
+      enumerable: false,
+      writable: true
+    });
+    if (mutationScope) {
+      builder[LIVE_SYNC_SCOPE_KEY] = mutationScope;
+    }
+
+    chainMethods.forEach((methodName) => {
+      const originalMethod = builder[methodName];
+      if (typeof originalMethod !== "function") return;
+      builder[methodName] = (...args) => {
+        const result = originalMethod.apply(builder, args);
+        return decorateSupabaseBuilder(result, tableName, builder[LIVE_SYNC_SCOPE_KEY] || "");
+      };
+    });
+
+    mutationMethods.forEach((methodName) => {
+      const originalMethod = builder[methodName];
+      if (typeof originalMethod !== "function") return;
+      builder[methodName] = (...args) => {
+        const result = originalMethod.apply(builder, args);
+        if (result && typeof result === "object") {
+          result[LIVE_SYNC_SCOPE_KEY] = mutationScope;
+        }
+        return attachLiveSyncNotification(
+          decorateSupabaseBuilder(result, tableName, mutationScope),
+          mutationScope
+        );
+      };
+    });
+
+    attachLiveSyncNotification(builder, inheritedScope || "");
+    return builder;
+  }
+
+  function decorateSupabaseClientForLiveSync(client) {
+    if (!client || client.__paxLiveSyncWrapped) return client;
+
+    const originalFrom = client.from?.bind(client);
+    if (originalFrom) {
+      client.from = (tableName, ...args) => decorateSupabaseBuilder(
+        originalFrom(tableName, ...args),
+        tableName
+      );
+    }
+
+    const originalRpc = client.rpc?.bind(client);
+    if (originalRpc) {
+      client.rpc = (fnName, ...args) => attachLiveSyncNotification(
+        originalRpc(fnName, ...args),
+        `rpc:${String(fnName || "").trim() || "data"}`
+      );
+    }
+
+    const originalInvoke = client.functions?.invoke?.bind(client.functions);
+    if (originalInvoke) {
+      client.functions.invoke = (fnName, ...args) => attachLiveSyncNotification(
+        originalInvoke(fnName, ...args),
+        `fn:${String(fnName || "").trim() || "data"}`
+      );
+    }
+
+    client.__paxLiveSyncWrapped = true;
+    return client;
+  }
 
   function createClient() {
     const cfg = window.APP_CONFIG || {};
@@ -1146,7 +1279,9 @@
     if (!window.supabase || typeof window.supabase.createClient !== "function") {
       throw new Error("Biblioteca do Supabase não carregada.");
     }
-    state.supabase = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+    state.supabase = decorateSupabaseClientForLiveSync(
+      window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey)
+    );
   }
 
   function getSecurityConfig() {
@@ -3146,6 +3281,21 @@
     state.liveSyncChannel = null;
   }
 
+  function notifyLiveSyncChange(scope = "workspace") {
+    if (!state.liveSyncChannel?.send) return;
+    void state.liveSyncChannel.send({
+      type: "broadcast",
+      event: "crm-sync",
+      payload: {
+        scope,
+        at: new Date().toISOString(),
+        userId: state.currentUser?.id || null
+      }
+    }).catch((error) => {
+      console.warn("Não foi possível enviar broadcast de sincronização:", error);
+    });
+  }
+
   function isLiveSyncRefreshBlocked() {
     return Boolean(
       document.body.classList.contains("modal-open")
@@ -3224,7 +3374,7 @@
       "crm_lead_subfunnel_assignments"
     ];
 
-    const channel = state.supabase.channel(`crm-live-sync-${state.currentUser.id}`);
+    const channel = state.supabase.channel("crm-live-sync");
     tables.forEach((table) => {
       channel.on(
         "postgres_changes",
@@ -3234,6 +3384,13 @@
         }
       );
     });
+    channel.on(
+      "broadcast",
+      { event: "crm-sync" },
+      () => {
+        scheduleLiveDataRefresh("broadcast", { immediate: true });
+      }
+    );
     channel.subscribe((status) => {
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         console.warn("Realtime indisponível. Mantendo sincronização por polling.");
@@ -3244,7 +3401,7 @@
     state.liveSyncPollTimer = window.setInterval(() => {
       if (document.hidden) return;
       scheduleLiveDataRefresh("poll");
-    }, 30000);
+    }, 10000);
   }
 
   function closeAllModals() {
@@ -6325,6 +6482,7 @@
     window.setTimeout(async () => {
       try {
         await persistFunnelWorkspaceToSupabase();
+        notifyLiveSyncChange("funnel-workspace");
       } catch (error) {
         console.error("Erro ao sincronizar funis com Supabase:", error);
         if (/row-level security policy/i.test(String(error?.message || ""))) {
