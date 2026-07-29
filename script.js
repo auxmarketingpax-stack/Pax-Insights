@@ -3374,7 +3374,8 @@
       "crm_subfunnels",
       "crm_funnel_department_permissions",
       "crm_stage_subfunnel_assignments",
-      "crm_lead_subfunnel_assignments"
+      "crm_lead_subfunnel_assignments",
+      "crm_stage_reminder_configs"
     ];
 
     const channel = state.supabase.channel("crm-live-sync");
@@ -5808,6 +5809,7 @@
     const permissionRows = Array.isArray(rows.permissions) ? rows.permissions : [];
     const stageAssignmentRows = Array.isArray(rows.stageAssignments) ? rows.stageAssignments : [];
     const leadAssignmentRows = Array.isArray(rows.leadAssignments) ? rows.leadAssignments : [];
+    const stageReminderRows = Array.isArray(rows.stageReminders) ? rows.stageReminders : [];
 
     const permissionsByFunnel = new Map();
     permissionRows.forEach((row) => {
@@ -5865,24 +5867,36 @@
       }
     });
 
+    const stageReminderConfigs = {};
+    stageReminderRows.forEach((row) => {
+      const stageId = String(row?.stage_id || "").trim();
+      const normalizedConfig = normalizeStageReminderConfig({
+        days: row?.days,
+        message: row?.message || ""
+      });
+      if (!stageId || !normalizedConfig) return;
+      stageReminderConfigs[stageId] = normalizedConfig;
+    });
+
     return {
       funnels,
       stageAssignments,
       leadAssignments,
-      stageReminderConfigs: {}
+      stageReminderConfigs
     };
   }
 
   async function loadFunnelWorkspaceFromSupabase() {
-    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes] = await Promise.all([
+    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes] = await Promise.all([
       state.supabase.from("crm_funnels").select("*").is("archived_at", null).order("created_at", { ascending: true }),
       state.supabase.from("crm_subfunnels").select("*").order("position", { ascending: true }),
       state.supabase.from("crm_funnel_department_permissions").select("*"),
       state.supabase.from("crm_stage_subfunnel_assignments").select("*"),
-      state.supabase.from("crm_lead_subfunnel_assignments").select("*")
+      state.supabase.from("crm_lead_subfunnel_assignments").select("*"),
+      state.supabase.from("crm_stage_reminder_configs").select("*")
     ]);
 
-    const responses = [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes];
+    const responses = [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes];
     const blockingError = responses.find((response) => response?.error && !isMissingRelationError(response.error))?.error || null;
     if (blockingError) {
       console.error("Erro ao carregar workspace de funis:", blockingError);
@@ -5902,7 +5916,8 @@
       subfunnels: subfunnelsRes.data || [],
       permissions: permissionsRes.data || [],
       stageAssignments: stageAssignmentsRes.data || [],
-      leadAssignments: leadAssignmentsRes.data || []
+      leadAssignments: leadAssignmentsRes.data || [],
+      stageReminders: isMissingRelationError(stageRemindersRes?.error) ? [] : (stageRemindersRes.data || [])
     });
   }
 
@@ -6470,6 +6485,19 @@
       subfunnel_id: subfunnelId
     }));
 
+    const stageReminderRows = Object.entries(workspace.stageReminderConfigs || {})
+      .map(([stageId, config]) => {
+        const normalizedConfig = normalizeStageReminderConfig(config);
+        if (!normalizedConfig) return null;
+        return {
+          stage_id: stageId,
+          days: normalizedConfig.days,
+          message: normalizedConfig.message || "",
+          created_by: state.currentUser.id
+        };
+      })
+      .filter(Boolean);
+
     const existingFunnelsRes = await state.supabase.from("crm_funnels").select("id");
     if (existingFunnelsRes.error && !isMissingRelationError(existingFunnelsRes.error)) {
       throw existingFunnelsRes.error;
@@ -6478,12 +6506,20 @@
     if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
       throw existingSubfunnelsRes.error;
     }
+    const existingStageRemindersRes = await state.supabase.from("crm_stage_reminder_configs").select("stage_id");
+    const stageReminderTableAvailable = !isMissingRelationError(existingStageRemindersRes?.error);
+    if (existingStageRemindersRes.error && stageReminderTableAvailable) {
+      throw existingStageRemindersRes.error;
+    }
     const existingFunnelIds = new Set((existingFunnelsRes.data || []).map((item) => String(item.id)));
     const existingSubfunnelIds = new Set((existingSubfunnelsRes.data || []).map((item) => String(item.id)));
+    const existingStageReminderIds = new Set((existingStageRemindersRes.data || []).map((item) => String(item.stage_id)));
     const nextFunnelIds = new Set(funnelRows.map((item) => String(item.id)));
     const nextSubfunnelIds = new Set(subfunnelRows.map((item) => String(item.id)));
+    const nextStageReminderIds = new Set(stageReminderRows.map((item) => String(item.stage_id)));
     const removedFunnelIds = [...existingFunnelIds].filter((id) => !nextFunnelIds.has(id));
     const removedSubfunnelIds = [...existingSubfunnelIds].filter((id) => !nextSubfunnelIds.has(id));
+    const removedStageReminderIds = [...existingStageReminderIds].filter((id) => !nextStageReminderIds.has(id));
 
     if (funnelRows.length) {
       const { error } = await state.supabase.from("crm_funnels").upsert(funnelRows, { onConflict: "id" });
@@ -6527,6 +6563,17 @@
     if (leadRows.length) {
       const { error } = await state.supabase.from("crm_lead_subfunnel_assignments").upsert(leadRows, { onConflict: "lead_id" });
       if (error) throw error;
+    }
+
+    if (stageReminderTableAvailable) {
+      if (removedStageReminderIds.length) {
+        const { error } = await state.supabase.from("crm_stage_reminder_configs").delete().in("stage_id", removedStageReminderIds);
+        if (error) throw error;
+      }
+      if (stageReminderRows.length) {
+        const { error } = await state.supabase.from("crm_stage_reminder_configs").upsert(stageReminderRows, { onConflict: "stage_id" });
+        if (error) throw error;
+      }
     }
 
     if (removedFunnelIds.length) {
@@ -6691,11 +6738,14 @@
               ...(localGroup || {}),
               ...remoteGroup
             };
-          }),
+        }),
         funnels: mergedFunnels,
         stageAssignments: { ...(remoteWorkspace.stageAssignments || {}) },
         leadAssignments: { ...(remoteWorkspace.leadAssignments || {}) },
-        stageReminderConfigs: { ...(remoteWorkspace.stageReminderConfigs || {}) }
+        stageReminderConfigs: {
+          ...(localWorkspace?.stageReminderConfigs || {}),
+          ...(remoteWorkspace.stageReminderConfigs || {})
+        }
       };
     };
     const existingWorkspace = remoteHasContent
@@ -13500,7 +13550,7 @@
         return;
       }
       if (enabled && nextReminder?.due_date && nextReminder.due_date < getLocalIsoDate()) {
-        alert("A data da notificação do lead não pode ser anterior a 27/07/2026.");
+        alert(`A data da notificação do lead não pode ser anterior a ${formatDate(getLocalIsoDate())}.`);
         return;
       }
 
@@ -13559,7 +13609,17 @@
           delete state.funnelWorkspace.stageReminderConfigs[targetId];
         }
 
+        state.suppressFunnelSync = true;
         writeStoredFunnelWorkspace();
+        if (state.funnelDataLoadedFromSupabase) {
+          try {
+            await persistFunnelWorkspaceToSupabase();
+            notifyLiveSyncChange("funnel-workspace");
+          } catch (persistError) {
+            console.error("Erro ao persistir notificação da pipeline:", persistError);
+            return alert(`Erro ao salvar notificação da pipeline: ${persistError.message || persistError}`);
+          }
+        }
       }
 
       if (nextReminder) {
