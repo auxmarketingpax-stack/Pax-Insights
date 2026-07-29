@@ -481,6 +481,7 @@
     funnelSyncQueued: false,
     subfunnelOrderSyncInFlight: false,
     subfunnelOrderSyncQueue: [],
+    stageNameCleanupInFlight: false,
     socialSourceBackfillInFlight: false,
     suppressFunnelSync: false,
     funnelModalContext: null,
@@ -4084,10 +4085,62 @@
   }
 
   function normalizeStage(stage) {
+    const normalizedName = normalizeStageName(stage?.name || "");
     return {
       ...stage,
+      name: normalizedName || String(stage?.name || "").trim(),
       color: sanitizeHexColor(stage?.color)
     };
+  }
+
+  function normalizeStageName(value) {
+    return String(value || "")
+      .replace(/\s*\.+\s*$/, "")
+      .trim();
+  }
+
+  async function ensureStageNamesWithoutTrailingPeriods(options = {}) {
+    if (state.stageNameCleanupInFlight || !state.currentUser || !state.supabase) return;
+
+    const updates = state.stages
+      .map((stage) => {
+        const currentName = String(stage?.name || "").trim();
+        const normalizedName = normalizeStageName(currentName);
+        if (!currentName || !normalizedName || normalizedName === currentName) return null;
+        return {
+          id: stage.id,
+          before: currentName,
+          after: normalizedName
+        };
+      })
+      .filter(Boolean);
+
+    if (!updates.length) return;
+
+    state.stageNameCleanupInFlight = true;
+    try {
+      for (const item of updates) {
+        const { error } = await state.supabase
+          .from("stages")
+          .update({ name: item.after })
+          .eq("id", item.id);
+        if (error) throw error;
+      }
+
+      const updateMap = new Map(updates.map((item) => [String(item.id), item.after]));
+      state.stages = state.stages.map((stage) => {
+        const nextName = updateMap.get(String(stage.id || ""));
+        return nextName ? normalizeStage({ ...stage, name: nextName }) : normalizeStage(stage);
+      });
+      writeStoredAppDataCache();
+      if (!options.silent) {
+        renderAll();
+      }
+    } catch (error) {
+      console.error("Erro ao limpar pontos finais dos nomes de pipeline:", error);
+    } finally {
+      state.stageNameCleanupInFlight = false;
+    }
   }
 
   function normalizeLeadSources(rows = []) {
@@ -9207,6 +9260,7 @@
     renderDepartmentSelects();
     syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
     writeStoredAppDataCache();
+    void ensureStageNamesWithoutTrailingPeriods({ silent: silentRender });
     void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
 
     if (runRouteMigration) {
@@ -13356,7 +13410,7 @@
       ? customStageTypeInput
       : (isEditingExistingCustom ? (customStageTypeInput || existingCustomType) : "");
     const payload = {
-      name: els.stageName.value.trim(),
+      name: normalizeStageName(els.stageName.value),
       color: sanitizeHexColor(els.stageColor.value),
       stage_type: (isCreatingNewCustom || isEditingExistingCustom)
         ? "personalizado"
