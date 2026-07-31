@@ -9055,25 +9055,22 @@
     const [stage] = reorderedScoped.splice(currentIndex, 1);
     reorderedScoped.splice(normalizedTargetIndex, 0, stage);
 
-    const scopedStageIds = new Set(scopedStages.map((item) => item.id));
-    const reordered = [];
-    let scopedPointer = 0;
-    for (const currentStage of state.stages) {
-      if (scopedStageIds.has(currentStage.id)) {
-        reordered.push(reorderedScoped[scopedPointer]);
-        scopedPointer += 1;
-      } else {
-        reordered.push(currentStage);
-      }
-    }
-
     const previousStages = state.stages.map((item) => normalizeStage(item));
-    const previousPositions = new Map(previousStages.map((item) => [item.id, Number(item.position)]));
-    const optimisticStages = reordered.map((item, index) => normalizeStage({
+    const scopedOrderedPositions = scopedStages
+      .map((item) => Number(item.position))
+      .filter((value) => Number.isFinite(value))
+      .sort((a, b) => a - b);
+
+    const nextScopedStages = reorderedScoped.map((item, index) => normalizeStage({
       ...item,
-      position: index
+      position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
     }));
-    const changedPositionRows = optimisticStages
+    const nextScopedById = new Map(nextScopedStages.map((item) => [item.id, item]));
+    const optimisticStages = previousStages
+      .map((item) => nextScopedById.get(item.id) || item)
+      .sort((a, b) => Number(a.position) - Number(b.position));
+    const previousPositions = new Map(previousStages.map((item) => [item.id, Number(item.position)]));
+    const changedPositionRows = nextScopedStages
       .filter((item) => previousPositions.get(item.id) !== Number(item.position))
       .map((item) => ({
         id: item.id,
