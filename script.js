@@ -8994,11 +8994,15 @@
     if (lead) openLeadModal(lead);
   }
 
-  async function persistStagePositions(stages) {
-    const updates = stages
-      .map((stage, index) => ({ stage, index }))
-      .map(({ stage, index }) =>
-        state.supabase.from("stages").update({ position: index }).eq("id", stage.id)
+  async function persistStagePositions(positionRows = []) {
+    const updates = (Array.isArray(positionRows) ? positionRows : [])
+      .map((row) => ({
+        id: String(row?.id || "").trim(),
+        position: Number(row?.position)
+      }))
+      .filter((row) => row.id && Number.isFinite(row.position))
+      .map((row) =>
+        state.supabase.from("stages").update({ position: row.position }).eq("id", row.id)
       );
 
     if (!updates.length) return;
@@ -9043,16 +9047,23 @@
     }
 
     const previousStages = state.stages.map((item) => normalizeStage(item));
+    const previousPositions = new Map(previousStages.map((item) => [item.id, Number(item.position)]));
     const optimisticStages = reordered.map((item, index) => normalizeStage({
       ...item,
       position: index
     }));
+    const changedPositionRows = optimisticStages
+      .filter((item) => previousPositions.get(item.id) !== Number(item.position))
+      .map((item) => ({
+        id: item.id,
+        position: Number(item.position)
+      }));
 
     state.stages = optimisticStages;
     renderAll();
 
     try {
-      await persistStagePositions(reordered);
+      await persistStagePositions(changedPositionRows);
       notifyLiveSyncChange("stage-order");
       void logChange(
         "reorder",
@@ -13794,8 +13805,13 @@
           })
         : item
     ));
-    if (targetSubfunnelId) {
-      assignLeadToSubfunnel(lead.id, targetSubfunnelId);
+    const shouldPersistLeadSubfunnelChange = Boolean(
+      targetSubfunnelId && targetSubfunnelId !== previousAssignedSubfunnelId
+    );
+    if (shouldPersistLeadSubfunnelChange) {
+      assignLeadToSubfunnel(lead.id, targetSubfunnelId, { deferSync: true });
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
     }
     writeStoredAppDataCache();
     renderAll();
@@ -13817,12 +13833,24 @@
             })
           : item
       ));
-      if (previousAssignedSubfunnelId) {
-        assignLeadToSubfunnel(lead.id, previousAssignedSubfunnelId);
+      if (shouldPersistLeadSubfunnelChange && previousAssignedSubfunnelId) {
+        assignLeadToSubfunnel(lead.id, previousAssignedSubfunnelId, { deferSync: true });
+        state.suppressFunnelSync = true;
+        writeStoredFunnelWorkspace();
       }
       writeStoredAppDataCache();
       renderAll();
       return alert(`Erro no Supabase: ${error.message}`);
+    }
+
+    if (shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
+      try {
+        await persistLeadAssignmentsToSupabase([lead.id], targetSubfunnelId);
+        notifyLiveSyncChange("funnel-workspace");
+      } catch (assignmentError) {
+        console.error("Erro ao persistir subfunil do lead movido:", assignmentError);
+        alert(`Lead movido, mas não foi possível sincronizar o subfunil: ${formatSupabaseError(assignmentError)}`);
+      }
     }
 
     void logChange(
