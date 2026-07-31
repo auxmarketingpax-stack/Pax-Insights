@@ -5626,7 +5626,16 @@
 
   function getStagesForSubfunnel(subfunnelId) {
     if (!subfunnelId) return [];
-    return state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === subfunnelId);
+    return state.stages
+      .filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === subfunnelId)
+      .sort((a, b) => {
+        const positionA = Number(a?.position);
+        const positionB = Number(b?.position);
+        const safePositionA = Number.isFinite(positionA) ? positionA : Number.MAX_SAFE_INTEGER;
+        const safePositionB = Number.isFinite(positionB) ? positionB : Number.MAX_SAFE_INTEGER;
+        if (safePositionA !== safePositionB) return safePositionA - safePositionB;
+        return String(a?.id || "").localeCompare(String(b?.id || ""));
+      });
   }
 
   function getVisibleStagesForSubfunnel(subfunnelId) {
@@ -9040,31 +9049,71 @@
       && isFunnelDetailActive()
       && scopeSubfunnelId === state.activeSubfunnelId
     );
-    const scopedStages = useVisibleScopedStages
-      ? getScopedStages()
-      : (scopeSubfunnelId
-        ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
-        : state.stages);
-    const currentIndex = scopedStages.findIndex((stage) => stage.id === stageId);
+    const sortStagesByPosition = (items = []) => [...items].sort((a, b) => {
+      const positionA = Number(a?.position);
+      const positionB = Number(b?.position);
+      const safePositionA = Number.isFinite(positionA) ? positionA : Number.MAX_SAFE_INTEGER;
+      const safePositionB = Number.isFinite(positionB) ? positionB : Number.MAX_SAFE_INTEGER;
+      if (safePositionA !== safePositionB) return safePositionA - safePositionB;
+      return String(a?.id || "").localeCompare(String(b?.id || ""));
+    });
+    const scopedAllStages = sortStagesByPosition(scopeSubfunnelId
+      ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
+      : state.stages);
+    const scopedVisibleStages = sortStagesByPosition(useVisibleScopedStages ? getScopedStages() : scopedAllStages);
+    const currentIndex = scopedVisibleStages.findIndex((stage) => stage.id === stageId);
     if (currentIndex === -1) return;
+    const movedStage = scopedVisibleStages[currentIndex] || getStageById(stageId) || null;
 
-    const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), scopedStages.length - 1));
+    const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), scopedVisibleStages.length - 1));
     if (!Number.isFinite(normalizedTargetIndex) || normalizedTargetIndex === currentIndex) return;
 
-    const reorderedScoped = [...scopedStages];
-    const [stage] = reorderedScoped.splice(currentIndex, 1);
-    reorderedScoped.splice(normalizedTargetIndex, 0, stage);
-
     const previousStages = state.stages.map((item) => normalizeStage(item));
-    const scopedOrderedPositions = scopedStages
+    const scopedOrderedPositions = scopedAllStages
       .map((item) => Number(item.position))
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b);
 
-    const nextScopedStages = reorderedScoped.map((item, index) => normalizeStage({
-      ...item,
-      position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
-    }));
+    let nextScopedStages = [];
+
+    if (useVisibleScopedStages) {
+      const groupKeyForStage = (stage) => normalizeComparisonText(stage?.name || "") || `stage:${stage?.id || ""}`;
+      const stageGroups = [];
+      const groupMap = new Map();
+
+      scopedAllStages.forEach((stage) => {
+        const key = groupKeyForStage(stage);
+        if (!groupMap.has(key)) {
+          const group = { key, stages: [] };
+          groupMap.set(key, group);
+          stageGroups.push(group);
+        }
+        groupMap.get(key).stages.push(stage);
+      });
+
+      const visibleGroupKeys = scopedVisibleStages.map((stage) => groupKeyForStage(stage));
+      const reorderedGroupKeys = [...visibleGroupKeys];
+      const [draggedGroupKey] = reorderedGroupKeys.splice(currentIndex, 1);
+      if (!draggedGroupKey) return;
+      reorderedGroupKeys.splice(normalizedTargetIndex, 0, draggedGroupKey);
+
+      nextScopedStages = reorderedGroupKeys.flatMap((groupKey) => {
+        const group = groupMap.get(groupKey);
+        return Array.isArray(group?.stages) ? group.stages : [];
+      }).map((item, index) => normalizeStage({
+        ...item,
+        position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
+      }));
+    } else {
+      const reorderedScoped = [...scopedAllStages];
+      const [stage] = reorderedScoped.splice(currentIndex, 1);
+      reorderedScoped.splice(normalizedTargetIndex, 0, stage);
+      nextScopedStages = reorderedScoped.map((item, index) => normalizeStage({
+        ...item,
+        position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
+      }));
+    }
+
     const nextScopedById = new Map(nextScopedStages.map((item) => [item.id, item]));
     const optimisticStages = previousStages
       .map((item) => nextScopedById.get(item.id) || item)
@@ -9092,7 +9141,7 @@
         `A ordem do funil foi alterada por ${getUserDisplayName()}.`,
         {
           stage_id: stageId,
-          stage_name: stage.name,
+          stage_name: movedStage?.name || "",
           from_position: currentIndex,
           to_position: normalizedTargetIndex
         }
