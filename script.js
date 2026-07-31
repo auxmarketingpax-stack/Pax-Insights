@@ -9078,7 +9078,9 @@
       }));
 
     state.stages = optimisticStages;
-    renderAll();
+    if (!renderPipelineInteractionFrame()) {
+      renderAll();
+    }
 
     try {
       await persistStagePositions(changedPositionRows);
@@ -9097,7 +9099,9 @@
       ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
     } catch (error) {
       state.stages = previousStages;
-      renderAll();
+      if (!renderPipelineInteractionFrame()) {
+        renderAll();
+      }
       alert(error.message || "Não foi possível reordenar o pipeline.");
     }
   }
@@ -12270,6 +12274,17 @@
     });
   }
 
+  function renderPipelineInteractionFrame() {
+    if (state.activeView !== "funil" || !isFunnelDetailActive()) return false;
+    resetRenderComputationCache();
+    renderPipeline();
+    bindGeneralActionEvents();
+    requestAnimationFrame(() => {
+      updateStickyLayout();
+    });
+    return true;
+  }
+
   function openLeadModal(lead = null) {
     if (!canEditLeads(lead)) {
       alert("Seu perfil não tem permissão de edição neste funil.");
@@ -13832,7 +13847,9 @@
       writeStoredFunnelWorkspace();
     }
     writeStoredAppDataCache();
-    renderAll();
+    if (!renderPipelineInteractionFrame()) {
+      renderAll();
+    }
 
     const { error } = await state.supabase
       .from("leads")
@@ -13857,7 +13874,9 @@
         writeStoredFunnelWorkspace();
       }
       writeStoredAppDataCache();
-      renderAll();
+      if (!renderPipelineInteractionFrame()) {
+        renderAll();
+      }
       return alert(`Erro no Supabase: ${error.message}`);
     }
 
