@@ -8995,22 +8995,36 @@
   }
 
   async function persistStagePositions(positionRows = []) {
-    const updates = (Array.isArray(positionRows) ? positionRows : [])
+    const normalizedRows = (Array.isArray(positionRows) ? positionRows : [])
       .map((row) => ({
         id: String(row?.id || "").trim(),
         position: Number(row?.position)
       }))
-      .filter((row) => row.id && Number.isFinite(row.position))
-      .map((row) =>
-        state.supabase.from("stages").update({ position: row.position }).eq("id", row.id)
-      );
+      .filter((row) => row.id && Number.isFinite(row.position));
 
-    if (!updates.length) return;
+    if (!normalizedRows.length) return;
 
-    const results = await Promise.all(updates);
-    const failed = results.find((result) => result.error);
-    if (failed?.error) {
-      throw failed.error;
+    const tempRows = normalizedRows.map((row, index) => ({
+      id: row.id,
+      position: 1000000 + index
+    }));
+
+    const tempUpdates = tempRows.map((row) =>
+      state.supabase.from("stages").update({ position: row.position }).eq("id", row.id)
+    );
+    const tempResults = await Promise.all(tempUpdates);
+    const tempFailed = tempResults.find((result) => result.error);
+    if (tempFailed?.error) {
+      throw tempFailed.error;
+    }
+
+    const finalUpdates = normalizedRows.map((row) =>
+      state.supabase.from("stages").update({ position: row.position }).eq("id", row.id)
+    );
+    const finalResults = await Promise.all(finalUpdates);
+    const finalFailed = finalResults.find((result) => result.error);
+    if (finalFailed?.error) {
+      throw finalFailed.error;
     }
   }
 
@@ -9021,9 +9035,16 @@
     }
 
     const scopeSubfunnelId = subfunnelId || state.structureSubfunnelId;
-    const scopedStages = scopeSubfunnelId
-      ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
-      : state.stages;
+    const useVisibleScopedStages = Boolean(
+      scopeSubfunnelId
+      && isFunnelDetailActive()
+      && scopeSubfunnelId === state.activeSubfunnelId
+    );
+    const scopedStages = useVisibleScopedStages
+      ? getScopedStages()
+      : (scopeSubfunnelId
+        ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
+        : state.stages);
     const currentIndex = scopedStages.findIndex((stage) => stage.id === stageId);
     if (currentIndex === -1) return;
 
