@@ -475,6 +475,8 @@
     liveSyncRefreshInFlight: false,
     liveSyncRefreshQueued: false,
     liveSyncPollTimer: null,
+    liveSyncLocalMutationUntil: 0,
+    liveSyncLocalMutationTimer: null,
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -3269,6 +3271,10 @@
       clearTimeout(state.liveSyncRefreshTimer);
       state.liveSyncRefreshTimer = null;
     }
+    if (state.liveSyncLocalMutationTimer) {
+      clearTimeout(state.liveSyncLocalMutationTimer);
+      state.liveSyncLocalMutationTimer = null;
+    }
     if (state.liveSyncPollTimer) {
       clearInterval(state.liveSyncPollTimer);
       state.liveSyncPollTimer = null;
@@ -3302,7 +3308,8 @@
 
   function isLiveSyncRefreshBlocked() {
     return Boolean(
-      document.body.classList.contains("modal-open")
+      Date.now() < Number(state.liveSyncLocalMutationUntil || 0)
+      || document.body.classList.contains("modal-open")
       || state.touchPipelineDrag
       || state.pipelineStageDrag
       || state.pipelineCardPan?.isPanning
@@ -3311,6 +3318,47 @@
       || state.funnelNavDrag
       || isFunnelContextMenuOpen()
     );
+  }
+
+  function markLocalMutationCooldown(delayMs = 1200) {
+    const duration = Math.max(300, Number(delayMs) || 1200);
+    state.liveSyncLocalMutationUntil = Date.now() + duration;
+  }
+
+  function queueLocalConsistencyRefresh(reason = "local-mutation", delayMs = 1200) {
+    markLocalMutationCooldown(delayMs);
+    if (state.liveSyncLocalMutationTimer) {
+      clearTimeout(state.liveSyncLocalMutationTimer);
+      state.liveSyncLocalMutationTimer = null;
+    }
+    state.liveSyncLocalMutationTimer = window.setTimeout(() => {
+      state.liveSyncLocalMutationTimer = null;
+      if (!state.currentUser || !isApprovedUser()) return;
+      scheduleLiveDataRefresh(reason, { immediate: true });
+    }, Math.max(380, Number(delayMs) || 1200) + 80);
+  }
+
+  function finalizeLocalMutation(options = {}) {
+    if (options.syncSelectedLeadIds !== false) {
+      syncSelectedLeadIds();
+    }
+    if (options.writeCache !== false) {
+      writeStoredAppDataCache();
+    }
+    if (options.render !== false) {
+      if (!renderPipelineInteractionFrame()) {
+        renderAll();
+      }
+    }
+    if (options.notifyScope) {
+      notifyLiveSyncChange(options.notifyScope);
+    }
+    if (options.refresh !== false) {
+      queueLocalConsistencyRefresh(
+        options.refreshReason || (options.notifyScope ? `local:${options.notifyScope}` : "local-mutation"),
+        options.cooldownMs
+      );
+    }
   }
 
   function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
@@ -4574,6 +4622,38 @@
     state.selectedLeadIds = new Set(
       [...state.selectedLeadIds].filter((id) => validIds.has(id))
     );
+  }
+
+  function upsertLeadLocally(lead) {
+    if (!lead?.id) return null;
+    const normalizedLead = normalizeLead(lead, {
+      ownerMap: state.ownerCanonicalMap,
+      socialSourceMap: state.socialSourceCanonicalMap
+    });
+    const currentIndex = state.leads.findIndex((item) => item.id === normalizedLead.id);
+    if (currentIndex === -1) {
+      state.leads = [...state.leads, normalizedLead];
+    } else {
+      state.leads = state.leads.map((item, index) => (index === currentIndex ? normalizedLead : item));
+    }
+    return normalizedLead;
+  }
+
+  function removeLeadsLocally(leadIds = []) {
+    const ids = new Set(normalizeIdList(leadIds));
+    if (!ids.size) return 0;
+
+    const previousCount = state.leads.length;
+    state.leads = state.leads.filter((lead) => !ids.has(String(lead?.id || "").trim()));
+    if (state.funnelWorkspace?.leadAssignments) {
+      ids.forEach((leadId) => {
+        delete state.funnelWorkspace.leadAssignments[leadId];
+      });
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+    }
+    state.selectedLeadIds = new Set([...state.selectedLeadIds].filter((leadId) => !ids.has(leadId)));
+    return previousCount - state.leads.length;
   }
 
   function closeFilterDropdowns(except = null) {
@@ -9352,6 +9432,7 @@
       }));
 
     state.stages = optimisticStages;
+    writeStoredAppDataCache();
     if (!renderPipelineInteractionFrame()) {
       renderAll();
     }
@@ -9359,6 +9440,7 @@
     try {
       await persistStagePositions(changedPositionRows);
       notifyLiveSyncChange("stage-order");
+      queueLocalConsistencyRefresh("stage-order", 900);
       void logChange(
         "reorder",
         "stage",
@@ -10730,8 +10812,13 @@
       }
     );
 
+    removeLeadsLocally(ids);
     state.selectedLeadIds.clear();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    finalizeLocalMutation({
+      notifyScope: "workspace",
+      refreshReason: "bulk-lead-delete",
+      cooldownMs: 1400
+    });
   }
 
   function renderLeadTable() {
@@ -13800,6 +13887,7 @@
 
     let error;
     let savedLeadId = els.leadId.value || null;
+    let savedLeadRecord = null;
 
     if (els.leadId.value) {
       const oldLead = state.leads.find((x) => x.id === els.leadId.value);
@@ -13819,6 +13907,11 @@
         { before: oldLead || null, after: payload }
       );
       assignLeadToSubfunnel(els.leadId.value, selectedSubfunnelId);
+      savedLeadRecord = {
+        ...(oldLead || {}),
+        ...payload,
+        id: els.leadId.value
+      };
     } else {
       const { data, error: insertError } = await state.supabase
         .from("leads")
@@ -13838,16 +13931,30 @@
         payload
       );
       if (data?.id) assignLeadToSubfunnel(data.id, selectedSubfunnelId);
+      savedLeadRecord = data ? { ...data, ...payload } : { ...payload, id: savedLeadId };
     }
 
-    try {
-      await syncPlanValuesAcrossLeads(draftPlans, savedLeadId);
-    } catch (syncError) {
-      alert(`Lead salvo, mas não foi possível sincronizar o valor do plano nos outros leads: ${syncError.message}`);
+    if (savedLeadRecord?.id) {
+      upsertLeadLocally(savedLeadRecord);
     }
 
     closeLeadModal();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    finalizeLocalMutation({
+      notifyScope: "workspace",
+      refreshReason: "lead-save",
+      cooldownMs: 1400
+    });
+
+    void syncPlanValuesAcrossLeads(draftPlans, savedLeadId)
+      .then((updatedCount) => {
+        if (updatedCount > 0) {
+          scheduleLiveDataRefresh("lead-plan-sync", { immediate: true });
+          notifyLiveSyncChange("workspace");
+        }
+      })
+      .catch((syncError) => {
+        alert(`Lead salvo, mas não foi possível sincronizar o valor do plano nos outros leads: ${syncError.message}`);
+      });
   }
 
   async function submitStage(event) {
@@ -13971,6 +14078,10 @@
               subfunnel_id: selectedSubfunnelId
             }
           });
+
+          state.stages = state.stages
+            .map((stage) => (stage.id === stageId ? normalizeStage({ ...stage, ...payload, id: stageId }) : stage))
+            .sort((a, b) => Number(a.position) - Number(b.position));
         }
 
       } else {
@@ -13978,6 +14089,7 @@
         if (error) return alert(`Erro no Supabase: ${error.message}`);
         await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
         if (data?.id) {
+          state.stages = [...state.stages, normalizeStage(data)].sort((a, b) => Number(a.position) - Number(b.position));
           assignStageToSubfunnel(data.id, selectedSubfunnelId, { deferSync: true });
           state.suppressFunnelSync = true;
           writeStoredFunnelWorkspace();
@@ -13992,11 +14104,11 @@
     }
 
     closeStageModal();
-    if (!renderPipelineInteractionFrame()) {
-      renderAll();
-    }
-    notifyLiveSyncChange("funnel-workspace");
-    void loadAppData({ includeProfiles: state.profilesLoaded });
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-save",
+      cooldownMs: 1500
+    });
   }
 
   async function submitNotification(event) {
@@ -14221,6 +14333,8 @@
       }
     }
 
+    queueLocalConsistencyRefresh("lead-move", 900);
+
     void logChange(
       "move_stage",
       "lead",
@@ -14278,7 +14392,12 @@
       lead
     );
 
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    removeLeadsLocally([normalizedId]);
+    finalizeLocalMutation({
+      notifyScope: "workspace",
+      refreshReason: "lead-delete",
+      cooldownMs: 1200
+    });
   }
 
   async function editStage(id) {
@@ -14671,13 +14790,14 @@
       const { data, error } = await state.supabase
         .from("leads")
         .insert(chunk)
-        .select("id");
+        .select();
 
       if (error) throw error;
 
       (data || []).forEach((row) => {
         if (row?.id) {
           insertedIds.push(row.id);
+          upsertLeadLocally(row);
           assignLeadToSubfunnel(row.id, targetSubfunnelId, { deferSync: options.deferSync === true });
         }
       });
@@ -14758,7 +14878,11 @@
       }
 
       closeStageDuplicateModal();
-      await loadAppData({ includeProfiles: state.profilesLoaded });
+      finalizeLocalMutation({
+        notifyScope: "funnel-workspace",
+        refreshReason: "stage-duplicate",
+        cooldownMs: 1500
+      });
     } catch (error) {
       alert(`Erro ao duplicar pipeline: ${formatSupabaseError(error)}`);
     }
@@ -14842,9 +14966,14 @@
         }
       }
 
-      affectedLeads.forEach((lead) => {
+      state.leads = state.leads.map((lead) => {
+        if (!stageIdsToDelete.includes(String(lead?.stage_id || "").trim())) return lead;
         const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
-        if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId);
+        if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId, { deferSync: true });
+        return normalizeLead({ ...lead, stage_id: targetStage.id }, {
+          ownerMap: state.ownerCanonicalMap,
+          socialSourceMap: state.socialSourceCanonicalMap
+        });
       });
 
       await logChange(
@@ -14871,6 +15000,10 @@
       return;
     }
 
+    if (deleteWithLeads && affectedLeads.length) {
+      removeLeadsLocally(affectedLeads.map((lead) => lead.id));
+    }
+
     await logChange(
       "delete",
       "stage",
@@ -14885,11 +15018,11 @@
     );
 
     closeStageDeleteModal();
-    if (!renderPipelineInteractionFrame()) {
-      renderAll();
-    }
-    notifyLiveSyncChange("funnel-workspace");
-    void loadAppData({ includeProfiles: state.profilesLoaded });
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-delete",
+      cooldownMs: 1500
+    });
   }
 
   async function submitStageDelete(event) {
