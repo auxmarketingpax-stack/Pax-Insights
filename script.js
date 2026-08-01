@@ -559,6 +559,7 @@
   const APP_DATA_CACHE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.app-data-cache-v1`;
   const FUNNEL_ROUTE_MIGRATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.funnel-route-migration-v2`;
   const EXTERNAL_ACTIONS_FUNNEL_MERGE_STORAGE_KEY = `${APP_STORAGE_PREFIX}.external-actions-funnel-merge-v1`;
+  const B2C_EXTERNAL_CAPTURE_NORMALIZATION_STORAGE_KEY = `${APP_STORAGE_PREFIX}.b2c-external-capture-normalization-v1`;
   const DELETED_FUNNEL_WORKSPACE_IDS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.deleted-funnel-workspace-ids-v1`;
   const NOTIFICATION_DISMISSALS_STORAGE_KEY = `${APP_STORAGE_PREFIX}.notification-dismissals-v1`;
   const DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY = `${APP_STORAGE_PREFIX}.demo-pipeline-reminder-seeded-v1`;
@@ -5298,6 +5299,22 @@
     }
   }
 
+  function readStoredB2CExternalCaptureNormalizationDone() {
+    try {
+      return window.localStorage.getItem(B2C_EXTERNAL_CAPTURE_NORMALIZATION_STORAGE_KEY) === "true";
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function writeStoredB2CExternalCaptureNormalizationDone(value) {
+    try {
+      window.localStorage.setItem(B2C_EXTERNAL_CAPTURE_NORMALIZATION_STORAGE_KEY, value ? "true" : "false");
+    } catch (_error) {
+      // ignore local storage failures
+    }
+  }
+
   function readStoredFunnelUiState() {
     const parsed = readJsonStorageValue(FUNNEL_UI_STATE_STORAGE_KEY, LEGACY_FUNNEL_UI_STATE_STORAGE_KEY);
     if (!parsed) return null;
@@ -6443,6 +6460,207 @@
     writeStoredFunnelWorkspace();
     writeStoredExternalActionsFunnelMergeDone(true);
 
+    return true;
+  }
+
+  async function ensureB2CExternalCaptureNormalization() {
+    if (readStoredB2CExternalCaptureNormalizationDone()) return false;
+    if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
+    if (!canManageStages()) return false;
+
+    const compareKey = (value) => getCanonicalValueKey(value);
+    const expectedStages = [
+      "Lead captado",
+      "Ação, local e data registrados",
+      "Nome e telefone pendentes",
+      "Dados completos",
+      "Autorização para contato confirmada",
+      "Verificação na base",
+      "Interesse classificado como alto, médio ou baixo",
+      "Consultor responsável definido",
+      "Lead liberado para atendimento"
+    ];
+
+    const funnel = (state.funnelWorkspace?.funnels || []).find((item) =>
+      String(item?.category || "").trim() === "B2C"
+      && compareKey(item?.name || "") === compareKey("Ações Externas")
+    );
+    if (!funnel) {
+      writeStoredB2CExternalCaptureNormalizationDone(true);
+      return false;
+    }
+
+    const findSubfunnel = (name) => (funnel.subfunnels || []).find((item) => compareKey(item?.name || "") === compareKey(name)) || null;
+    const captureSubfunnel = findSubfunnel("Captura na ação");
+    const recycleSubfunnel = findSubfunnel("Reciclagem e encerramento");
+    if (!captureSubfunnel || !recycleSubfunnel) return false;
+
+    const getLeadCountByStageId = () => {
+      const counts = new Map();
+      state.leads.forEach((lead) => {
+        const stageId = String(lead?.stage_id || "").trim();
+        counts.set(stageId, (counts.get(stageId) || 0) + 1);
+      });
+      return counts;
+    };
+    const leadCountByStageId = getLeadCountByStageId();
+    const getStageLeadCount = (stageId) => leadCountByStageId.get(String(stageId || "").trim()) || 0;
+    const captureStages = getStagesForSubfunnel(captureSubfunnel.id);
+    if (!captureStages.length) {
+      writeStoredB2CExternalCaptureNormalizationDone(true);
+      return false;
+    }
+
+    const captureStagePool = [...captureStages];
+    const usedCaptureStageIds = new Set();
+    const selectCaptureStage = (preferredNames = [], { preferLeadStage = false } = {}) => {
+      const nameKeys = preferredNames.map(compareKey);
+      const candidates = captureStagePool.filter((stage) =>
+        !usedCaptureStageIds.has(stage.id)
+        && nameKeys.includes(compareKey(stage.name || ""))
+      );
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => {
+        const exactA = compareKey(a.name || "") === nameKeys[0] ? 1 : 0;
+        const exactB = compareKey(b.name || "") === nameKeys[0] ? 1 : 0;
+        if (exactA !== exactB) return exactB - exactA;
+        const leadDiff = getStageLeadCount(b.id) - getStageLeadCount(a.id);
+        if (preferLeadStage && leadDiff !== 0) return leadDiff;
+        if (!preferLeadStage && leadDiff !== 0) return leadDiff * -1;
+        return Number(a.position || 0) - Number(b.position || 0);
+      });
+      const selected = candidates[0] || null;
+      if (selected) usedCaptureStageIds.add(selected.id);
+      return selected;
+    };
+
+    const captureStagePlan = [
+      { name: "Lead captado", preferredNames: ["Lead captado", "Novo Lead/Prospecção"], preferLeadStage: true },
+      { name: "Ação, local e data registrados", preferredNames: ["Ação, local e data registrados", "Novo Lead/Prospecção", "Apresentação/Negociação", "Follow-Up"] },
+      { name: "Nome e telefone pendentes", preferredNames: ["Nome e telefone pendentes", "Abordagem/Qualificação", "Apresentação/Negociação", "Follow-Up"] },
+      { name: "Dados completos", preferredNames: ["Dados completos"] },
+      { name: "Autorização para contato confirmada", preferredNames: ["Autorização para contato confirmada"] },
+      { name: "Verificação na base", preferredNames: ["Verificação na base"] },
+      { name: "Interesse classificado como alto, médio ou baixo", preferredNames: ["Interesse classificado como alto, médio ou baixo"] },
+      { name: "Consultor responsável definido", preferredNames: ["Consultor responsável definido", "Vendedor responsável definido"] },
+      { name: "Lead liberado para atendimento", preferredNames: ["Lead liberado para atendimento"] }
+    ];
+
+    const selectedCaptureStages = [];
+    for (const plan of captureStagePlan) {
+      let stage = selectCaptureStage(plan.preferredNames, { preferLeadStage: plan.preferLeadStage === true });
+      if (!stage) {
+        stage = await createStageForSubfunnel({
+          name: plan.name,
+          color: DEFAULT_STAGE_COLOR,
+          stage_type: "andamento",
+          custom_stage_type: null,
+          position: state.stages.length,
+          created_by: state.currentUser?.id || null
+        }, captureSubfunnel.id, { deferSync: true });
+        usedCaptureStageIds.add(stage.id);
+      }
+      selectedCaptureStages.push({ ...plan, stage });
+    }
+
+    const moveLeadsBetweenStages = async (sourceStageId, targetStageId, targetSubfunnelId) => {
+      if (!sourceStageId || !targetStageId || sourceStageId === targetStageId) return 0;
+      const sourceLeadIds = state.leads
+        .filter((lead) => String(lead?.stage_id || "").trim() === String(sourceStageId || "").trim())
+        .map((lead) => String(lead?.id || "").trim())
+        .filter(Boolean);
+      if (!sourceLeadIds.length) return 0;
+
+      const { error } = await state.supabase
+        .from("leads")
+        .update({ stage_id: targetStageId })
+        .eq("stage_id", sourceStageId);
+      if (error) throw error;
+
+      await persistLeadAssignmentsToSupabase(sourceLeadIds, targetSubfunnelId);
+      state.leads = state.leads.map((lead) => {
+        if (!sourceLeadIds.includes(String(lead?.id || "").trim())) return lead;
+        return normalizeLead({ ...lead, stage_id: targetStageId }, {
+          ownerMap: state.ownerCanonicalMap,
+          socialSourceMap: state.socialSourceCanonicalMap
+        });
+      });
+      sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, targetSubfunnelId, { deferSync: true }));
+      return sourceLeadIds.length;
+    };
+
+    const findStageByCompareNames = (subfunnelId, names = []) => getStagesForSubfunnel(subfunnelId).find((stage) =>
+      names.some((name) => compareKey(stage?.name || "") === compareKey(name))
+    ) || null;
+    const recycleStageTargets = {
+      naoResponde: findStageByCompareNames(recycleSubfunnel.id, ["Não respondeu", "Não respondeu.", "Não responde"]),
+      jaAssociado: findStageByCompareNames(recycleSubfunnel.id, ["Já é associado", "Já é associado."]),
+      naoInteresse: findStageByCompareNames(recycleSubfunnel.id, ["Não tem interesse", "Não tem interesse."])
+    };
+
+    const captureExtraStages = captureStagePool.filter((stage) => !usedCaptureStageIds.has(stage.id));
+    const stagesToDelete = [];
+
+    for (const stage of captureExtraStages) {
+      const stageKey = compareKey(stage.name || "");
+      const leadCount = getStageLeadCount(stage.id);
+      let target = null;
+
+      if (stageKey === compareKey("Não responde")) {
+        target = recycleStageTargets.naoResponde;
+      } else if (stageKey === compareKey("Já é associado")) {
+        target = recycleStageTargets.jaAssociado;
+      } else if (stageKey === compareKey("Não tem interesse") || stageKey === compareKey("Cancelados")) {
+        target = recycleStageTargets.naoInteresse;
+      }
+
+      let movedLeads = 0;
+      if (leadCount > 0 && target?.id) {
+        movedLeads = await moveLeadsBetweenStages(stage.id, target.id, recycleSubfunnel.id);
+      }
+
+      if (leadCount === 0 || movedLeads === leadCount) {
+        stagesToDelete.push(stage.id);
+      }
+    }
+
+    for (const [index, entry] of selectedCaptureStages.entries()) {
+      const nextStage = entry.stage;
+      const nextName = entry.name;
+      const nextPosition = index;
+      const nextColor = sanitizeHexColor(nextStage.color);
+      const nextType = nextStage.stage_type || "andamento";
+      const nextCustomType = nextStage.custom_stage_type || null;
+
+      const { error: updateError } = await state.supabase
+        .from("stages")
+        .update({
+          name: nextName,
+          position: nextPosition,
+          color: nextColor,
+          stage_type: nextType,
+          custom_stage_type: nextCustomType
+        })
+        .eq("id", nextStage.id);
+      if (updateError) throw updateError;
+
+      assignStageToSubfunnel(nextStage.id, captureSubfunnel.id, { deferSync: true });
+      const localStage = state.stages.find((stage) => stage.id === nextStage.id);
+      if (localStage) {
+        localStage.name = nextName;
+        localStage.position = nextPosition;
+      }
+    }
+
+    if (stagesToDelete.length) {
+      await removeStagesByIds(stagesToDelete);
+    }
+
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+    writeStoredAppDataCache();
+    writeStoredB2CExternalCaptureNormalizationDone(true);
+    notifyLiveSyncChange("funnel-workspace");
     return true;
   }
 
@@ -9477,6 +9695,25 @@
       await ensureExternalActionsFunnelMerge();
     } catch (mergeError) {
       console.warn("Erro ao consolidar funis de Ações Externas:", mergeError);
+    }
+
+    try {
+      const normalizedCapture = await ensureB2CExternalCaptureNormalization();
+      if (normalizedCapture) {
+        return loadAppData({
+          includeProfiles,
+          includeAdminData,
+          runRouteMigration: false,
+          restoreUiState,
+          silentRender
+        });
+      }
+    } catch (captureNormalizationError) {
+      console.warn("Erro ao normalizar Captura na ação do B2C:", captureNormalizationError);
+      const message = String(captureNormalizationError?.message || "");
+      if (!/row-level security policy/i.test(message)) {
+        alert(`Não foi possível normalizar o subfunil Captura na ação: ${message}`);
+      }
     }
 
     if (restoreUiState) {
