@@ -7094,20 +7094,26 @@
       normalizedFunnels.flatMap((item) => item.subfunnels.map((subfunnel) => subfunnel.id))
     );
     const fallbackSubfunnelId = getFallbackSubfunnelId({ funnels: normalizedFunnels });
+    const shouldUseFallbackAssignments = !remoteHasContent;
 
     const nextStageAssignments = {};
     state.stages.forEach((stage) => {
       const assignedId = workspace.stageAssignments?.[stage.id];
       const normalizedAssignedId = legacySubfunnelIdMap.get(String(assignedId || "").trim()) || assignedId;
-      nextStageAssignments[stage.id] = validSubfunnelIds.has(normalizedAssignedId) ? normalizedAssignedId : fallbackSubfunnelId;
+      nextStageAssignments[stage.id] = validSubfunnelIds.has(normalizedAssignedId)
+        ? normalizedAssignedId
+        : (shouldUseFallbackAssignments ? fallbackSubfunnelId : null);
     });
 
     const nextLeadAssignments = {};
     state.leads.forEach((lead) => {
       const assignedId = workspace.leadAssignments?.[lead.id];
       const normalizedAssignedId = legacySubfunnelIdMap.get(String(assignedId || "").trim()) || assignedId;
-      const stageAssignedId = nextStageAssignments[lead.stage_id] || fallbackSubfunnelId;
-      nextLeadAssignments[lead.id] = validSubfunnelIds.has(normalizedAssignedId) ? normalizedAssignedId : stageAssignedId;
+      const stageAssignedId = nextStageAssignments[lead.stage_id]
+        || (shouldUseFallbackAssignments ? fallbackSubfunnelId : null);
+      nextLeadAssignments[lead.id] = validSubfunnelIds.has(normalizedAssignedId)
+        ? normalizedAssignedId
+        : stageAssignedId;
     });
     const validStageIds = new Set(state.stages.map((stage) => String(stage.id || "").trim()).filter(Boolean));
     const nextStageReminderConfigs = {};
