@@ -13713,10 +13713,6 @@
           });
         }
 
-        if (previousAssignedSubfunnelId && previousAssignedSubfunnelId !== selectedSubfunnelId) {
-          await cleanupDuplicateStagesInSubfunnel(previousAssignedSubfunnelId, payload.name, { removeAllWhenNoLeads: true });
-        }
-        await cleanupDuplicateStagesInSubfunnel(selectedSubfunnelId, payload.name, { keepStageId: matchingTargetStage?.id || stageId });
       } else {
         const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
         if (error) return alert(`Erro no Supabase: ${error.message}`);
