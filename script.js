@@ -3309,6 +3309,7 @@
       || state.stageConfigDrag
       || state.subfunnelCardDrag
       || state.funnelNavDrag
+      || isFunnelContextMenuOpen()
     );
   }
 
@@ -11806,7 +11807,11 @@
     }
   }
 
-  function openFunnelContextMenu({ x = 0, y = 0, actions = [] } = {}) {
+  function isFunnelContextMenuOpen() {
+    return Boolean(els.funnelContextMenu && !els.funnelContextMenu.classList.contains("hidden"));
+  }
+
+  function openFunnelContextMenu({ x = 0, y = 0, actions = [], scope = "generic" } = {}) {
     if (!els.funnelContextMenu) return;
     if (!actions.length) {
       closeFunnelContextMenu();
@@ -11823,7 +11828,7 @@
       </button>
     `).join("");
 
-    state.funnelContextMenuState = { actions };
+    state.funnelContextMenuState = { actions, scope };
     els.funnelContextMenu.classList.remove("hidden");
     els.funnelContextMenu.setAttribute("aria-hidden", "false");
 
@@ -11987,7 +11992,9 @@
     syncFunnelSidebarVisibility();
 
     if (!visible) {
-      closeFunnelContextMenu();
+      if (state.funnelContextMenuState?.scope === "nav") {
+        closeFunnelContextMenu();
+      }
       return;
     }
 
@@ -15073,6 +15080,7 @@
       openFunnelContextMenu({
         x,
         y,
+        scope: "pipeline",
         actions: [
           { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
           { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) },
@@ -15084,7 +15092,7 @@
     const openLeadContextMenu = ({ lead, x = 0, y = 0 } = {}) => {
       const actions = buildLeadContextActions(lead);
       if (!actions.length) return;
-      openFunnelContextMenu({ x, y, actions });
+      openFunnelContextMenu({ x, y, actions, scope: "pipeline" });
     };
 
     document.querySelectorAll(".pipeline-stage-tab").forEach((tab) => {
@@ -16184,6 +16192,7 @@
         openFunnelContextMenu({
           x: event.clientX,
           y: event.clientY,
+          scope: "nav",
           actions: canManageAdminAreas()
             ? [{
                 id: `create-group-${category}`,
@@ -16206,7 +16215,7 @@
               { id: `delete-funnel-${funnel.id}`, label: "Excluir funil", danger: true, handler: () => deleteFunnel(funnel.id) }
             ]
           : [];
-        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions });
+        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions, scope: "nav" });
         return;
       }
 
@@ -16222,7 +16231,7 @@
               { id: `delete-group-${group.id}`, label: "Excluir grupo", danger: true, handler: () => deleteFunnelGroup(group.id) }
             ]
           : [];
-        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions });
+        openFunnelContextMenu({ x: event.clientX, y: event.clientY, actions, scope: "nav" });
       }
     });
 
