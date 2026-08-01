@@ -13712,6 +13712,11 @@
             }
           });
         }
+
+        if (previousAssignedSubfunnelId && previousAssignedSubfunnelId !== selectedSubfunnelId) {
+          await cleanupDuplicateStagesInSubfunnel(previousAssignedSubfunnelId, payload.name, { removeAllWhenNoLeads: true });
+        }
+        await cleanupDuplicateStagesInSubfunnel(selectedSubfunnelId, payload.name, { keepStageId: matchingTargetStage?.id || stageId });
       } else {
         const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
         if (error) return alert(`Erro no Supabase: ${error.message}`);
@@ -13731,7 +13736,11 @@
     }
 
     closeStageModal();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    if (!renderPipelineInteractionFrame()) {
+      renderAll();
+    }
+    notifyLiveSyncChange("funnel-workspace");
+    void loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
   async function submitNotification(event) {
@@ -14132,6 +14141,83 @@
     );
   }
 
+  async function removeStagesByIds(stageIds = []) {
+    const normalizedStageIds = [...new Set((Array.isArray(stageIds) ? stageIds : [])
+      .map((id) => String(id || "").trim())
+      .filter(Boolean))];
+    if (!normalizedStageIds.length) return 0;
+
+    for (const stageId of normalizedStageIds) {
+      const { error } = await state.supabase
+        .from("stages")
+        .delete()
+        .eq("id", stageId);
+      if (error) throw error;
+
+      await deleteStageAssignmentFromSupabase(stageId);
+      await persistStageReminderConfigToSupabase(stageId, null);
+    }
+
+    state.stages = state.stages.filter((stage) => !normalizedStageIds.includes(String(stage?.id || "").trim()));
+    if (state.funnelWorkspace?.stageAssignments) {
+      normalizedStageIds.forEach((stageId) => {
+        delete state.funnelWorkspace.stageAssignments[stageId];
+      });
+    }
+    if (state.funnelWorkspace?.stageReminderConfigs) {
+      normalizedStageIds.forEach((stageId) => {
+        delete state.funnelWorkspace.stageReminderConfigs[stageId];
+      });
+    }
+    return normalizedStageIds.length;
+  }
+
+  async function cleanupDuplicateStagesInSubfunnel(subfunnelId, stageName, options = {}) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedStageName = normalizeComparisonText(stageName || "");
+    const keepStageId = String(options.keepStageId || "").trim();
+    const removeAllWhenNoLeads = options.removeAllWhenNoLeads === true;
+    if (!normalizedSubfunnelId || !normalizedStageName || !state.supabase) return 0;
+
+    const matchingStages = getStagesForSubfunnel(normalizedSubfunnelId).filter((stage) =>
+      normalizeComparisonText(stage?.name || "") === normalizedStageName
+    );
+    if (matchingStages.length <= 1) return 0;
+
+    const leadCountByStageId = new Map();
+    state.leads.forEach((lead) => {
+      const stageId = String(lead?.stage_id || "").trim();
+      leadCountByStageId.set(stageId, (leadCountByStageId.get(stageId) || 0) + 1);
+    });
+
+    const totalLeadCount = matchingStages.reduce((sum, stage) => sum + (leadCountByStageId.get(String(stage.id || "").trim()) || 0), 0);
+    if (removeAllWhenNoLeads && totalLeadCount === 0) {
+      return removeStagesByIds(matchingStages.map((stage) => stage.id));
+    }
+
+    const keeper = keepStageId
+      ? matchingStages.find((stage) => String(stage?.id || "").trim() === keepStageId)
+      : null;
+    const sortedStages = [...matchingStages].sort((a, b) => {
+      const leadDiff = (leadCountByStageId.get(String(b?.id || "").trim()) || 0) - (leadCountByStageId.get(String(a?.id || "").trim()) || 0);
+      if (leadDiff !== 0) return leadDiff;
+      const positionA = Number(a?.position);
+      const positionB = Number(b?.position);
+      if (positionA !== positionB) return positionA - positionB;
+      return String(a?.id || "").localeCompare(String(b?.id || ""));
+    });
+    const effectiveKeeper = keeper || sortedStages[0] || null;
+    if (!effectiveKeeper) return 0;
+
+    const removableStageIds = matchingStages
+      .filter((stage) => String(stage?.id || "").trim() !== String(effectiveKeeper.id || "").trim())
+      .filter((stage) => (leadCountByStageId.get(String(stage?.id || "").trim()) || 0) === 0)
+      .map((stage) => stage.id);
+
+    if (!removableStageIds.length) return 0;
+    return removeStagesByIds(removableStageIds);
+  }
+
   async function deleteStageAssignmentFromSupabase(stageId) {
     const normalizedStageId = String(stageId || "").trim();
     if (!normalizedStageId || !state.supabase) return;
@@ -14509,32 +14595,13 @@
       );
     }
 
-    for (const sourceStageId of stageIdsToDelete) {
-      const { error } = await state.supabase
-        .from("stages")
-        .delete()
-        .eq("id", sourceStageId);
-
-      if (error) {
-        alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
-        return;
-      }
-
-      await deleteStageAssignmentFromSupabase(sourceStageId);
-      await persistStageReminderConfigToSupabase(sourceStageId, null);
-    }
-
-    if (state.funnelWorkspace?.stageAssignments) {
-      stageIdsToDelete.forEach((sourceStageId) => {
-        delete state.funnelWorkspace.stageAssignments[sourceStageId];
-      });
+    try {
+      await removeStagesByIds(stageIdsToDelete);
+      state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
-    }
-    if (state.funnelWorkspace?.stageReminderConfigs) {
-      stageIdsToDelete.forEach((sourceStageId) => {
-        delete state.funnelWorkspace.stageReminderConfigs[sourceStageId];
-      });
-      writeStoredFunnelWorkspace();
+    } catch (error) {
+      alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
+      return;
     }
 
     await logChange(
@@ -14551,7 +14618,11 @@
     );
 
     closeStageDeleteModal();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    if (!renderPipelineInteractionFrame()) {
+      renderAll();
+    }
+    notifyLiveSyncChange("funnel-workspace");
+    void loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
   async function submitStageDelete(event) {
