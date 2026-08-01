@@ -13903,6 +13903,7 @@
       if (els.stageId.value) {
         const stageId = String(els.stageId.value || "").trim();
         const before = state.stages.find((s) => s.id === stageId);
+        const previousStageName = normalizeStageName(before?.name || payload.name || "");
         const previousAssignedSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
         const matchingTargetStage = findMatchingStageInSubfunnelByName(payload.name, selectedSubfunnelId, stageId);
         const leadIdsInStage = state.leads
@@ -13945,6 +13946,15 @@
               notifyLiveSyncChange("funnel-workspace");
             }
           }
+
+          if (previousAssignedSubfunnelId && previousAssignedSubfunnelId !== selectedSubfunnelId) {
+            await cleanupDuplicateStagesInSubfunnel(previousAssignedSubfunnelId, previousStageName, {
+              removeAllWhenNoLeads: true
+            });
+          }
+          await cleanupDuplicateStagesInSubfunnel(selectedSubfunnelId, payload.name, {
+            keepStageId: stageId
+          });
 
           await logChange("update", "stage", stageId, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
             before,
@@ -14476,6 +14486,8 @@
     if (!sourceStage?.id || !targetStage?.id || !targetSubfunnelId) return false;
 
     const normalizedTargetSubfunnelId = String(targetSubfunnelId || "").trim();
+    const sourceScope = getStageScope(sourceStage.id);
+    const previousSourceSubfunnelId = String(sourceScope?.subfunnelId || "").trim();
     const nextTargetPayload = payload ? {
       name: normalizeStageName(payload.name || targetStage.name || sourceStage.name || "Pipeline"),
       color: sanitizeHexColor(payload.color || targetStage.color || sourceStage.color),
@@ -14552,6 +14564,14 @@
       }
     }
     sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, normalizedTargetSubfunnelId, { deferSync: true }));
+    if (previousSourceSubfunnelId && previousSourceSubfunnelId !== normalizedTargetSubfunnelId) {
+      await cleanupDuplicateStagesInSubfunnel(previousSourceSubfunnelId, sourceStage.name || nextTargetPayload?.name || "", {
+        removeAllWhenNoLeads: true
+      });
+    }
+    await cleanupDuplicateStagesInSubfunnel(normalizedTargetSubfunnelId, nextTargetPayload?.name || targetStage.name || sourceStage.name || "", {
+      keepStageId: targetStage.id
+    });
     state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
 
