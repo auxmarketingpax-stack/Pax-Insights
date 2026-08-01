@@ -12590,7 +12590,8 @@
   function renderStageDeleteTargets(stage) {
     if (!els.stageDeleteTargetStage || !els.stageDeleteTargetHint) return;
     const scope = getStageScope(stage.id);
-    const currentStages = getStagesForSubfunnel(scope.subfunnelId).filter((item) => item.id !== stage.id);
+    const equivalentStageIds = new Set(getEquivalentStagesInSubfunnel(stage).map((item) => item.id));
+    const currentStages = getStagesForSubfunnel(scope.subfunnelId).filter((item) => !equivalentStageIds.has(item.id));
     const nearestStage = getNearestStageForDeletion(stage.id);
 
     if (!currentStages.length) {
@@ -12603,10 +12604,15 @@
     els.stageDeleteTargetStage.innerHTML = currentStages.map((item) => `
       <option value="${item.id}">${escapeHtml(item.name)}</option>
     `).join("");
-    if (nearestStage?.id) {
+    if (nearestStage?.id && currentStages.some((item) => item.id === nearestStage.id)) {
       els.stageDeleteTargetStage.value = nearestStage.id;
+    } else if (currentStages[0]?.id) {
+      els.stageDeleteTargetStage.value = currentStages[0].id;
     }
-    els.stageDeleteTargetHint.textContent = "Os leads serão movidos para a pipeline selecionada.";
+    const duplicateCount = Math.max(0, equivalentStageIds.size - 1);
+    els.stageDeleteTargetHint.textContent = duplicateCount > 0
+      ? `Existem ${duplicateCount + 1} pipelines com esse mesmo nome neste subfunil. Ao excluir, o sistema removerá todas elas e moverá os leads para a pipeline selecionada.`
+      : "Os leads serão movidos para a pipeline selecionada.";
     syncBrandedSelects();
   }
 
@@ -14111,6 +14117,21 @@
     ) || null;
   }
 
+  function getEquivalentStagesInSubfunnel(stageOrStageId) {
+    const stage = typeof stageOrStageId === "string"
+      ? state.stages.find((item) => item.id === stageOrStageId)
+      : stageOrStageId;
+    if (!stage?.id) return [];
+
+    const scope = getStageScope(stage.id);
+    const normalizedName = normalizeComparisonText(stage.name || "");
+    if (!scope?.subfunnelId || !normalizedName) return stage ? [stage] : [];
+
+    return getStagesForSubfunnel(scope.subfunnelId).filter((item) =>
+      normalizeComparisonText(item?.name || "") === normalizedName
+    );
+  }
+
   async function deleteStageAssignmentFromSupabase(stageId) {
     const normalizedStageId = String(stageId || "").trim();
     if (!normalizedStageId || !state.supabase) return;
@@ -14396,7 +14417,9 @@
 
     const deleteWithLeads = Boolean(options.deleteWithLeads);
     let targetStageId = String(options.targetStageId || "").trim();
-    const affectedLeads = state.leads.filter((lead) => lead.stage_id === stageId);
+    const equivalentStages = getEquivalentStagesInSubfunnel(stage);
+    const stageIdsToDelete = [...new Set(equivalentStages.map((item) => String(item.id || "").trim()).filter(Boolean))];
+    const affectedLeads = state.leads.filter((lead) => stageIdsToDelete.includes(String(lead.stage_id || "").trim()));
 
     if (!canManageStages()) {
       requestAdminAuthorization({
@@ -14448,14 +14471,22 @@
     }
 
     if (!deleteWithLeads && affectedLeads.length) {
-      const { error: moveError } = await state.supabase
-        .from("leads")
-        .update({ stage_id: targetStage.id })
-        .eq("stage_id", stage.id);
+      for (const sourceStageId of stageIdsToDelete) {
+        const stageLeadIds = affectedLeads
+          .filter((lead) => String(lead.stage_id || "").trim() === sourceStageId)
+          .map((lead) => String(lead.id || "").trim())
+          .filter(Boolean);
+        if (!stageLeadIds.length) continue;
 
-      if (moveError) {
-        alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
-        return;
+        const { error: moveError } = await state.supabase
+          .from("leads")
+          .update({ stage_id: targetStage.id })
+          .in("id", stageLeadIds);
+
+        if (moveError) {
+          alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
+          return;
+        }
       }
 
       affectedLeads.forEach((lead) => {
@@ -14478,22 +14509,31 @@
       );
     }
 
-    const { error } = await state.supabase
-      .from("stages")
-      .delete()
-      .eq("id", stage.id);
+    for (const sourceStageId of stageIdsToDelete) {
+      const { error } = await state.supabase
+        .from("stages")
+        .delete()
+        .eq("id", sourceStageId);
 
-    if (error) {
-      alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
-      return;
+      if (error) {
+        alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
+        return;
+      }
+
+      await deleteStageAssignmentFromSupabase(sourceStageId);
+      await persistStageReminderConfigToSupabase(sourceStageId, null);
     }
 
     if (state.funnelWorkspace?.stageAssignments) {
-      delete state.funnelWorkspace.stageAssignments[stage.id];
+      stageIdsToDelete.forEach((sourceStageId) => {
+        delete state.funnelWorkspace.stageAssignments[sourceStageId];
+      });
       writeStoredFunnelWorkspace();
     }
     if (state.funnelWorkspace?.stageReminderConfigs) {
-      delete state.funnelWorkspace.stageReminderConfigs[stage.id];
+      stageIdsToDelete.forEach((sourceStageId) => {
+        delete state.funnelWorkspace.stageReminderConfigs[sourceStageId];
+      });
       writeStoredFunnelWorkspace();
     }
 
@@ -14504,6 +14544,7 @@
       `Etapa "${stage.name}" foi excluída por ${getUserDisplayName()}.`,
       {
         ...stage,
+        deleted_stage_ids: stageIdsToDelete,
         delete_with_leads: deleteWithLeads,
         moved_to_stage_id: targetStage?.id || null
       }
