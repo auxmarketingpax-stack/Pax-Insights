@@ -14431,7 +14431,7 @@
     const matchingStages = getStagesForSubfunnel(normalizedSubfunnelId).filter((stage) =>
       normalizeComparisonText(stage?.name || "") === normalizedStageName
     );
-    if (matchingStages.length <= 1) return 0;
+    if (!matchingStages.length) return 0;
 
     const leadCountByStageId = new Map();
     state.leads.forEach((lead) => {
@@ -14443,6 +14443,7 @@
     if (removeAllWhenNoLeads && totalLeadCount === 0) {
       return removeStagesByIds(matchingStages.map((stage) => stage.id));
     }
+    if (matchingStages.length <= 1) return 0;
 
     const keeper = keepStageId
       ? matchingStages.find((stage) => String(stage?.id || "").trim() === keepStageId)
