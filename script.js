@@ -13655,46 +13655,57 @@
         const stageId = String(els.stageId.value || "").trim();
         const before = state.stages.find((s) => s.id === stageId);
         const previousAssignedSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
+        const matchingTargetStage = findMatchingStageInSubfunnelByName(payload.name, selectedSubfunnelId, stageId);
         const leadIdsInStage = state.leads
           .filter((lead) => String(lead.stage_id || "").trim() === stageId)
           .map((lead) => lead.id)
           .filter(Boolean);
 
-        const { error } = await state.supabase
-          .from("stages")
-          .update({
-            name: payload.name,
-            color: payload.color,
-            stage_type: payload.stage_type,
-            custom_stage_type: payload.custom_stage_type,
-            position: payload.position
-          })
-          .eq("id", stageId);
-        if (error) return alert(`Erro no Supabase: ${error.message}`);
+        if (before && matchingTargetStage) {
+          await mergeStageIntoExistingTarget({
+            sourceStage: before,
+            targetStage: matchingTargetStage,
+            targetSubfunnelId: selectedSubfunnelId,
+            payload
+          });
+        } else {
 
-        assignStageToSubfunnel(stageId, selectedSubfunnelId, { deferSync: true });
-        leadIdsInStage.forEach((leadId) => assignLeadToSubfunnel(leadId, selectedSubfunnelId, { deferSync: true }));
-        state.suppressFunnelSync = true;
-        writeStoredFunnelWorkspace();
+          const { error } = await state.supabase
+            .from("stages")
+            .update({
+              name: payload.name,
+              color: payload.color,
+              stage_type: payload.stage_type,
+              custom_stage_type: payload.custom_stage_type,
+              position: payload.position
+            })
+            .eq("id", stageId);
+          if (error) return alert(`Erro no Supabase: ${error.message}`);
 
-        if (state.funnelDataLoadedFromSupabase) {
-          await persistStageAssignmentToSupabase(stageId, selectedSubfunnelId);
-          if (leadIdsInStage.length) {
-            await persistLeadAssignmentsToSupabase(leadIdsInStage, selectedSubfunnelId);
+          assignStageToSubfunnel(stageId, selectedSubfunnelId, { deferSync: true });
+          leadIdsInStage.forEach((leadId) => assignLeadToSubfunnel(leadId, selectedSubfunnelId, { deferSync: true }));
+          state.suppressFunnelSync = true;
+          writeStoredFunnelWorkspace();
+
+          if (state.funnelDataLoadedFromSupabase) {
+            await persistStageAssignmentToSupabase(stageId, selectedSubfunnelId);
+            if (leadIdsInStage.length) {
+              await persistLeadAssignmentsToSupabase(leadIdsInStage, selectedSubfunnelId);
+            }
+            if (previousAssignedSubfunnelId !== selectedSubfunnelId) {
+              notifyLiveSyncChange("funnel-workspace");
+            }
           }
-          if (previousAssignedSubfunnelId !== selectedSubfunnelId) {
-            notifyLiveSyncChange("funnel-workspace");
-          }
+
+          await logChange("update", "stage", stageId, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
+            before,
+            after: {
+              ...payload,
+              previous_subfunnel_id: previousAssignedSubfunnelId || null,
+              subfunnel_id: selectedSubfunnelId
+            }
+          });
         }
-
-        await logChange("update", "stage", stageId, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
-          before,
-          after: {
-            ...payload,
-            previous_subfunnel_id: previousAssignedSubfunnelId || null,
-            subfunnel_id: selectedSubfunnelId
-          }
-        });
       } else {
         const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
         if (error) return alert(`Erro no Supabase: ${error.message}`);
@@ -14086,6 +14097,135 @@
     state.stages.push(normalizedStage);
     if (data?.id) assignStageToSubfunnel(data.id, subfunnelId, { deferSync: options.deferSync === true });
     return normalizedStage;
+  }
+
+  function findMatchingStageInSubfunnelByName(stageName, subfunnelId, excludeStageId = "") {
+    const normalizedName = normalizeComparisonText(stageName || "");
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedExcludeStageId = String(excludeStageId || "").trim();
+    if (!normalizedName || !normalizedSubfunnelId) return null;
+
+    return getStagesForSubfunnel(normalizedSubfunnelId).find((stage) =>
+      String(stage?.id || "").trim() !== normalizedExcludeStageId
+      && normalizeComparisonText(stage?.name || "") === normalizedName
+    ) || null;
+  }
+
+  async function deleteStageAssignmentFromSupabase(stageId) {
+    const normalizedStageId = String(stageId || "").trim();
+    if (!normalizedStageId || !state.supabase) return;
+    const { error } = await state.supabase
+      .from("crm_stage_subfunnel_assignments")
+      .delete()
+      .eq("stage_id", normalizedStageId);
+    if (error && !isMissingRelationError(error)) throw error;
+  }
+
+  async function mergeStageIntoExistingTarget({
+    sourceStage,
+    targetStage,
+    targetSubfunnelId,
+    payload = null
+  } = {}) {
+    if (!sourceStage?.id || !targetStage?.id || !targetSubfunnelId) return false;
+
+    const normalizedTargetSubfunnelId = String(targetSubfunnelId || "").trim();
+    const nextTargetPayload = payload ? {
+      name: normalizeStageName(payload.name || targetStage.name || sourceStage.name || "Pipeline"),
+      color: sanitizeHexColor(payload.color || targetStage.color || sourceStage.color),
+      stage_type: ["andamento", "fechado", "cancelado", "espera", "personalizado"].includes(payload.stage_type)
+        ? payload.stage_type
+        : (targetStage.stage_type || sourceStage.stage_type || "andamento"),
+      custom_stage_type: payload.stage_type === "personalizado"
+        ? (payload.custom_stage_type || targetStage.custom_stage_type || sourceStage.custom_stage_type || null)
+        : null
+    } : null;
+
+    if (nextTargetPayload) {
+      const { error: updateTargetError } = await state.supabase
+        .from("stages")
+        .update(nextTargetPayload)
+        .eq("id", targetStage.id);
+      if (updateTargetError) throw updateTargetError;
+    }
+
+    const sourceLeadIds = state.leads
+      .filter((lead) => String(lead?.stage_id || "").trim() === String(sourceStage.id || "").trim())
+      .map((lead) => String(lead?.id || "").trim())
+      .filter(Boolean);
+
+    for (const chunk of chunkArray(sourceLeadIds, 200)) {
+      const { error: moveLeadError } = await state.supabase
+        .from("leads")
+        .update({ stage_id: targetStage.id })
+        .in("id", chunk);
+      if (moveLeadError) throw moveLeadError;
+    }
+
+    if (sourceLeadIds.length) {
+      await persistLeadAssignmentsToSupabase(sourceLeadIds, normalizedTargetSubfunnelId);
+    }
+
+    const sourceReminder = getStageReminderConfig(sourceStage.id);
+    const targetReminder = getStageReminderConfig(targetStage.id);
+    const shouldCopyReminder = Boolean(sourceReminder && !targetReminder);
+    if (shouldCopyReminder) {
+      await persistStageReminderConfigToSupabase(targetStage.id, sourceReminder);
+    }
+
+    const { error: deleteStageError } = await state.supabase
+      .from("stages")
+      .delete()
+      .eq("id", sourceStage.id);
+    if (deleteStageError) throw deleteStageError;
+
+    await deleteStageAssignmentFromSupabase(sourceStage.id);
+    await persistStageReminderConfigToSupabase(sourceStage.id, null);
+
+    const normalizedTargetStage = normalizeStage({
+      ...targetStage,
+      ...(nextTargetPayload || {})
+    });
+
+    state.leads = state.leads.map((lead) => {
+      if (!sourceLeadIds.includes(String(lead?.id || "").trim())) return lead;
+      return normalizeLead({ ...lead, stage_id: targetStage.id });
+    });
+    state.stages = state.stages
+      .filter((stage) => stage.id !== sourceStage.id)
+      .map((stage) => (stage.id === targetStage.id ? normalizedTargetStage : stage));
+
+    if (state.funnelWorkspace?.stageAssignments) {
+      delete state.funnelWorkspace.stageAssignments[sourceStage.id];
+      state.funnelWorkspace.stageAssignments[targetStage.id] = normalizedTargetSubfunnelId;
+    }
+    if (state.funnelWorkspace?.stageReminderConfigs) {
+      delete state.funnelWorkspace.stageReminderConfigs[sourceStage.id];
+      if (shouldCopyReminder) {
+        state.funnelWorkspace.stageReminderConfigs[targetStage.id] = sourceReminder;
+      }
+    }
+    sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, normalizedTargetSubfunnelId, { deferSync: true }));
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+
+    await logChange(
+      "merge",
+      "stage",
+      targetStage.id,
+      `Pipeline "${sourceStage.name}" foi consolidada em "${normalizedTargetStage.name}" por ${getUserDisplayName()}.`,
+      {
+        source_stage_id: sourceStage.id,
+        source_stage_name: sourceStage.name,
+        target_stage_id: targetStage.id,
+        target_stage_name: normalizedTargetStage.name,
+        target_subfunnel_id: normalizedTargetSubfunnelId,
+        moved_lead_count: sourceLeadIds.length
+      }
+    );
+
+    notifyLiveSyncChange("funnel-workspace");
+    return true;
   }
 
   async function ensureFallbackStageForStageDelete(stage) {
