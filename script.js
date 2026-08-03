@@ -5158,6 +5158,7 @@
       return;
     }
     if (state.funnelDataLoadedFromSupabase) {
+      markLocalMutationCooldown(1800);
       queueFunnelWorkspaceSync();
     }
   }
@@ -12153,6 +12154,7 @@
   async function submitFunnelGroupForm(event) {
     event.preventDefault();
     if (!canManageAdminAreas() || !state.funnelWorkspace) return;
+    const previousWorkspace = JSON.parse(JSON.stringify(state.funnelWorkspace || getDefaultFunnelWorkspace()));
 
     const name = normalizeSpacing(els.funnelGroupName?.value || "");
     if (!name) {
@@ -12192,9 +12194,24 @@
       state.funnelWorkspace.groups.push(nextGroup);
     }
 
+    state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
+    try {
+      await persistFunnelWorkspaceToSupabase();
+    } catch (error) {
+      state.funnelWorkspace = previousWorkspace;
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+      alert(`Erro ao salvar grupo: ${formatSupabaseError(error)}`);
+      return;
+    }
+
     closeFunnelGroupModal();
-    renderAll();
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "group-save",
+      cooldownMs: 1800
+    });
   }
 
   function toggleFunnelGroup(groupId) {
@@ -12626,6 +12643,7 @@
 
   async function submitFunnelForm(event) {
     event.preventDefault();
+    const previousWorkspace = JSON.parse(JSON.stringify(state.funnelWorkspace || getDefaultFunnelWorkspace()));
 
     const modalContext = state.funnelModalContext || { mode: "create" };
     const name = String(els.funnelName?.value || "").trim();
@@ -12676,9 +12694,23 @@
         return;
       }
       targetFunnel.subfunnels = [...(targetFunnel.subfunnels || []), { id: createSubfunnelId(), name: subfunnelNames[0] }];
+      state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
+      try {
+        await persistFunnelWorkspaceToSupabase();
+      } catch (error) {
+        state.funnelWorkspace = previousWorkspace;
+        state.suppressFunnelSync = true;
+        writeStoredFunnelWorkspace();
+        alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
+        return;
+      }
       closeFunnelModal();
-      renderAll();
+      finalizeLocalMutation({
+        notifyScope: "funnel-workspace",
+        refreshReason: "subfunnel-create",
+        cooldownMs: 1800
+      });
       return;
     }
 
@@ -12692,9 +12724,23 @@
       targetFunnel.subfunnels = (targetFunnel.subfunnels || []).map((item) => (
         item.id === targetSubfunnel.id ? { ...item, name: subfunnelNames[0] } : item
       ));
+      state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
+      try {
+        await persistFunnelWorkspaceToSupabase();
+      } catch (error) {
+        state.funnelWorkspace = previousWorkspace;
+        state.suppressFunnelSync = true;
+        writeStoredFunnelWorkspace();
+        alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
+        return;
+      }
       closeFunnelModal();
-      renderAll();
+      finalizeLocalMutation({
+        notifyScope: "funnel-workspace",
+        refreshReason: "subfunnel-edit",
+        cooldownMs: 1800
+      });
       return;
     }
 
@@ -12759,10 +12805,25 @@
       state.activeSubfunnelId = null;
     }
 
+    state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
+    try {
+      await persistFunnelWorkspaceToSupabase();
+    } catch (error) {
+      state.funnelWorkspace = previousWorkspace;
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+      alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
+      return;
+    }
+
     closeFunnelModal();
     bindView("funil", { resetFunnelDetail: false });
-    renderAll();
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "funnel-save",
+      cooldownMs: 1800
+    });
   }
 
   function renderAll() {
