@@ -477,6 +477,7 @@
     liveSyncPollTimer: null,
     liveSyncLocalMutationUntil: 0,
     liveSyncLocalMutationTimer: null,
+    lastSharedFunnelMetaSignature: "",
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -1146,6 +1147,8 @@
   const LIVE_SYNC_SCOPE_KEY = "__paxLiveSyncScope";
   const LIVE_SYNC_NOTIFIED_KEY = "__paxLiveSyncNotified";
   const LIVE_SYNC_DECORATED_KEY = "__paxLiveSyncDecorated";
+  const SHARED_FUNNEL_META_ENTITY_TYPE = "crm_funnel_workspace_meta";
+  const SHARED_FUNNEL_META_ENTITY_ID = "shared";
 
   function resolveLiveSyncScope(tableName = "") {
     const normalized = String(tableName || "").trim().toLowerCase();
@@ -1844,6 +1847,12 @@
   }
 
   function getFunnelOfficialDepartmentId(funnel = null) {
+    const explicitOwnerDepartmentId = String(
+      funnel?.owner_department_id
+      || funnel?.ownerDepartmentId
+      || ""
+    ).trim();
+    if (explicitOwnerDepartmentId) return explicitOwnerDepartmentId;
     const editPermission = getFunnelDepartmentPermissions(funnel).find((item) => item.access_level === FUNNEL_ACCESS_LEVEL.EDIT);
     return String(editPermission?.department_id || "").trim();
   }
@@ -2072,7 +2081,10 @@
 
     const group = getGroupById(funnel.group_id);
     if (!group) return true;
-    return canViewGroupItem(group, profile);
+    if (canViewGroupItem(group, profile)) return true;
+
+    const funnelAccessLevel = getFunnelAccessLevelForProfile(funnel, profile);
+    return funnelAccessLevel === FUNNEL_ACCESS_LEVEL.VIEW || funnelAccessLevel === FUNNEL_ACCESS_LEVEL.EDIT;
   }
 
   function canViewFunnelItem(funnel = null, profile = state.profile) {
@@ -3438,6 +3450,16 @@
         }
       );
     });
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "change_history" },
+      (payload) => {
+        const entityType = String(payload?.new?.entity_type || payload?.old?.entity_type || "").trim();
+        const entityId = String(payload?.new?.entity_id || payload?.old?.entity_id || "").trim();
+        if (entityType !== SHARED_FUNNEL_META_ENTITY_TYPE || entityId !== SHARED_FUNNEL_META_ENTITY_ID) return;
+        scheduleLiveDataRefresh("realtime:shared-funnel-meta", { immediate: true });
+      }
+    );
     channel.on(
       "broadcast",
       { event: "crm-sync" },
@@ -5060,32 +5082,19 @@
   }
 
   function getDefaultFunnelWorkspace() {
-    const defaultFunnelId = createFunnelId();
-    const defaultCaptacaoId = createSubfunnelId();
-    const defaultFechamentoId = createSubfunnelId();
     return {
       groups: [],
-      funnels: [
-        {
-          id: defaultFunnelId,
-          name: "Operacao Atual",
-          category: "B2C",
-          visibility_scope: "all",
-          visibility_access_level: FUNNEL_ACCESS_LEVEL.VIEW,
-          department_permissions: [],
-          department_ids: [],
-          subfunnels: [
-            { id: defaultCaptacaoId, name: "Captacao" },
-            { id: defaultFechamentoId, name: "Fechamento" }
-          ],
-          created_at: new Date().toISOString(),
-          is_default: true
-        }
-      ],
+      funnels: [],
       stageAssignments: {},
       leadAssignments: {},
       stageReminderConfigs: {}
     };
+  }
+
+  function isLegacyPlaceholderFunnel(funnel = null) {
+    if (!funnel || typeof funnel !== "object") return false;
+    const compareKey = normalizeComparisonText(funnel.name || "").replace(/\s+/g, "");
+    return compareKey === "operacaoatual" || Boolean(funnel.is_default);
   }
 
   function readStoredFunnelWorkspace() {
@@ -5491,6 +5500,134 @@
       .filter((item) => item.name);
   }
 
+  function normalizeSharedFunnelWorkspaceMeta(payload = null) {
+    const source = payload && typeof payload === "object" ? payload : {};
+    const groups = normalizeStoredFunnelGroups(source.groups || []);
+    const funnelsById = new Map();
+
+    (Array.isArray(source.funnels) ? source.funnels : []).forEach((item) => {
+      const id = String(item?.id || "").trim();
+      if (!id) return;
+      funnelsById.set(id, {
+        id,
+        group_id: String(item?.group_id || item?.groupId || "").trim() || null,
+        owner_department_id: String(item?.owner_department_id || item?.ownerDepartmentId || "").trim() || null
+      });
+    });
+
+    return {
+      version: Number(source.version || 1) || 1,
+      groups,
+      funnels: [...funnelsById.values()].sort((a, b) => String(a.id).localeCompare(String(b.id), "pt-BR"))
+    };
+  }
+
+  function buildSharedFunnelWorkspaceMetaSnapshot(workspace = state.funnelWorkspace) {
+    const normalizedWorkspace = workspace && typeof workspace === "object"
+      ? workspace
+      : getDefaultFunnelWorkspace();
+
+    const groups = normalizeStoredFunnelGroups(normalizedWorkspace.groups || [])
+      .map((group) => {
+        const departmentPermissions = getGroupDepartmentPermissions(group);
+        return {
+          id: group.id,
+          name: group.name,
+          category: group.category,
+          owner_department_id: String(group.owner_department_id || "").trim() || null,
+          department_permissions: departmentPermissions,
+          department_ids: departmentPermissions.map((item) => item.department_id),
+          collapsed: Boolean(group.collapsed),
+          created_by: group.created_by || null,
+          created_at: group.created_at || null
+        };
+      })
+      .sort((a, b) => (
+        String(a.category || "").localeCompare(String(b.category || ""), "pt-BR")
+        || String(a.name || "").localeCompare(String(b.name || ""), "pt-BR")
+        || String(a.id || "").localeCompare(String(b.id || ""), "pt-BR")
+      ));
+
+    const funnels = (Array.isArray(normalizedWorkspace.funnels) ? normalizedWorkspace.funnels : [])
+      .filter((funnel) => !isLegacyPlaceholderFunnel(funnel))
+      .map((funnel) => ({
+        id: String(funnel?.id || "").trim(),
+        group_id: String(funnel?.group_id || funnel?.groupId || "").trim() || null,
+        owner_department_id: String(
+          funnel?.owner_department_id
+          || funnel?.ownerDepartmentId
+          || getFunnelOfficialDepartmentId(funnel)
+          || ""
+        ).trim() || null
+      }))
+      .filter((item) => item.id)
+      .sort((a, b) => String(a.id).localeCompare(String(b.id), "pt-BR"));
+
+    return {
+      version: 1,
+      groups,
+      funnels
+    };
+  }
+
+  function getSharedFunnelWorkspaceMetaSignature(payload = null) {
+    return JSON.stringify(normalizeSharedFunnelWorkspaceMeta(
+      payload && typeof payload === "object" && ("groups" in payload || "funnels" in payload || "version" in payload)
+        ? payload
+        : buildSharedFunnelWorkspaceMetaSnapshot(payload)
+    ));
+  }
+
+  async function loadSharedFunnelWorkspaceMetaFromSupabase() {
+    if (!state.supabase) return null;
+
+    const { data, error } = await state.supabase
+      .from("change_history")
+      .select("payload, created_at")
+      .eq("entity_type", SHARED_FUNNEL_META_ENTITY_TYPE)
+      .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      console.error("Erro ao carregar metadados compartilhados dos funis:", error);
+      return null;
+    }
+
+    const payload = normalizeSharedFunnelWorkspaceMeta(data?.[0]?.payload || null);
+    return {
+      payload,
+      signature: getSharedFunnelWorkspaceMetaSignature(payload),
+      created_at: data?.[0]?.created_at || null
+    };
+  }
+
+  async function persistSharedFunnelWorkspaceMetaToSupabase(workspace = state.funnelWorkspace) {
+    if (!state.supabase || !state.currentUser) return false;
+
+    const payload = buildSharedFunnelWorkspaceMetaSnapshot(workspace);
+    const signature = getSharedFunnelWorkspaceMetaSignature(payload);
+    if (signature === state.lastSharedFunnelMetaSignature) return false;
+
+    const row = {
+      action: "sync",
+      entity_type: SHARED_FUNNEL_META_ENTITY_TYPE,
+      entity_id: SHARED_FUNNEL_META_ENTITY_ID,
+      description: "Sincronizou grupos, departamentos e responsaveis oficiais dos funis.",
+      payload,
+      user_id: state.currentUser.id,
+      user_name: getUserDisplayName(),
+      user_email: state.currentUser.email
+    };
+
+    const { error } = await state.supabase.from("change_history").insert([row]);
+    if (error) throw error;
+
+    state.lastSharedFunnelMetaSignature = signature;
+    state.historyLoaded = false;
+    return true;
+  }
+
   function getFallbackSubfunnelId(workspace = state.funnelWorkspace) {
     return workspace?.funnels?.find((item) => item.category === "B2C")?.subfunnels?.[0]?.id
       || workspace?.funnels?.[0]?.subfunnels?.[0]?.id
@@ -5616,7 +5753,10 @@
   function getFunnelGroupsByCategory(category) {
     return (state.funnelWorkspace?.groups || [])
       .filter((item) => item.category === category)
-      .filter((item) => canViewGroupItem(item))
+      .filter((item) => {
+        if (canViewGroupItem(item)) return true;
+        return getFunnelsForGroup(item.id).some((funnel) => canViewFunnelItem(funnel));
+      })
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
   }
 
@@ -5917,6 +6057,8 @@
     const stageAssignmentRows = Array.isArray(rows.stageAssignments) ? rows.stageAssignments : [];
     const leadAssignmentRows = Array.isArray(rows.leadAssignments) ? rows.leadAssignments : [];
     const stageReminderRows = Array.isArray(rows.stageReminders) ? rows.stageReminders : [];
+    const sharedMeta = normalizeSharedFunnelWorkspaceMeta(rows.sharedMeta || null);
+    const sharedMetaFunnelsById = new Map((sharedMeta.funnels || []).map((item) => [String(item.id || ""), item]));
 
     const permissionsByFunnel = new Map();
     permissionRows.forEach((row) => {
@@ -5944,21 +6086,37 @@
     const funnels = funnelRows
       .filter((row) => !row.archived_at)
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"))
-      .map((row) => ({
-        id: row.id || createFunnelId(),
-        name: String(row.name || "Novo funil").trim(),
-        category: FUNNEL_CATEGORIES.includes(String(row.category || "").trim()) ? String(row.category).trim() : "B2C",
-        visibility_scope: String(row.visibility_scope || "all"),
-        visibility_access_level: getFunnelGlobalAccessLevelValue(row.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
-        department_permissions: normalizeFunnelDepartmentPermissions(permissionsByFunnel.get(String(row.id || "")) || []),
-        department_ids: normalizeFunnelDepartmentPermissions(permissionsByFunnel.get(String(row.id || "")) || []).map((item) => item.department_id),
-        created_by: row.created_by || null,
-        created_at: row.created_at || new Date().toISOString(),
-        is_default: false,
-        subfunnels: (subfunnelsByFunnel.get(String(row.id || "")) || [])
-          .sort((a, b) => a.position - b.position)
-          .map((item) => ({ id: item.id, name: item.name }))
-      }));
+      .map((row) => {
+        const funnelId = String(row.id || "");
+        const departmentPermissions = normalizeFunnelDepartmentPermissions(permissionsByFunnel.get(funnelId) || []);
+        const sharedMetaFunnel = sharedMetaFunnelsById.get(funnelId) || null;
+        const fallbackOwnerDepartmentId = String(
+          departmentPermissions.find((item) => item.access_level === FUNNEL_ACCESS_LEVEL.EDIT)?.department_id || ""
+        ).trim() || null;
+
+        return {
+          id: row.id || createFunnelId(),
+          name: String(row.name || "Novo funil").trim(),
+          category: FUNNEL_CATEGORIES.includes(String(row.category || "").trim()) ? String(row.category).trim() : "B2C",
+          group_id: String(sharedMetaFunnel?.group_id || row.group_id || "").trim() || null,
+          owner_department_id: String(
+            sharedMetaFunnel?.owner_department_id
+            || row.owner_department_id
+            || fallbackOwnerDepartmentId
+            || ""
+          ).trim() || null,
+          visibility_scope: String(row.visibility_scope || "all"),
+          visibility_access_level: getFunnelGlobalAccessLevelValue(row.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
+          department_permissions: departmentPermissions,
+          department_ids: departmentPermissions.map((item) => item.department_id),
+          created_by: row.created_by || null,
+          created_at: row.created_at || new Date().toISOString(),
+          is_default: false,
+          subfunnels: (subfunnelsByFunnel.get(funnelId) || [])
+            .sort((a, b) => a.position - b.position)
+            .map((item) => ({ id: item.id, name: item.name }))
+        };
+      });
 
     const stageAssignments = {};
     stageAssignmentRows.forEach((row) => {
@@ -5986,6 +6144,7 @@
     });
 
     return {
+      groups: sharedMeta.groups || [],
       funnels,
       stageAssignments,
       leadAssignments,
@@ -5994,13 +6153,14 @@
   }
 
   async function loadFunnelWorkspaceFromSupabase() {
-    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes] = await Promise.all([
+    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes, sharedMetaRes] = await Promise.all([
       state.supabase.from("crm_funnels").select("*").is("archived_at", null).order("created_at", { ascending: true }),
       state.supabase.from("crm_subfunnels").select("*").order("position", { ascending: true }),
       state.supabase.from("crm_funnel_department_permissions").select("*"),
       state.supabase.from("crm_stage_subfunnel_assignments").select("*"),
       state.supabase.from("crm_lead_subfunnel_assignments").select("*"),
-      state.supabase.from("crm_stage_reminder_configs").select("*")
+      state.supabase.from("crm_stage_reminder_configs").select("*"),
+      loadSharedFunnelWorkspaceMetaFromSupabase()
     ]);
 
     const responses = [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes];
@@ -6018,13 +6178,15 @@
     }
 
     state.funnelDataLoadedFromSupabase = true;
+    state.lastSharedFunnelMetaSignature = sharedMetaRes?.signature || "";
     return buildRemoteFunnelWorkspace({
       funnels: funnelsRes.data || [],
       subfunnels: subfunnelsRes.data || [],
       permissions: permissionsRes.data || [],
       stageAssignments: stageAssignmentsRes.data || [],
       leadAssignments: leadAssignmentsRes.data || [],
-      stageReminders: isMissingRelationError(stageRemindersRes?.error) ? [] : (stageRemindersRes.data || [])
+      stageReminders: isMissingRelationError(stageRemindersRes?.error) ? [] : (stageRemindersRes.data || []),
+      sharedMeta: sharedMetaRes?.payload || null
     });
   }
 
@@ -6271,6 +6433,12 @@
     if (existingFunnel) return existingFunnel;
 
     const group = ensureWorkspaceGroup(category, groupName, template);
+    const ownerDepartmentId = String(
+      template?.funnel?.owner_department_id
+      || template?.funnel?.ownerDepartmentId
+      || getFunnelOfficialDepartmentId(template?.funnel)
+      || ""
+    ).trim() || null;
     const departmentPermissions = normalizeFunnelDepartmentPermissions(
       template?.funnel?.department_permissions
       || template?.funnel?.department_ids
@@ -6281,6 +6449,7 @@
       name: String(funnelName || "").trim() || "Novo funil",
       category: String(category || "B2C").trim(),
       group_id: group?.id || null,
+      owner_department_id: ownerDepartmentId,
       visibility_scope: String(template?.funnel?.visibility_scope || "all").trim() || "all",
       visibility_access_level: getFunnelGlobalAccessLevelValue(template?.funnel?.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
       department_permissions: departmentPermissions,
@@ -6888,6 +7057,8 @@
       const { error } = await state.supabase.from("crm_funnels").delete().in("id", removedFunnelIds);
       if (error) throw error;
     }
+
+    await persistSharedFunnelWorkspaceMetaToSupabase(workspace);
   }
 
   async function persistStageReminderConfigToSupabase(stageId, nextReminder) {
@@ -7087,6 +7258,7 @@
           ...(localFunnel || {}),
           ...remoteFunnel,
           group_id: remoteFunnel?.group_id || remoteFunnel?.groupId || localFunnel?.group_id || localFunnel?.groupId || null,
+          owner_department_id: remoteFunnel?.owner_department_id || remoteFunnel?.ownerDepartmentId || localFunnel?.owner_department_id || localFunnel?.ownerDepartmentId || null,
           subfunnels: mergeRemoteSubfunnelsWithStored(localFunnel?.subfunnels || [], remoteFunnel?.subfunnels || [], deletedSubfunnelIds)
         };
       });
@@ -7120,7 +7292,9 @@
     const normalizedGroups = normalizeStoredFunnelGroups((remoteHasContent ? workspace.groups : (storedWorkspace?.groups || workspace.groups)) || []);
     const storedFunnels = Array.isArray(remoteHasContent ? workspace.funnels : storedWorkspace?.funnels) ? (remoteHasContent ? workspace.funnels : storedWorkspace.funnels) : [];
     const legacySubfunnelIdMap = new Map();
-    const normalizedFunnels = (workspace.funnels || []).map((item) => {
+    const normalizedFunnels = (workspace.funnels || [])
+      .filter((item) => !isLegacyPlaceholderFunnel(item))
+      .map((item) => {
       const storedMatch = storedFunnels.find((storedFunnel) => (
         (storedFunnel?.id && item?.id && String(storedFunnel.id) === String(item.id))
         || (
@@ -7149,6 +7323,14 @@
         name: String(item.name || "Novo funil").trim(),
         category: FUNNEL_CATEGORIES.includes(item.category) ? item.category : "B2C",
         group_id: String(item.group_id || item.groupId || storedMatch?.group_id || storedMatch?.groupId || "").trim() || null,
+        owner_department_id: String(
+          item.owner_department_id
+          || item.ownerDepartmentId
+          || storedMatch?.owner_department_id
+          || storedMatch?.ownerDepartmentId
+          || getFunnelOfficialDepartmentId(item)
+          || ""
+        ).trim() || null,
         visibility_scope: String(item.visibility_scope || "all"),
         visibility_access_level: getFunnelGlobalAccessLevelValue(item.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
         department_permissions: normalizeFunnelDepartmentPermissions(item.department_permissions || item.department_ids || []),
@@ -7159,10 +7341,6 @@
         is_default: Boolean(item.is_default)
       };
     });
-
-    if (!normalizedFunnels.length) {
-      normalizedFunnels.push(...getDefaultFunnelWorkspace().funnels);
-    }
 
     const validGroupIds = new Set(normalizedGroups.map((item) => item.id));
     normalizedFunnels.forEach((item) => {
@@ -7214,6 +7392,9 @@
       leadAssignments: dedupedWorkspace.leadAssignments,
       stageReminderConfigs: nextStageReminderConfigs
     };
+    if (state.lastSharedFunnelMetaSignature) {
+      state.lastSharedFunnelMetaSignature = getSharedFunnelWorkspaceMetaSignature(state.funnelWorkspace);
+    }
 
     if (!getFunnelById(state.activeFunnelId) || !canViewFunnelItem(getFunnelById(state.activeFunnelId))) {
       state.activeFunnelId = null;
@@ -12531,6 +12712,7 @@
       }
       existingFunnel.name = name;
       existingFunnel.category = category;
+      existingFunnel.owner_department_id = officialDepartmentId || null;
       existingFunnel.visibility_scope = visibilityScope;
       existingFunnel.visibility_access_level = visibilityAccessLevel;
       existingFunnel.department_permissions = selectedDepartmentPermissions;
@@ -12561,6 +12743,7 @@
         id: createFunnelId(),
         name,
         category,
+        owner_department_id: officialDepartmentId || null,
         visibility_scope: visibilityScope,
         visibility_access_level: visibilityAccessLevel,
         department_permissions: selectedDepartmentPermissions,
