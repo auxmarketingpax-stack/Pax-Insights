@@ -7101,6 +7101,150 @@
     await persistSharedFunnelWorkspaceMetaToSupabase(workspace);
   }
 
+  function buildFunnelRowPayload(funnel) {
+    if (!funnel?.id) return null;
+    return {
+      id: funnel.id,
+      name: funnel.name,
+      category: funnel.category,
+      visibility_scope: funnel.visibility_scope || "all",
+      visibility_access_level: getFunnelGlobalAccessLevelValue(funnel.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
+      created_by: funnel.created_by || state.currentUser?.id || null,
+      archived_at: null
+    };
+  }
+
+  function buildSubfunnelRowsForFunnels(funnels = []) {
+    return (Array.isArray(funnels) ? funnels : []).flatMap((funnel) =>
+      (funnel?.subfunnels || []).map((subfunnel, index) => ({
+        id: subfunnel.id,
+        funnel_id: funnel.id,
+        name: subfunnel.name,
+        position: index
+      }))
+    );
+  }
+
+  function buildPermissionRowsForFunnels(funnels = []) {
+    return (Array.isArray(funnels) ? funnels : []).flatMap((funnel) =>
+      getFunnelDepartmentPermissions(funnel).map((permission) => ({
+        funnel_id: funnel.id,
+        department_id: permission.department_id,
+        access_level: permission.access_level || FUNNEL_ACCESS_LEVEL.VIEW
+      }))
+    );
+  }
+
+  async function persistFunnelPermissionRowsToSupabase(funnelIds = [], permissionRows = []) {
+    const normalizedFunnelIds = normalizeIdList(funnelIds);
+    if (!normalizedFunnelIds.length) return;
+
+    const existingPermissionsRes = await state.supabase
+      .from("crm_funnel_department_permissions")
+      .select("funnel_id, department_id, access_level")
+      .in("funnel_id", normalizedFunnelIds);
+    if (existingPermissionsRes.error) throw existingPermissionsRes.error;
+
+    const existingPermissionsByFunnel = new Map();
+    (existingPermissionsRes.data || []).forEach((row) => {
+      const funnelId = String(row?.funnel_id || "").trim();
+      const departmentId = String(row?.department_id || "").trim();
+      if (!funnelId || !departmentId) return;
+      if (!existingPermissionsByFunnel.has(funnelId)) existingPermissionsByFunnel.set(funnelId, []);
+      existingPermissionsByFunnel.get(funnelId).push({
+        funnel_id: funnelId,
+        department_id: departmentId,
+        access_level: String(row?.access_level || FUNNEL_ACCESS_LEVEL.VIEW).trim().toLowerCase()
+      });
+    });
+
+    if (permissionRows.length) {
+      const { error: permissionUpsertError } = await state.supabase
+        .from("crm_funnel_department_permissions")
+        .upsert(permissionRows, { onConflict: "funnel_id,department_id" });
+      if (permissionUpsertError) throw permissionUpsertError;
+    }
+
+    for (const funnelId of normalizedFunnelIds) {
+      const nextDepartmentIds = new Set(
+        permissionRows
+          .filter((item) => String(item?.funnel_id || "").trim() === String(funnelId))
+          .map((item) => String(item?.department_id || "").trim())
+          .filter(Boolean)
+      );
+      const removedDepartmentIds = (existingPermissionsByFunnel.get(String(funnelId)) || [])
+        .map((item) => String(item.department_id || "").trim())
+        .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
+
+      if (!removedDepartmentIds.length) continue;
+      const { error: deletePermissionError } = await state.supabase
+        .from("crm_funnel_department_permissions")
+        .delete()
+        .eq("funnel_id", funnelId)
+        .in("department_id", removedDepartmentIds);
+      if (deletePermissionError) throw deletePermissionError;
+    }
+  }
+
+  async function persistFunnelsSubsetToSupabase(funnels = [], options = {}) {
+    if (!state.funnelDataLoadedFromSupabase || !state.currentUser || !state.supabase) return;
+
+    const includeSubfunnels = options.includeSubfunnels !== false;
+    const includePermissions = options.includePermissions !== false;
+    const normalizedFunnels = (Array.isArray(funnels) ? funnels : []).filter((item) => item?.id);
+    if (!normalizedFunnels.length) return;
+
+    const funnelRows = normalizedFunnels
+      .map((funnel) => buildFunnelRowPayload(funnel))
+      .filter(Boolean);
+    if (funnelRows.length) {
+      const { error } = await state.supabase.from("crm_funnels").upsert(funnelRows, { onConflict: "id" });
+      if (error) throw error;
+    }
+
+    const funnelIds = funnelRows.map((item) => String(item.id || "").trim()).filter(Boolean);
+    if (!funnelIds.length) return;
+
+    if (includeSubfunnels) {
+      const subfunnelRows = buildSubfunnelRowsForFunnels(normalizedFunnels);
+      const existingSubfunnelsRes = await state.supabase
+        .from("crm_subfunnels")
+        .select("id, funnel_id")
+        .in("funnel_id", funnelIds);
+      if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
+        throw existingSubfunnelsRes.error;
+      }
+
+      const nextSubfunnelIds = new Set(subfunnelRows.map((item) => String(item.id || "").trim()).filter(Boolean));
+      const removedSubfunnelIds = (existingSubfunnelsRes.data || [])
+        .filter((item) => funnelIds.includes(String(item?.funnel_id || "").trim()))
+        .map((item) => String(item?.id || "").trim())
+        .filter((id) => id && !nextSubfunnelIds.has(id));
+
+      if (removedSubfunnelIds.length) {
+        const { error } = await state.supabase.from("crm_subfunnels").delete().in("id", removedSubfunnelIds);
+        if (error) throw error;
+      }
+
+      if (subfunnelRows.length) {
+        const tempSubfunnelRows = subfunnelRows.map((row, index) => ({
+          ...row,
+          position: 1000000 + index
+        }));
+        const tempResult = await state.supabase.from("crm_subfunnels").upsert(tempSubfunnelRows, { onConflict: "id" });
+        if (tempResult.error) throw tempResult.error;
+
+        const finalResult = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+        if (finalResult.error) throw finalResult.error;
+      }
+    }
+
+    if (includePermissions) {
+      const permissionRows = buildPermissionRowsForFunnels(normalizedFunnels);
+      await persistFunnelPermissionRowsToSupabase(funnelIds, permissionRows);
+    }
+  }
+
   async function persistStageReminderConfigToSupabase(stageId, nextReminder) {
     const normalizedStageId = String(stageId || "").trim();
     if (!normalizedStageId || !state.supabase) return false;
@@ -12236,7 +12380,16 @@
     state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
     try {
-      await persistFunnelWorkspaceToSupabase();
+      const affectedFunnels = (state.funnelWorkspace?.funnels || []).filter((funnel) => (
+        String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
+      ));
+      if (affectedFunnels.length) {
+        await persistFunnelsSubsetToSupabase(affectedFunnels, {
+          includeSubfunnels: false,
+          includePermissions: false
+        });
+      }
+      await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
     } catch (error) {
       state.funnelWorkspace = previousWorkspace;
       state.suppressFunnelSync = true;
@@ -12736,7 +12889,11 @@
       state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
       try {
-        await persistFunnelWorkspaceToSupabase();
+        await persistFunnelsSubsetToSupabase([targetFunnel], {
+          includeSubfunnels: true,
+          includePermissions: false
+        });
+        await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
       } catch (error) {
         state.funnelWorkspace = previousWorkspace;
         state.suppressFunnelSync = true;
@@ -12766,7 +12923,11 @@
       state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
       try {
-        await persistFunnelWorkspaceToSupabase();
+        await persistFunnelsSubsetToSupabase([targetFunnel], {
+          includeSubfunnels: true,
+          includePermissions: false
+        });
+        await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
       } catch (error) {
         state.funnelWorkspace = previousWorkspace;
         state.suppressFunnelSync = true;
@@ -12847,7 +13008,15 @@
     state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
     try {
-      await persistFunnelWorkspaceToSupabase();
+      const targetFunnel = existingFunnel || state.funnelWorkspace.funnels[state.funnelWorkspace.funnels.length - 1] || null;
+      if (!targetFunnel) {
+        throw new Error("Funil não encontrado para persistência.");
+      }
+      await persistFunnelsSubsetToSupabase([targetFunnel], {
+        includeSubfunnels: true,
+        includePermissions: true
+      });
+      await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
     } catch (error) {
       state.funnelWorkspace = previousWorkspace;
       state.suppressFunnelSync = true;
