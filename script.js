@@ -478,6 +478,8 @@
     liveSyncLocalMutationUntil: 0,
     liveSyncLocalMutationTimer: null,
     lastSharedFunnelMetaSignature: "",
+    lastSharedFunnelGroupsSignature: "",
+    lastSharedFunnelLinksSignature: "",
     funnelWorkspace: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
@@ -1148,6 +1150,8 @@
   const LIVE_SYNC_NOTIFIED_KEY = "__paxLiveSyncNotified";
   const LIVE_SYNC_DECORATED_KEY = "__paxLiveSyncDecorated";
   const SHARED_FUNNEL_META_ENTITY_TYPE = "crm_funnel_workspace_meta";
+  const SHARED_FUNNEL_GROUPS_ENTITY_TYPE = "crm_funnel_groups_meta";
+  const SHARED_FUNNEL_LINKS_ENTITY_TYPE = "crm_funnel_links_meta";
   const SHARED_FUNNEL_META_ENTITY_ID = "shared";
 
   function resolveLiveSyncScope(tableName = "") {
@@ -3456,7 +3460,11 @@
       (payload) => {
         const entityType = String(payload?.new?.entity_type || payload?.old?.entity_type || "").trim();
         const entityId = String(payload?.new?.entity_id || payload?.old?.entity_id || "").trim();
-        if (entityType !== SHARED_FUNNEL_META_ENTITY_TYPE || entityId !== SHARED_FUNNEL_META_ENTITY_ID) return;
+        if (![
+          SHARED_FUNNEL_META_ENTITY_TYPE,
+          SHARED_FUNNEL_GROUPS_ENTITY_TYPE,
+          SHARED_FUNNEL_LINKS_ENTITY_TYPE
+        ].includes(entityType) || entityId !== SHARED_FUNNEL_META_ENTITY_ID) return;
         scheduleLiveDataRefresh("realtime:shared-funnel-meta", { immediate: true });
       }
     );
@@ -5571,6 +5579,22 @@
     };
   }
 
+  function buildSharedFunnelGroupsMetaSnapshot(workspace = state.funnelWorkspace) {
+    const snapshot = buildSharedFunnelWorkspaceMetaSnapshot(workspace);
+    return {
+      version: Number(snapshot.version || 1) || 1,
+      groups: normalizeStoredFunnelGroups(snapshot.groups || [])
+    };
+  }
+
+  function buildSharedFunnelLinksMetaSnapshot(workspace = state.funnelWorkspace) {
+    const snapshot = buildSharedFunnelWorkspaceMetaSnapshot(workspace);
+    return {
+      version: Number(snapshot.version || 1) || 1,
+      funnels: Array.isArray(snapshot.funnels) ? snapshot.funnels : []
+    };
+  }
+
   function getSharedFunnelWorkspaceMetaSignature(payload = null) {
     return JSON.stringify(normalizeSharedFunnelWorkspaceMeta(
       payload && typeof payload === "object" && ("groups" in payload || "funnels" in payload || "version" in payload)
@@ -5579,42 +5603,79 @@
     ));
   }
 
+  function getSharedFunnelGroupsMetaSignature(payload = null) {
+    const normalized = buildSharedFunnelGroupsMetaSnapshot(payload);
+    return JSON.stringify(normalized);
+  }
+
+  function getSharedFunnelLinksMetaSignature(payload = null) {
+    const normalized = buildSharedFunnelLinksMetaSnapshot(payload);
+    return JSON.stringify(normalized);
+  }
+
   async function loadSharedFunnelWorkspaceMetaFromSupabase() {
     if (!state.supabase) return null;
 
-    const { data, error } = await state.supabase
-      .from("change_history")
-      .select("payload, created_at")
-      .eq("entity_type", SHARED_FUNNEL_META_ENTITY_TYPE)
-      .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
-      .order("created_at", { ascending: false })
-      .limit(1);
+    const [legacyRes, groupsRes, linksRes] = await Promise.all([
+      state.supabase
+        .from("change_history")
+        .select("payload, created_at")
+        .eq("entity_type", SHARED_FUNNEL_META_ENTITY_TYPE)
+        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
+        .order("created_at", { ascending: false })
+        .limit(1),
+      state.supabase
+        .from("change_history")
+        .select("payload, created_at")
+        .eq("entity_type", SHARED_FUNNEL_GROUPS_ENTITY_TYPE)
+        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
+        .order("created_at", { ascending: false })
+        .limit(1),
+      state.supabase
+        .from("change_history")
+        .select("payload, created_at")
+        .eq("entity_type", SHARED_FUNNEL_LINKS_ENTITY_TYPE)
+        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
+        .order("created_at", { ascending: false })
+        .limit(1)
+    ]);
 
+    const error = legacyRes?.error || groupsRes?.error || linksRes?.error || null;
     if (error) {
       console.error("Erro ao carregar metadados compartilhados dos funis:", error);
       return null;
     }
 
-    const payload = normalizeSharedFunnelWorkspaceMeta(data?.[0]?.payload || null);
+    const legacyPayload = normalizeSharedFunnelWorkspaceMeta(legacyRes?.data?.[0]?.payload || null);
+    const groupsPayload = buildSharedFunnelGroupsMetaSnapshot(groupsRes?.data?.[0]?.payload || null);
+    const linksPayload = buildSharedFunnelLinksMetaSnapshot(linksRes?.data?.[0]?.payload || null);
+    const payload = normalizeSharedFunnelWorkspaceMeta({
+      version: 1,
+      groups: (groupsRes?.data?.length ? groupsPayload.groups : legacyPayload.groups) || [],
+      funnels: (linksRes?.data?.length ? linksPayload.funnels : legacyPayload.funnels) || []
+    });
+
     return {
       payload,
       signature: getSharedFunnelWorkspaceMetaSignature(payload),
-      created_at: data?.[0]?.created_at || null
+      groupsSignature: getSharedFunnelGroupsMetaSignature({ groups: payload.groups }),
+      linksSignature: getSharedFunnelLinksMetaSignature({ funnels: payload.funnels }),
+      created_at: groupsRes?.data?.[0]?.created_at || linksRes?.data?.[0]?.created_at || legacyRes?.data?.[0]?.created_at || null
     };
   }
 
-  async function persistSharedFunnelWorkspaceMetaToSupabase(workspace = state.funnelWorkspace) {
+  async function persistSharedFunnelGroupsMetaToSupabase(workspace = state.funnelWorkspace) {
     if (!state.supabase || !state.currentUser) return false;
 
-    const payload = buildSharedFunnelWorkspaceMetaSnapshot(workspace);
-    const signature = getSharedFunnelWorkspaceMetaSignature(payload);
-    if (signature === state.lastSharedFunnelMetaSignature) return false;
+    const payload = buildSharedFunnelGroupsMetaSnapshot(workspace);
+    const signature = getSharedFunnelGroupsMetaSignature(payload);
+    if (signature === state.lastSharedFunnelGroupsSignature) return false;
 
     const row = {
       action: "sync",
-      entity_type: SHARED_FUNNEL_META_ENTITY_TYPE,
+      entity_type: SHARED_FUNNEL_GROUPS_ENTITY_TYPE,
       entity_id: SHARED_FUNNEL_META_ENTITY_ID,
-      description: "Sincronizou grupos, departamentos e responsaveis oficiais dos funis.",
+      description: "Sincronizou grupos compartilhados dos funis.",
       payload,
       user_id: state.currentUser.id,
       user_name: getUserDisplayName(),
@@ -5624,6 +5685,43 @@
     const { error } = await state.supabase.from("change_history").insert([row]);
     if (error) throw error;
 
+    state.lastSharedFunnelGroupsSignature = signature;
+    return true;
+  }
+
+  async function persistSharedFunnelLinksMetaToSupabase(workspace = state.funnelWorkspace) {
+    if (!state.supabase || !state.currentUser) return false;
+
+    const payload = buildSharedFunnelLinksMetaSnapshot(workspace);
+    const signature = getSharedFunnelLinksMetaSignature(payload);
+    if (signature === state.lastSharedFunnelLinksSignature) return false;
+
+    const row = {
+      action: "sync",
+      entity_type: SHARED_FUNNEL_LINKS_ENTITY_TYPE,
+      entity_id: SHARED_FUNNEL_META_ENTITY_ID,
+      description: "Sincronizou vínculos compartilhados dos funis.",
+      payload,
+      user_id: state.currentUser.id,
+      user_name: getUserDisplayName(),
+      user_email: state.currentUser.email
+    };
+
+    const { error } = await state.supabase.from("change_history").insert([row]);
+    if (error) throw error;
+
+    state.lastSharedFunnelLinksSignature = signature;
+    return true;
+  }
+
+  async function persistSharedFunnelWorkspaceMetaToSupabase(workspace = state.funnelWorkspace) {
+    if (!state.supabase || !state.currentUser) return false;
+
+    const payload = buildSharedFunnelWorkspaceMetaSnapshot(workspace);
+    const signature = getSharedFunnelWorkspaceMetaSignature(payload);
+    if (signature === state.lastSharedFunnelMetaSignature) return false;
+    await persistSharedFunnelGroupsMetaToSupabase(payload);
+    await persistSharedFunnelLinksMetaToSupabase(payload);
     state.lastSharedFunnelMetaSignature = signature;
     state.historyLoaded = false;
     return true;
@@ -6180,6 +6278,8 @@
 
     state.funnelDataLoadedFromSupabase = true;
     state.lastSharedFunnelMetaSignature = sharedMetaRes?.signature || "";
+    state.lastSharedFunnelGroupsSignature = sharedMetaRes?.groupsSignature || "";
+    state.lastSharedFunnelLinksSignature = sharedMetaRes?.linksSignature || "";
     return buildRemoteFunnelWorkspace({
       funnels: funnelsRes.data || [],
       subfunnels: subfunnelsRes.data || [],
@@ -7578,6 +7678,8 @@
     };
     if (state.lastSharedFunnelMetaSignature) {
       state.lastSharedFunnelMetaSignature = getSharedFunnelWorkspaceMetaSignature(state.funnelWorkspace);
+      state.lastSharedFunnelGroupsSignature = getSharedFunnelGroupsMetaSignature(state.funnelWorkspace);
+      state.lastSharedFunnelLinksSignature = getSharedFunnelLinksMetaSignature(state.funnelWorkspace);
     }
 
     if (!getFunnelById(state.activeFunnelId) || !canViewFunnelItem(getFunnelById(state.activeFunnelId))) {
@@ -12355,6 +12457,7 @@
     ]);
 
     const existingGroup = getGroupById(els.funnelGroupId?.value || "");
+    const categoryChanged = Boolean(existingGroup) && String(existingGroup.category || "") !== String(category || "");
     const nextGroup = {
       id: existingGroup?.id || createFunnelGroupId(),
       name,
@@ -12380,16 +12483,18 @@
     state.suppressFunnelSync = true;
     writeStoredFunnelWorkspace();
     try {
-      const affectedFunnels = (state.funnelWorkspace?.funnels || []).filter((funnel) => (
-        String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
-      ));
+      const affectedFunnels = categoryChanged
+        ? (state.funnelWorkspace?.funnels || []).filter((funnel) => (
+            String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
+          ))
+        : [];
       if (affectedFunnels.length) {
         await persistFunnelsSubsetToSupabase(affectedFunnels, {
           includeSubfunnels: false,
           includePermissions: false
         });
       }
-      await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
+      await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
     } catch (error) {
       state.funnelWorkspace = previousWorkspace;
       state.suppressFunnelSync = true;
@@ -12845,12 +12950,12 @@
     const officialDepartmentId = (visibilityScope === "all" || visibilityScope === "departments")
       ? String(els.funnelOfficialDepartmentSelect?.value || "").trim()
       : "";
-    const selectedDepartmentPermissions = visibilityScope === "departments"
-      ? normalizeFunnelDepartmentPermissions([
+    const selectedDepartmentPermissions = visibilityScope === "owner"
+      ? []
+      : normalizeFunnelDepartmentPermissions([
           ...(officialDepartmentId ? [{ department_id: officialDepartmentId, access_level: FUNNEL_ACCESS_LEVEL.EDIT }] : []),
           ...getSelectedFunnelDepartmentPermissions()
-        ])
-      : (officialDepartmentId ? [{ department_id: officialDepartmentId, access_level: FUNNEL_ACCESS_LEVEL.EDIT }] : []);
+        ]);
     const selectedDepartmentIds = selectedDepartmentPermissions.map((item) => item.department_id);
     const editingId = String(els.funnelEditId?.value || "").trim();
     const existingFunnel = editingId ? getFunnelById(editingId) : null;
@@ -12893,7 +12998,6 @@
           includeSubfunnels: true,
           includePermissions: false
         });
-        await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
       } catch (error) {
         state.funnelWorkspace = previousWorkspace;
         state.suppressFunnelSync = true;
@@ -12927,7 +13031,6 @@
           includeSubfunnels: true,
           includePermissions: false
         });
-        await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
       } catch (error) {
         state.funnelWorkspace = previousWorkspace;
         state.suppressFunnelSync = true;
@@ -13016,7 +13119,7 @@
         includeSubfunnels: true,
         includePermissions: true
       });
-      await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
+      await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
     } catch (error) {
       state.funnelWorkspace = previousWorkspace;
       state.suppressFunnelSync = true;
