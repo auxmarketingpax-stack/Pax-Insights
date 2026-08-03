@@ -7025,11 +7025,50 @@
 
     const funnelIds = funnelRows.map((item) => item.id);
     if (funnelIds.length) {
-      const { error: deletePermissionError } = await state.supabase.from("crm_funnel_department_permissions").delete().in("funnel_id", funnelIds);
-      if (deletePermissionError) throw deletePermissionError;
+      const existingPermissionsRes = await state.supabase
+        .from("crm_funnel_department_permissions")
+        .select("funnel_id, department_id, access_level")
+        .in("funnel_id", funnelIds);
+      if (existingPermissionsRes.error) throw existingPermissionsRes.error;
+
+      const existingPermissionsByFunnel = new Map();
+      (existingPermissionsRes.data || []).forEach((row) => {
+        const funnelId = String(row?.funnel_id || "").trim();
+        const departmentId = String(row?.department_id || "").trim();
+        if (!funnelId || !departmentId) return;
+        if (!existingPermissionsByFunnel.has(funnelId)) existingPermissionsByFunnel.set(funnelId, []);
+        existingPermissionsByFunnel.get(funnelId).push({
+          funnel_id: funnelId,
+          department_id: departmentId,
+          access_level: String(row?.access_level || FUNNEL_ACCESS_LEVEL.VIEW).trim().toLowerCase()
+        });
+      });
+
       if (permissionRows.length) {
-        const { error: permissionError } = await state.supabase.from("crm_funnel_department_permissions").insert(permissionRows);
-        if (permissionError) throw permissionError;
+        const { error: permissionUpsertError } = await state.supabase
+          .from("crm_funnel_department_permissions")
+          .upsert(permissionRows, { onConflict: "funnel_id,department_id" });
+        if (permissionUpsertError) throw permissionUpsertError;
+      }
+
+      for (const funnelId of funnelIds) {
+        const nextDepartmentIds = new Set(
+          permissionRows
+            .filter((item) => String(item?.funnel_id || "").trim() === String(funnelId))
+            .map((item) => String(item?.department_id || "").trim())
+            .filter(Boolean)
+        );
+        const removedDepartmentIds = (existingPermissionsByFunnel.get(String(funnelId)) || [])
+          .map((item) => String(item.department_id || "").trim())
+          .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
+
+        if (!removedDepartmentIds.length) continue;
+        const { error: deletePermissionError } = await state.supabase
+          .from("crm_funnel_department_permissions")
+          .delete()
+          .eq("funnel_id", funnelId)
+          .in("department_id", removedDepartmentIds);
+        if (deletePermissionError) throw deletePermissionError;
       }
     }
 
