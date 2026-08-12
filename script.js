@@ -7741,6 +7741,60 @@
     writeStoredFunnelWorkspace();
   }
 
+  function applyLeadAssignmentsLocally(leadIds = [], subfunnelId) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedLeadIds = normalizeIdList(leadIds);
+    if (!normalizedLeadIds.length || !normalizedSubfunnelId || !state.funnelWorkspace) return new Map();
+
+    const previousAssignments = new Map();
+    normalizedLeadIds.forEach((leadId) => {
+      previousAssignments.set(leadId, String(state.funnelWorkspace?.leadAssignments?.[leadId] || "").trim() || null);
+      assignLeadToSubfunnel(leadId, normalizedSubfunnelId, { deferSync: true });
+    });
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+    return previousAssignments;
+  }
+
+  function restoreLeadAssignmentsLocally(previousAssignments = new Map()) {
+    if (!(previousAssignments instanceof Map) || !state.funnelWorkspace) return;
+
+    previousAssignments.forEach((subfunnelId, leadId) => {
+      const normalizedLeadId = String(leadId || "").trim();
+      const normalizedSubfunnelId = String(subfunnelId || "").trim();
+      if (!normalizedLeadId) return;
+      if (normalizedSubfunnelId) {
+        assignLeadToSubfunnel(normalizedLeadId, normalizedSubfunnelId, { deferSync: true });
+      } else if (state.funnelWorkspace?.leadAssignments) {
+        delete state.funnelWorkspace.leadAssignments[normalizedLeadId];
+      }
+    });
+
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+  }
+
+  async function persistLeadAssignmentsSafely(leadIds = [], subfunnelId, options = {}) {
+    const normalizedLeadIds = normalizeIdList(leadIds);
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    if (!normalizedLeadIds.length || !normalizedSubfunnelId) return false;
+
+    const previousAssignments = applyLeadAssignmentsLocally(normalizedLeadIds, normalizedSubfunnelId);
+
+    if (!state.funnelDataLoadedFromSupabase) return true;
+
+    try {
+      await persistLeadAssignmentsToSupabase(normalizedLeadIds, normalizedSubfunnelId);
+      if (options.notify !== false) {
+        notifyLiveSyncChange(options.notifyScope || "funnel-workspace");
+      }
+      return true;
+    } catch (error) {
+      restoreLeadAssignmentsLocally(previousAssignments);
+      throw error;
+    }
+  }
+
   function openFunnelHub(funnelId) {
     const funnel = getFunnelById(funnelId);
     if (!funnel) return;
@@ -12339,9 +12393,16 @@
     );
 
     if (isFunnelDetailActive()) {
-      importedRows.forEach((item) => {
-        if (item?.id) assignLeadToSubfunnel(item.id, state.activeSubfunnelId);
-      });
+      const importedLeadIds = importedRows.map((item) => item?.id).filter(Boolean);
+      if (importedLeadIds.length) {
+        try {
+          await persistLeadAssignmentsSafely(importedLeadIds, state.activeSubfunnelId, {
+            notifyScope: "funnel-workspace"
+          });
+        } catch (assignmentError) {
+          alert(`Os leads foram importados, mas não foi possível vincular ao subfunil atual: ${formatSupabaseError(assignmentError)}`);
+        }
+      }
     }
 
     alert(`${payload.length} lead(s) importado(s) com sucesso.`);
@@ -14461,7 +14522,6 @@
         `Lead "${payload.name}" foi atualizado por ${getUserDisplayName()}.`,
         { before: oldLead || null, after: payload }
       );
-      assignLeadToSubfunnel(els.leadId.value, selectedSubfunnelId);
       savedLeadRecord = {
         ...(oldLead || {}),
         ...payload,
@@ -14485,12 +14545,19 @@
         `Lead "${payload.name}" foi criado por ${getUserDisplayName()}.`,
         payload
       );
-      if (data?.id) assignLeadToSubfunnel(data.id, selectedSubfunnelId);
       savedLeadRecord = data ? { ...data, ...payload } : { ...payload, id: savedLeadId };
     }
 
     if (savedLeadRecord?.id) {
       upsertLeadLocally(savedLeadRecord);
+      try {
+        await persistLeadAssignmentsSafely([savedLeadRecord.id], selectedSubfunnelId, {
+          notifyScope: "funnel-workspace"
+        });
+      } catch (assignmentError) {
+        alert(`Lead salvo, mas não foi possível vincular o subfunil corretamente: ${formatSupabaseError(assignmentError)}`);
+        return;
+      }
     }
 
     closeLeadModal();
