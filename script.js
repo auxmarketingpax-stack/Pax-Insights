@@ -16805,6 +16805,70 @@
     return insertedIds;
   }
 
+  function buildStageDuplicatePayload(context = {}) {
+    return {
+      name: getNextStageDuplicateName(context.sourceStage?.name, context.targetSubfunnelId),
+      color: sanitizeHexColor(context.sourceStage?.color),
+      stage_type: context.sourceStage?.stage_type || "andamento",
+      custom_stage_type: context.sourceStage?.custom_stage_type || null,
+      position: state.stages.length,
+      created_by: state.currentUser?.id || context.sourceStage?.created_by || null
+    };
+  }
+
+  async function logStageDuplicateCreation(context = {}, createdStage = null) {
+    if (!createdStage?.id) return;
+    await logChange(
+      "duplicate",
+      "stage",
+      createdStage.id,
+      `Pipeline "${context.sourceStage.name}" foi duplicada por ${getUserDisplayName()} como "${createdStage.name}".`,
+      {
+        source_stage_id: context.sourceStage.id,
+        source_stage_name: context.sourceStage.name,
+        target_stage_id: createdStage.id,
+        target_stage_name: createdStage.name,
+        target_subfunnel_id: context.targetSubfunnelId,
+        duplicate_mode: context.duplicateMode
+      }
+    );
+  }
+
+  async function duplicateStageWithOptionalLeads(context = {}) {
+    const payload = buildStageDuplicatePayload(context);
+    const createdStage = await createStageForSubfunnel(payload, context.targetSubfunnelId, { deferSync: true });
+    await logStageDuplicateCreation(context, createdStage);
+
+    let duplicatedLeadIds = [];
+    if (context.duplicateMode === "stage_with_leads") {
+      duplicatedLeadIds = await duplicateStageLeads(context.sourceStage, createdStage, context.targetSubfunnelId, { deferSync: true });
+    }
+
+    return {
+      createdStage,
+      duplicatedLeadIds
+    };
+  }
+
+  async function persistStageDuplicateAssignments(context = {}, createdStage = null, duplicatedLeadIds = []) {
+    return persistWorkspaceAssignmentsSafely({
+      stageIds: createdStage?.id ? [createdStage.id] : [],
+      leadIds: duplicatedLeadIds,
+      subfunnelId: context.targetSubfunnelId,
+      notify: true,
+      notifyScope: "funnel-workspace"
+    });
+  }
+
+  function finalizeStageDuplicateMutation() {
+    closeStageDuplicateModal();
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-duplicate",
+      cooldownMs: 1500
+    });
+  }
+
   async function submitStageDuplicate(event) {
     event.preventDefault();
     if (!canManageStages()) {
@@ -16815,52 +16879,10 @@
     const context = collectStageDuplicateSubmissionContext();
     if (!validateStageDuplicateSubmissionContext(context)) return;
 
-    const targetName = getNextStageDuplicateName(context.sourceStage.name, context.targetSubfunnelId);
-    const payload = {
-      name: targetName,
-      color: sanitizeHexColor(context.sourceStage.color),
-      stage_type: context.sourceStage.stage_type || "andamento",
-      custom_stage_type: context.sourceStage.custom_stage_type || null,
-      position: state.stages.length,
-      created_by: state.currentUser?.id || context.sourceStage.created_by || null
-    };
-
     try {
-      const createdStage = await createStageForSubfunnel(payload, context.targetSubfunnelId, { deferSync: true });
-      await logChange(
-        "duplicate",
-        "stage",
-        createdStage.id,
-        `Pipeline "${context.sourceStage.name}" foi duplicada por ${getUserDisplayName()} como "${createdStage.name}".`,
-        {
-          source_stage_id: context.sourceStage.id,
-          source_stage_name: context.sourceStage.name,
-          target_stage_id: createdStage.id,
-          target_stage_name: createdStage.name,
-          target_subfunnel_id: context.targetSubfunnelId,
-          duplicate_mode: context.duplicateMode
-        }
-      );
-
-      let duplicatedLeadIds = [];
-      if (context.duplicateMode === "stage_with_leads") {
-        duplicatedLeadIds = await duplicateStageLeads(context.sourceStage, createdStage, context.targetSubfunnelId, { deferSync: true });
-      }
-
-      await persistWorkspaceAssignmentsSafely({
-        stageIds: [createdStage.id],
-        leadIds: duplicatedLeadIds,
-        subfunnelId: context.targetSubfunnelId,
-        notify: true,
-        notifyScope: "funnel-workspace"
-      });
-
-      closeStageDuplicateModal();
-      finalizeLocalMutation({
-        notifyScope: "funnel-workspace",
-        refreshReason: "stage-duplicate",
-        cooldownMs: 1500
-      });
+      const { createdStage, duplicatedLeadIds } = await duplicateStageWithOptionalLeads(context);
+      await persistStageDuplicateAssignments(context, createdStage, duplicatedLeadIds);
+      finalizeStageDuplicateMutation();
     } catch (error) {
       alert(`Erro ao duplicar pipeline: ${formatSupabaseError(error)}`);
     }
