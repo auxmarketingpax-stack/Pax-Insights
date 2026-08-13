@@ -4820,10 +4820,6 @@
     );
   }
 
-  function sortStagesCollection(items = []) {
-    return [...(Array.isArray(items) ? items : [])].sort((a, b) => Number(a?.position) - Number(b?.position));
-  }
-
   function sortStagesByStablePosition(items = []) {
     return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
       const positionA = Number(a?.position);
@@ -4833,6 +4829,10 @@
       if (safePositionA !== safePositionB) return safePositionA - safePositionB;
       return String(a?.id || "").localeCompare(String(b?.id || ""));
     });
+  }
+
+  function sortStagesCollection(items = []) {
+    return sortStagesByStablePosition(items);
   }
 
   function reorderListByIndex(items = [], currentIndex, targetIndex) {
@@ -6823,7 +6823,7 @@
 
   function buildRemoteFunnelWorkspace(rows = {}) {
     const funnelRows = Array.isArray(rows.funnels) ? rows.funnels : [];
-    const subfunnelRows = Array.isArray(rows.subfunnels) ? rows.subfunnels : [];
+    const subfunnelRows = stabilizeTransientSubfunnelRows(Array.isArray(rows.subfunnels) ? rows.subfunnels : []);
     const permissionRows = Array.isArray(rows.permissions) ? rows.permissions : [];
     const stageAssignmentRows = Array.isArray(rows.stageAssignments) ? rows.stageAssignments : [];
     const leadAssignmentRows = Array.isArray(rows.leadAssignments) ? rows.leadAssignments : [];
@@ -6884,7 +6884,14 @@
           created_at: row.created_at || new Date().toISOString(),
           is_default: false,
           subfunnels: (subfunnelsByFunnel.get(funnelId) || [])
-            .sort((a, b) => a.position - b.position)
+            .sort((a, b) => {
+              const positionA = Number(a?.position);
+              const positionB = Number(b?.position);
+              const safePositionA = Number.isFinite(positionA) ? positionA : Number.MAX_SAFE_INTEGER;
+              const safePositionB = Number.isFinite(positionB) ? positionB : Number.MAX_SAFE_INTEGER;
+              if (safePositionA !== safePositionB) return safePositionA - safePositionB;
+              return String(a?.id || "").localeCompare(String(b?.id || ""));
+            })
             .map((item) => ({ id: item.id, name: item.name }))
         };
       });
@@ -10554,6 +10561,105 @@
     return Number.isFinite(Number(value)) && Number(value) >= TRANSIENT_POSITION_BASE;
   }
 
+  function buildStagePositionFallbackMap(stageItems = []) {
+    const map = new Map();
+    sortStagesByStablePosition(stageItems).forEach((stage, index) => {
+      const stageId = String(stage?.id || "").trim();
+      if (!stageId) return;
+      const position = Number(stage?.position);
+      map.set(stageId, Number.isFinite(position) ? position : index);
+    });
+    return map;
+  }
+
+  function buildSubfunnelPositionFallbackMap(workspace = null) {
+    const map = new Map();
+    (workspace?.funnels || []).forEach((funnel) => {
+      const funnelId = String(funnel?.id || "").trim();
+      if (!funnelId) return;
+      (funnel?.subfunnels || []).forEach((subfunnel, index) => {
+        const subfunnelId = String(subfunnel?.id || "").trim();
+        if (!subfunnelId) return;
+        map.set(`${funnelId}:${subfunnelId}`, index);
+      });
+    });
+    return map;
+  }
+
+  function stabilizeTransientStageRows(stageRows = []) {
+    const rows = Array.isArray(stageRows) ? stageRows : [];
+    if (!rows.some((row) => isTransientRemotePosition(row?.position))) {
+      return rows;
+    }
+
+    const fallbackMap = new Map([
+      ...buildStagePositionFallbackMap(readStoredAppDataCache()?.stages || []),
+      ...buildStagePositionFallbackMap(state.stages || [])
+    ]);
+    let fallbackCursor = Math.max(
+      rows.reduce((max, row) => {
+        const position = Number(row?.position);
+        return !isTransientRemotePosition(position) && Number.isFinite(position) ? Math.max(max, position) : max;
+      }, -1),
+      ...fallbackMap.values(),
+      -1
+    ) + 1;
+
+    console.warn("Snapshot remoto de pipelines estabilizado durante persistência temporária.");
+    return rows.map((row) => {
+      if (!isTransientRemotePosition(row?.position)) return row;
+      const stageId = String(row?.id || "").trim();
+      const fallbackPosition = fallbackMap.get(stageId);
+      return {
+        ...row,
+        position: Number.isFinite(fallbackPosition) ? fallbackPosition : fallbackCursor++
+      };
+    });
+  }
+
+  function stabilizeTransientSubfunnelRows(subfunnelRows = []) {
+    const rows = Array.isArray(subfunnelRows) ? subfunnelRows : [];
+    if (!rows.some((row) => isTransientRemotePosition(row?.position))) {
+      return rows;
+    }
+
+    const fallbackMap = new Map([
+      ...buildSubfunnelPositionFallbackMap(readStoredFunnelWorkspace()),
+      ...buildSubfunnelPositionFallbackMap(state.funnelWorkspace)
+    ]);
+    const fallbackCursorByFunnel = new Map();
+
+    rows.forEach((row) => {
+      const funnelId = String(row?.funnel_id || "").trim();
+      if (!funnelId || isTransientRemotePosition(row?.position)) return;
+      const position = Number(row?.position);
+      const nextCursor = Math.max(fallbackCursorByFunnel.get(funnelId) ?? -1, Number.isFinite(position) ? position : -1) + 1;
+      fallbackCursorByFunnel.set(funnelId, nextCursor);
+    });
+
+    console.warn("Snapshot remoto de subfunis estabilizado durante persistência temporária.");
+    return rows.map((row) => {
+      if (!isTransientRemotePosition(row?.position)) return row;
+      const funnelId = String(row?.funnel_id || "").trim();
+      const subfunnelId = String(row?.id || "").trim();
+      const fallbackKey = `${funnelId}:${subfunnelId}`;
+      const fallbackPosition = fallbackMap.get(fallbackKey);
+      if (Number.isFinite(fallbackPosition)) {
+        return {
+          ...row,
+          position: fallbackPosition
+        };
+      }
+
+      const nextCursor = fallbackCursorByFunnel.get(funnelId) ?? 0;
+      fallbackCursorByFunnel.set(funnelId, nextCursor + 1);
+      return {
+        ...row,
+        position: nextCursor
+      };
+    });
+  }
+
   function hasTransientRemoteStagePositions(stageRows = []) {
     return (Array.isArray(stageRows) ? stageRows : []).some((row) => isTransientRemotePosition(row?.position));
   }
@@ -10989,22 +11095,8 @@
       return;
     }
 
-    if (hasTransientRemoteStagePositions(stagesRes.data || [])) {
-      console.warn("Snapshot remoto ignorado porque contém posições temporárias de pipeline.");
-      scheduleLiveDataRefresh("transient-stage-positions", { immediate: false });
-      return false;
-    }
-
-    const remoteSubfunnelRows = Array.isArray(remoteFunnelWorkspace?.funnels)
-      ? remoteFunnelWorkspace.funnels.flatMap((funnel) => funnel?.subfunnels || [])
-      : [];
-    if (hasTransientRemoteSubfunnelPositions(remoteSubfunnelRows)) {
-      console.warn("Snapshot remoto ignorado porque contém posições temporárias de subfunil.");
-      scheduleLiveDataRefresh("transient-subfunnel-positions", { immediate: false });
-      return false;
-    }
-
-    state.stages = (stagesRes.data || []).map(normalizeStage);
+    const stabilizedStageRows = stabilizeTransientStageRows(stagesRes.data || []);
+    state.stages = stabilizedStageRows.map(normalizeStage);
     const rawLeads = leadsRes.data || [];
     const missingSocialSourceLeadIds = rawLeads
       .filter((lead) => !normalizeSpacing(lead?.social_source || ""))
