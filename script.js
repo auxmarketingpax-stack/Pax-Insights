@@ -14173,26 +14173,41 @@
     closeModalOverlay(els.modalOverlay);
   }
 
-  function openStageModal(stage = null) {
-    closeAllModals();
-    els.stageForm.reset();
-    els.stageId.value = stage?.id || "";
-    els.stageModalTitle.textContent = stage ? "Editar pipeline" : "Adicionar pipeline";
-    els.saveStageBtn.textContent = stage ? "Salvar alterações" : "Adicionar";
-    els.stageName.value = stage?.name || "";
+  function getStageModalContext(stage = null) {
     const assignedSubfunnelId = stage
       ? state.funnelWorkspace?.stageAssignments?.[stage.id]
       : (state.activeSubfunnelId || state.structureSubfunnelId);
     const assignedSubfunnel = getSubfunnelById(assignedSubfunnelId);
-    renderStageModalScopeSelectors(assignedSubfunnelId);
-    if (assignedSubfunnel?.funnel_id && els.stageFunnelSelect) {
-      els.stageFunnelSelect.value = assignedSubfunnel.funnel_id;
+    return {
+      assignedSubfunnelId,
+      assignedSubfunnel,
+      modalTitle: stage ? "Editar pipeline" : "Adicionar pipeline",
+      saveLabel: stage ? "Salvar alterações" : "Adicionar",
+      stageTypeValue: stage?.custom_stage_type ? `custom:${stage.custom_stage_type}` : (stage?.stage_type || "andamento")
+    };
+  }
+
+  function populateStageModalFields(stage = null, modalContext = {}) {
+    els.stageId.value = stage?.id || "";
+    els.stageModalTitle.textContent = modalContext.modalTitle;
+    els.saveStageBtn.textContent = modalContext.saveLabel;
+    els.stageName.value = stage?.name || "";
+    renderStageModalScopeSelectors(modalContext.assignedSubfunnelId);
+    if (modalContext.assignedSubfunnel?.funnel_id && els.stageFunnelSelect) {
+      els.stageFunnelSelect.value = modalContext.assignedSubfunnel.funnel_id;
     }
-    if (assignedSubfunnelId && els.stageSubfunnelSelect) {
-      els.stageSubfunnelSelect.value = assignedSubfunnelId;
+    if (modalContext.assignedSubfunnelId && els.stageSubfunnelSelect) {
+      els.stageSubfunnelSelect.value = modalContext.assignedSubfunnelId;
     }
     els.stageColor.value = sanitizeHexColor(stage?.color);
-    refreshStageTypeOptions(stage?.custom_stage_type ? `custom:${stage.custom_stage_type}` : (stage?.stage_type || "andamento"), stage?.custom_stage_type || "");
+    refreshStageTypeOptions(modalContext.stageTypeValue, stage?.custom_stage_type || "");
+  }
+
+  function openStageModal(stage = null) {
+    const modalContext = getStageModalContext(stage);
+    closeAllModals();
+    els.stageForm.reset();
+    populateStageModalFields(stage, modalContext);
     renderStageReminderSummary(stage);
     updateStageColorPreview(els.stageColor.value);
     syncBrandedSelects();
@@ -14303,20 +14318,27 @@
     syncBrandedSelects();
   }
 
+  function getStageDuplicateModalContext(stage) {
+    const scope = getStageScope(stage?.id);
+    return {
+      scope,
+      category: String(scope.funnel?.category || FUNNEL_CATEGORIES[0] || "B2C"),
+      groupId: String(scope.group?.id || (scope.funnel?.group_id ? scope.funnel.group_id : FUNNEL_UNGROUPED_OPTION)).trim() || FUNNEL_UNGROUPED_OPTION
+    };
+  }
+
   function openStageDuplicateModal(stage) {
     if (!stage || !canManageStages()) return;
-    const scope = getStageScope(stage.id);
-    const category = String(scope.funnel?.category || FUNNEL_CATEGORIES[0] || "B2C");
-    const groupId = String(scope.group?.id || (scope.funnel?.group_id ? scope.funnel.group_id : FUNNEL_UNGROUPED_OPTION)).trim() || FUNNEL_UNGROUPED_OPTION;
+    const modalContext = getStageDuplicateModalContext(stage);
     closeAllModals();
     els.stageDuplicateForm?.reset();
     if (els.stageDuplicateSourceId) els.stageDuplicateSourceId.value = stage.id || "";
     if (els.stageDuplicateModalTitle) els.stageDuplicateModalTitle.textContent = `Duplicar pipeline ${stage.name || ""}`.trim();
-    renderStageDuplicateCategoryOptions(category);
+    renderStageDuplicateCategoryOptions(modalContext.category);
     syncStageDuplicateDestination({
-      groupId,
-      funnelId: scope.funnel?.id || "",
-      subfunnelId: scope.subfunnelId || ""
+      groupId: modalContext.groupId,
+      funnelId: modalContext.scope.funnel?.id || "",
+      subfunnelId: modalContext.scope.subfunnelId || ""
     });
     syncBrandedSelects();
     openModalOverlay(els.stageDuplicateModalOverlay, "#stageDuplicateCategory");
@@ -14415,6 +14437,31 @@
   function closePermissionRequestModal() {
     state.permissionRequestContext = null;
     closeModalOverlay(els.permissionModalOverlay);
+  }
+
+  function collectStageDuplicateSubmissionContext() {
+    const sourceStageId = String(els.stageDuplicateSourceId?.value || "").trim();
+    const targetSubfunnelId = String(els.stageDuplicateSubfunnel?.value || "").trim();
+    const duplicateMode = document.querySelector('input[name="stageDuplicateMode"]:checked')?.value || "stage_only";
+    const sourceStage = state.stages.find((stage) => stage.id === sourceStageId) || null;
+    return {
+      sourceStageId,
+      targetSubfunnelId,
+      duplicateMode,
+      sourceStage
+    };
+  }
+
+  function validateStageDuplicateSubmissionContext(context = {}) {
+    if (!context.sourceStage) {
+      alert("Pipeline de origem não encontrada.");
+      return false;
+    }
+    if (!context.targetSubfunnelId) {
+      alert("Selecione o subfunil de destino.");
+      return false;
+    }
+    return true;
   }
 
   async function submitPermissionRequest() {
@@ -15392,14 +15439,7 @@
       });
   }
 
-  async function submitStage(event) {
-    event.preventDefault();
-
-    if (!canManageStages()) {
-      alert("Somente administradores podem alterar pipelines.");
-      return;
-    }
-
+  function collectStageFormSubmissionContext() {
     const selectedType = String(els.stageType.value || "andamento").trim();
     const selectedSubfunnelId = String(els.stageSubfunnelSelect?.value || "").trim();
     const customStageTypeInput = String(els.customStageType?.value || "").trim();
@@ -15419,10 +15459,53 @@
       position: els.stageId.value ? (state.stages.find((s) => s.id === els.stageId.value)?.position ?? state.stages.length) : state.stages.length,
       created_by: state.currentUser.id
     };
+    return {
+      selectedType,
+      selectedSubfunnelId,
+      customStageTypeInput,
+      existingCustomType,
+      isCreatingNewCustom,
+      isEditingExistingCustom,
+      desiredCustomType,
+      payload
+    };
+  }
 
-    if (!payload.name) return alert("Informe o nome da etapa.");
-    if (!selectedSubfunnelId) return alert("Selecione o subfunil desta pipeline.");
-    if (payload.stage_type === "personalizado" && !payload.custom_stage_type) return alert("Informe o tipo personalizado.");
+  function validateStageFormSubmissionContext(context = {}) {
+    if (!context.payload?.name) {
+      alert("Informe o nome da etapa.");
+      return false;
+    }
+    if (!context.selectedSubfunnelId) {
+      alert("Selecione o subfunil desta pipeline.");
+      return false;
+    }
+    if (context.payload.stage_type === "personalizado" && !context.payload.custom_stage_type) {
+      alert("Informe o tipo personalizado.");
+      return false;
+    }
+    return true;
+  }
+
+  async function submitStage(event) {
+    event.preventDefault();
+
+    if (!canManageStages()) {
+      alert("Somente administradores podem alterar pipelines.");
+      return;
+    }
+
+    const context = collectStageFormSubmissionContext();
+    const {
+      selectedType,
+      selectedSubfunnelId,
+      existingCustomType,
+      isCreatingNewCustom,
+      isEditingExistingCustom,
+      desiredCustomType,
+      payload
+    } = context;
+    if (!validateStageFormSubmissionContext(context)) return;
 
     if (false && payload.stage_type === "personalizado") {
       const savedType = await saveCustomStageType(payload.custom_stage_type);
@@ -16247,50 +16330,45 @@
       return;
     }
 
-    const sourceStageId = String(els.stageDuplicateSourceId?.value || "").trim();
-    const targetSubfunnelId = String(els.stageDuplicateSubfunnel?.value || "").trim();
-    const duplicateMode = document.querySelector('input[name="stageDuplicateMode"]:checked')?.value || "stage_only";
-    const sourceStage = state.stages.find((stage) => stage.id === sourceStageId);
+    const context = collectStageDuplicateSubmissionContext();
+    if (!validateStageDuplicateSubmissionContext(context)) return;
 
-    if (!sourceStage) return alert("Pipeline de origem não encontrada.");
-    if (!targetSubfunnelId) return alert("Selecione o subfunil de destino.");
-
-    const targetName = getNextStageDuplicateName(sourceStage.name, targetSubfunnelId);
+    const targetName = getNextStageDuplicateName(context.sourceStage.name, context.targetSubfunnelId);
     const payload = {
       name: targetName,
-      color: sanitizeHexColor(sourceStage.color),
-      stage_type: sourceStage.stage_type || "andamento",
-      custom_stage_type: sourceStage.custom_stage_type || null,
+      color: sanitizeHexColor(context.sourceStage.color),
+      stage_type: context.sourceStage.stage_type || "andamento",
+      custom_stage_type: context.sourceStage.custom_stage_type || null,
       position: state.stages.length,
-      created_by: state.currentUser?.id || sourceStage.created_by || null
+      created_by: state.currentUser?.id || context.sourceStage.created_by || null
     };
 
     try {
-      const createdStage = await createStageForSubfunnel(payload, targetSubfunnelId, { deferSync: true });
+      const createdStage = await createStageForSubfunnel(payload, context.targetSubfunnelId, { deferSync: true });
       await logChange(
         "duplicate",
         "stage",
         createdStage.id,
-        `Pipeline "${sourceStage.name}" foi duplicada por ${getUserDisplayName()} como "${createdStage.name}".`,
+        `Pipeline "${context.sourceStage.name}" foi duplicada por ${getUserDisplayName()} como "${createdStage.name}".`,
         {
-          source_stage_id: sourceStage.id,
-          source_stage_name: sourceStage.name,
+          source_stage_id: context.sourceStage.id,
+          source_stage_name: context.sourceStage.name,
           target_stage_id: createdStage.id,
           target_stage_name: createdStage.name,
-          target_subfunnel_id: targetSubfunnelId,
-          duplicate_mode: duplicateMode
+          target_subfunnel_id: context.targetSubfunnelId,
+          duplicate_mode: context.duplicateMode
         }
       );
 
       let duplicatedLeadIds = [];
-      if (duplicateMode === "stage_with_leads") {
-        duplicatedLeadIds = await duplicateStageLeads(sourceStage, createdStage, targetSubfunnelId, { deferSync: true });
+      if (context.duplicateMode === "stage_with_leads") {
+        duplicatedLeadIds = await duplicateStageLeads(context.sourceStage, createdStage, context.targetSubfunnelId, { deferSync: true });
       }
 
       await persistWorkspaceAssignmentsSafely({
         stageIds: [createdStage.id],
         leadIds: duplicatedLeadIds,
-        subfunnelId: targetSubfunnelId,
+        subfunnelId: context.targetSubfunnelId,
         notify: true,
         notifyScope: "funnel-workspace"
       });
@@ -16306,101 +16384,152 @@
     }
   }
 
-  async function deleteStageWithStrategy(stageId, options = {}) {
-    const stage = state.stages.find((item) => item.id === stageId);
-    if (!stage) return;
-
+  function getStageDeleteStrategyContext(stageId, options = {}) {
+    const stage = state.stages.find((item) => item.id === stageId) || null;
     const deleteWithLeads = Boolean(options.deleteWithLeads);
-    let targetStageId = String(options.targetStageId || "").trim();
-    const equivalentStages = getEquivalentStagesInSubfunnel(stage);
+    const requestedTargetStageId = String(options.targetStageId || "").trim();
+    const equivalentStages = stage ? getEquivalentStagesInSubfunnel(stage) : [];
     const stageIdsToDelete = [...new Set(equivalentStages.map((item) => String(item.id || "").trim()).filter(Boolean))];
     const affectedLeads = state.leads.filter((lead) => stageIdsToDelete.includes(String(lead.stage_id || "").trim()));
+    return {
+      stage,
+      deleteWithLeads,
+      requestedTargetStageId,
+      equivalentStages,
+      stageIdsToDelete,
+      affectedLeads
+    };
+  }
 
-    if (!canManageStages()) {
-      requestAdminAuthorization({
-        requestType: "delete_stage",
-        title: "Solicitar exclusao de pipeline",
-        description: `Voce nao tem permissao para excluir a etapa "${stage.name}". Sua solicitacao sera enviada para o administrador.`,
-        entityType: "stage",
-        entityId: stage.id,
-        payload: {
-          stage_id: stage.id,
-          stage_name: stage.name,
-          delete_with_leads: deleteWithLeads,
-          target_stage_id: targetStageId || null
-        }
-      });
-      return;
-    }
+  function requestStageDeleteAuthorization(context = {}) {
+    if (!context.stage) return;
+    requestAdminAuthorization({
+      requestType: "delete_stage",
+      title: "Solicitar exclusao de pipeline",
+      description: `Voce nao tem permissao para excluir a etapa "${context.stage.name}". Sua solicitacao sera enviada para o administrador.`,
+      entityType: "stage",
+      entityId: context.stage.id,
+      payload: {
+        stage_id: context.stage.id,
+        stage_name: context.stage.name,
+        delete_with_leads: context.deleteWithLeads,
+        target_stage_id: context.requestedTargetStageId || null
+      }
+    });
+  }
 
-    if (!deleteWithLeads && affectedLeads.length && !targetStageId) {
-      const fallback = await ensureFallbackStageForStageDelete(stage);
+  async function resolveStageDeleteTarget(context = {}) {
+    let targetStageId = context.requestedTargetStageId || "";
+    if (!context.deleteWithLeads && context.affectedLeads?.length && !targetStageId) {
+      const fallback = await ensureFallbackStageForStageDelete(context.stage);
       targetStageId = fallback?.id || "";
     }
 
-    const targetStage = targetStageId ? state.stages.find((item) => item.id === targetStageId) || null : null;
+    const targetStage = targetStageId
+      ? state.stages.find((item) => item.id === targetStageId) || null
+      : null;
 
-    if (!deleteWithLeads && affectedLeads.length && !targetStage) {
-      alert("Não foi possível definir a pipeline de destino para os leads.");
-      return;
-    }
+    return {
+      targetStageId,
+      targetStage
+    };
+  }
 
-    if (deleteWithLeads && affectedLeads.length) {
-      const { error: deleteLeadError } = await deleteLeadsByIds(affectedLeads.map((lead) => lead.id));
+  async function deleteStageLeadsWithStrategy(context = {}, targetStage = null) {
+    if (!context.affectedLeads?.length) return true;
+
+    if (context.deleteWithLeads) {
+      const { error: deleteLeadError } = await deleteLeadsByIds(context.affectedLeads.map((lead) => lead.id));
       if (deleteLeadError) {
         alert(`Erro ao excluir leads da pipeline: ${formatSupabaseError(deleteLeadError)}`);
-        return;
+        return false;
       }
 
       await logChange(
         "bulk_delete_stage_leads",
         "lead",
         null,
-        `${affectedLeads.length} lead(s) da pipeline "${stage.name}" foram excluídos por ${getUserDisplayName()}.`,
+        `${context.affectedLeads.length} lead(s) da pipeline "${context.stage.name}" foram excluídos por ${getUserDisplayName()}.`,
         {
-          stage_id: stage.id,
-          stage_name: stage.name,
-          deleted_lead_count: affectedLeads.length
+          stage_id: context.stage.id,
+          stage_name: context.stage.name,
+          deleted_lead_count: context.affectedLeads.length
         }
       );
+      return true;
     }
 
-    if (!deleteWithLeads && affectedLeads.length) {
-      for (const sourceStageId of stageIdsToDelete) {
-        const stageLeadIds = affectedLeads
-          .filter((lead) => String(lead.stage_id || "").trim() === sourceStageId)
-          .map((lead) => String(lead.id || "").trim())
-          .filter(Boolean);
-        if (!stageLeadIds.length) continue;
+    for (const sourceStageId of context.stageIdsToDelete) {
+      const stageLeadIds = context.affectedLeads
+        .filter((lead) => String(lead.stage_id || "").trim() === sourceStageId)
+        .map((lead) => String(lead.id || "").trim())
+        .filter(Boolean);
+      if (!stageLeadIds.length) continue;
 
-        const { error: moveError } = await state.supabase
-          .from("leads")
-          .update({ stage_id: targetStage.id })
-          .in("id", stageLeadIds);
+      const { error: moveError } = await state.supabase
+        .from("leads")
+        .update({ stage_id: targetStage.id })
+        .in("id", stageLeadIds);
 
-        if (moveError) {
-          alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
-          return;
-        }
+      if (moveError) {
+        alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
+        return false;
       }
+    }
 
-      await logChange(
-        "bulk_move_stage",
-        "lead",
-        null,
-        `${affectedLeads.length} lead(s) foram movidos automaticamente de "${stage.name}" para "${targetStage.name}" porque a pipeline foi excluída por ${getUserDisplayName()}.`,
-        {
-          from_stage_id: stage.id,
-          from_stage_name: stage.name,
-          to_stage_id: targetStage.id,
-          to_stage_name: targetStage.name,
-          affected_count: affectedLeads.length
-        }
-      );
+    await logChange(
+      "bulk_move_stage",
+      "lead",
+      null,
+      `${context.affectedLeads.length} lead(s) foram movidos automaticamente de "${context.stage.name}" para "${targetStage.name}" porque a pipeline foi excluída por ${getUserDisplayName()}.`,
+      {
+        from_stage_id: context.stage.id,
+        from_stage_name: context.stage.name,
+        to_stage_id: targetStage.id,
+        to_stage_name: targetStage.name,
+        affected_count: context.affectedLeads.length
+      }
+    );
+    return true;
+  }
+
+  function applyStageDeleteLocalState(context = {}, targetStage = null) {
+    if (context.deleteWithLeads && context.affectedLeads?.length) {
+      removeLeadsLocally(context.affectedLeads.map((lead) => lead.id));
+    }
+
+    if (!context.deleteWithLeads && context.affectedLeads?.length && targetStage?.id) {
+      moveLeadsToStageLocally(context.stageIdsToDelete, targetStage.id);
+      context.affectedLeads.forEach((lead) => {
+        const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
+        if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId, { deferSync: true });
+      });
+    }
+  }
+
+  async function deleteStageWithStrategy(stageId, options = {}) {
+    const context = getStageDeleteStrategyContext(stageId, options);
+    if (!context.stage) return;
+
+    if (!canManageStages()) {
+      requestStageDeleteAuthorization(context);
+      return;
+    }
+
+    const { targetStage } = await resolveStageDeleteTarget(context);
+
+    if (!context.deleteWithLeads && context.affectedLeads.length && !targetStage) {
+      alert("Não foi possível definir a pipeline de destino para os leads.");
+      return;
+    }
+
+    const leadsHandled = await deleteStageLeadsWithStrategy(context, targetStage);
+    if (!leadsHandled) {
+      return;
     }
 
     try {
-      await removeStagesByIds(stageIdsToDelete);
+      await removeStagesByIds(context.stageIdsToDelete);
       state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
     } catch (error) {
@@ -16408,26 +16537,17 @@
       return;
     }
 
-    if (deleteWithLeads && affectedLeads.length) {
-      removeLeadsLocally(affectedLeads.map((lead) => lead.id));
-    }
-    if (!deleteWithLeads && affectedLeads.length) {
-      moveLeadsToStageLocally(stageIdsToDelete, targetStage.id);
-      affectedLeads.forEach((lead) => {
-        const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
-        if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId, { deferSync: true });
-      });
-    }
+    applyStageDeleteLocalState(context, targetStage);
 
     await logChange(
       "delete",
       "stage",
-      stage.id,
-      `Etapa "${stage.name}" foi excluída por ${getUserDisplayName()}.`,
+      context.stage.id,
+      `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
       {
-        ...stage,
-        deleted_stage_ids: stageIdsToDelete,
-        delete_with_leads: deleteWithLeads,
+        ...context.stage,
+        deleted_stage_ids: context.stageIdsToDelete,
+        delete_with_leads: context.deleteWithLeads,
         moved_to_stage_id: targetStage?.id || null
       }
     );
@@ -16440,22 +16560,43 @@
     });
   }
 
-  async function submitStageDelete(event) {
-    event.preventDefault();
+  function collectStageDeleteSubmissionContext() {
     const stageId = String(els.stageDeleteSourceId?.value || "").trim();
     const mode = document.querySelector('input[name="stageDeleteMode"]:checked')?.value || "move_leads";
     const targetStageId = String(els.stageDeleteTargetStage?.value || "").trim();
-    const stage = state.stages.find((item) => item.id === stageId);
-    if (!stage) return alert("Pipeline não encontrada.");
+    const stage = state.stages.find((item) => item.id === stageId) || null;
+    return {
+      stageId,
+      mode,
+      targetStageId,
+      stage
+    };
+  }
 
-    const actionLabel = mode === "delete_with_leads"
-      ? `excluir a pipeline "${stage.name}" com todos os leads`
-      : `excluir a pipeline "${stage.name}" e mover os leads`;
-    if (!confirm(`Tem certeza que deseja ${actionLabel}?`)) return;
+  function validateStageDeleteSubmissionContext(context = {}) {
+    if (!context.stage) {
+      alert("Pipeline não encontrada.");
+      return false;
+    }
+    return true;
+  }
 
-    await deleteStageWithStrategy(stageId, {
-      deleteWithLeads: mode === "delete_with_leads",
-      targetStageId
+  function confirmStageDeleteSubmission(context = {}) {
+    const actionLabel = context.mode === "delete_with_leads"
+      ? `excluir a pipeline "${context.stage.name}" com todos os leads`
+      : `excluir a pipeline "${context.stage.name}" e mover os leads`;
+    return confirm(`Tem certeza que deseja ${actionLabel}?`);
+  }
+
+  async function submitStageDelete(event) {
+    event.preventDefault();
+    const context = collectStageDeleteSubmissionContext();
+    if (!validateStageDeleteSubmissionContext(context)) return;
+    if (!confirmStageDeleteSubmission(context)) return;
+
+    await deleteStageWithStrategy(context.stageId, {
+      deleteWithLeads: context.mode === "delete_with_leads",
+      targetStageId: context.targetStageId
     });
   }
 
