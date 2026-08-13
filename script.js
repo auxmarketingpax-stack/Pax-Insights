@@ -5082,6 +5082,129 @@
     };
   }
 
+  function applyExistingFunnelWorkspaceUpdate(existingFunnelId, {
+    name,
+    category,
+    ownerDepartmentId,
+    visibilityScope,
+    visibilityAccessLevel,
+    departmentPermissions = [],
+    departmentIds = [],
+    previousSubfunnels = [],
+    nextSubfunnels = []
+  } = {}) {
+    const localExistingFunnel = getFunnelById(existingFunnelId);
+    if (!localExistingFunnel) {
+      throw new Error("Funil não encontrado para edição.");
+    }
+
+    applyFunnelCoreFieldsLocally(localExistingFunnel, {
+      name,
+      category,
+      ownerDepartmentId,
+      visibilityScope,
+      visibilityAccessLevel,
+      departmentPermissions,
+      departmentIds
+    });
+    replaceSubfunnelsInFunnelLocally(localExistingFunnel, nextSubfunnels);
+
+    const { validSubfunnelIds } = reconcileWorkspaceAssignmentsForSubfunnels(previousSubfunnels, nextSubfunnels);
+    state.activeFunnelId = localExistingFunnel.id;
+    if (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId)) {
+      state.activeSubfunnelId = null;
+    }
+
+    return localExistingFunnel;
+  }
+
+  function createFunnelInWorkspace({
+    name,
+    category,
+    ownerDepartmentId,
+    visibilityScope,
+    visibilityAccessLevel,
+    departmentPermissions = [],
+    departmentIds = [],
+    subfunnels = []
+  } = {}) {
+    const newFunnel = buildLocalFunnelRecord({
+      name,
+      category,
+      ownerDepartmentId,
+      visibilityScope,
+      visibilityAccessLevel,
+      departmentPermissions,
+      departmentIds,
+      subfunnels
+    });
+
+    upsertFunnelLocally(newFunnel);
+    state.activeFunnelId = newFunnel.id;
+    state.activeSubfunnelId = null;
+    return newFunnel;
+  }
+
+  async function persistSingleFunnelSubsetByIdOrThrow(funnelId, options = {}) {
+    const targetFunnel = getFunnelById(funnelId);
+    if (!targetFunnel) {
+      throw new Error("Funil não encontrado para persistência.");
+    }
+    await persistFunnelsSubsetToSupabase([targetFunnel], options);
+    return targetFunnel;
+  }
+
+  async function saveSingleSubfunnelModalChange({
+    funnelId,
+    subfunnelId = null,
+    subfunnelName,
+    mode = "create"
+  } = {}) {
+    const normalizedFunnelId = String(funnelId || "").trim();
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+    const isEditMode = normalizedMode === "edit";
+
+    const targetFunnel = getFunnelById(normalizedFunnelId);
+    if (!targetFunnel) {
+      throw new Error(isEditMode ? "Funil não encontrado para edição do subfunil." : "Funil não encontrado para adicionar o subfunil.");
+    }
+
+    if (isEditMode && !getSubfunnelById(normalizedSubfunnelId)) {
+      throw new Error("Subfunil não encontrado para edição.");
+    }
+
+    await executeFunnelWorkspaceMetaMutation({
+      applyLocal: () => {
+        const localTargetFunnel = getFunnelById(normalizedFunnelId);
+        if (!localTargetFunnel) {
+          throw new Error(isEditMode ? "Funil não encontrado para edição do subfunil." : "Funil não encontrado para adicionar o subfunil.");
+        }
+
+        if (isEditMode) {
+          const localTargetSubfunnel = getSubfunnelById(normalizedSubfunnelId);
+          if (!localTargetSubfunnel) throw new Error("Subfunil não encontrado para edição.");
+          updateSubfunnelInFunnelLocally(localTargetFunnel, localTargetSubfunnel.id, (item) => ({
+            ...item,
+            name: subfunnelName
+          }));
+          return;
+        }
+
+        appendSubfunnelToFunnelLocally(localTargetFunnel, {
+          id: createSubfunnelId(),
+          name: subfunnelName
+        });
+      },
+      persist: async () => {
+        await persistSingleFunnelSubsetByIdOrThrow(normalizedFunnelId, {
+          includeSubfunnels: true,
+          includePermissions: false
+        });
+      }
+    });
+  }
+
   function upsertStageLocally(stage) {
     if (!stage?.id) return null;
     const normalizedStage = normalizeStage(stage);
@@ -13674,23 +13797,10 @@
         return;
       }
       try {
-        await executeFunnelWorkspaceMetaMutation({
-          applyLocal: () => {
-            const localTargetFunnel = getFunnelById(modalContext.funnelId);
-            if (!localTargetFunnel) throw new Error("Funil não encontrado para adicionar o subfunil.");
-            appendSubfunnelToFunnelLocally(localTargetFunnel, {
-              id: createSubfunnelId(),
-              name: subfunnelNames[0]
-            });
-          },
-          persist: async () => {
-            const localTargetFunnel = getFunnelById(modalContext.funnelId);
-            if (!localTargetFunnel) throw new Error("Funil não encontrado para persistência.");
-            await persistFunnelsSubsetToSupabase([localTargetFunnel], {
-              includeSubfunnels: true,
-              includePermissions: false
-            });
-          }
+        await saveSingleSubfunnelModalChange({
+          funnelId: modalContext.funnelId,
+          subfunnelName: subfunnelNames[0],
+          mode: "create"
         });
       } catch (error) {
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
@@ -13711,24 +13821,11 @@
         return;
       }
       try {
-        await executeFunnelWorkspaceMetaMutation({
-          applyLocal: () => {
-            const localTargetFunnel = getFunnelById(modalContext.funnelId);
-            const localTargetSubfunnel = getSubfunnelById(modalContext.subfunnelId);
-            if (!localTargetFunnel || !localTargetSubfunnel) throw new Error("Subfunil não encontrado para edição.");
-            updateSubfunnelInFunnelLocally(localTargetFunnel, localTargetSubfunnel.id, (item) => ({
-              ...item,
-              name: subfunnelNames[0]
-            }));
-          },
-          persist: async () => {
-            const localTargetFunnel = getFunnelById(modalContext.funnelId);
-            if (!localTargetFunnel) throw new Error("Funil não encontrado para persistência.");
-            await persistFunnelsSubsetToSupabase([localTargetFunnel], {
-              includeSubfunnels: true,
-              includePermissions: false
-            });
-          }
+        await saveSingleSubfunnelModalChange({
+          funnelId: modalContext.funnelId,
+          subfunnelId: modalContext.subfunnelId,
+          subfunnelName: subfunnelNames[0],
+          mode: "edit"
         });
       } catch (error) {
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
@@ -13747,25 +13844,19 @@
       await executeFunnelWorkspaceMetaMutation({
         applyLocal: () => {
           if (existingFunnel) {
-            const localExistingFunnel = getFunnelById(existingFunnel.id);
-            if (!localExistingFunnel) throw new Error("Funil não encontrado para edição.");
-            applyFunnelCoreFieldsLocally(localExistingFunnel, {
+            applyExistingFunnelWorkspaceUpdate(existingFunnel.id, {
               name,
               category,
               ownerDepartmentId: officialDepartmentId,
               visibilityScope,
               visibilityAccessLevel,
               departmentPermissions: selectedDepartmentPermissions,
-              departmentIds: selectedDepartmentIds
+              departmentIds: selectedDepartmentIds,
+              previousSubfunnels,
+              nextSubfunnels
             });
-            replaceSubfunnelsInFunnelLocally(localExistingFunnel, nextSubfunnels);
-            const { validSubfunnelIds } = reconcileWorkspaceAssignmentsForSubfunnels(previousSubfunnels, nextSubfunnels);
-            state.activeFunnelId = localExistingFunnel.id;
-            if (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId)) {
-              state.activeSubfunnelId = null;
-            }
           } else {
-            const newFunnel = buildLocalFunnelRecord({
+            createFunnelInWorkspace({
               name,
               category,
               ownerDepartmentId: officialDepartmentId,
@@ -13775,20 +13866,11 @@
               departmentIds: selectedDepartmentIds,
               subfunnels: nextSubfunnels
             });
-
-            upsertFunnelLocally(newFunnel);
-            state.activeFunnelId = newFunnel.id;
-            state.activeSubfunnelId = null;
           }
         },
         persist: async () => {
-          const targetFunnel = existingFunnel
-            ? getFunnelById(existingFunnel.id)
-            : (state.funnelWorkspace.funnels[state.funnelWorkspace.funnels.length - 1] || null);
-          if (!targetFunnel) {
-            throw new Error("Funil não encontrado para persistência.");
-          }
-          await persistFunnelsSubsetToSupabase([targetFunnel], {
+          const targetFunnelId = existingFunnel?.id || state.activeFunnelId;
+          await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
             includeSubfunnels: true,
             includePermissions: true
           });
