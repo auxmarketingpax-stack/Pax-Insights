@@ -3285,6 +3285,20 @@
   }
 
   function stopLiveSync() {
+    clearLiveSyncTimers();
+    state.liveSyncRefreshInFlight = false;
+    state.liveSyncRefreshQueued = false;
+    if (state.liveSyncChannel && state.supabase?.removeChannel) {
+      try {
+        state.supabase.removeChannel(state.liveSyncChannel);
+      } catch (_error) {
+        // ignore realtime cleanup failures
+      }
+    }
+    state.liveSyncChannel = null;
+  }
+
+  function clearLiveSyncTimers() {
     if (state.liveSyncRefreshTimer) {
       clearTimeout(state.liveSyncRefreshTimer);
       state.liveSyncRefreshTimer = null;
@@ -3297,16 +3311,6 @@
       clearInterval(state.liveSyncPollTimer);
       state.liveSyncPollTimer = null;
     }
-    state.liveSyncRefreshInFlight = false;
-    state.liveSyncRefreshQueued = false;
-    if (state.liveSyncChannel && state.supabase?.removeChannel) {
-      try {
-        state.supabase.removeChannel(state.liveSyncChannel);
-      } catch (_error) {
-        // ignore realtime cleanup failures
-      }
-    }
-    state.liveSyncChannel = null;
   }
 
   function notifyLiveSyncChange(scope = "workspace") {
@@ -3530,6 +3534,17 @@
     }
   }
 
+  async function executeLiveDataRefresh(reason = "external-change") {
+    await loadAppData({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      runRouteMigration: false,
+      restoreUiState: false,
+      silentRender: true
+    });
+    renderAll();
+  }
+
   function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
     if (!state.currentUser || !isApprovedUser()) return;
     const immediate = options.immediate === true;
@@ -3555,14 +3570,7 @@
 
       state.liveSyncRefreshInFlight = true;
       try {
-        await loadAppData({
-          includeProfiles: state.profilesLoaded,
-          includeAdminData: state.adminDataLoaded,
-          runRouteMigration: false,
-          restoreUiState: false,
-          silentRender: true
-        });
-        renderAll();
+        await executeLiveDataRefresh(reason);
       } catch (error) {
         console.error(`Erro ao sincronizar dados (${reason}):`, error);
       } finally {
@@ -3575,12 +3583,8 @@
     }, delayMs);
   }
 
-  function startLiveSync() {
-    if (!state.currentUser || !isApprovedUser() || !state.supabase?.channel) return;
-
-    stopLiveSync();
-
-    const tables = [
+  function getLiveSyncRealtimeTables() {
+    return [
       "leads",
       "stages",
       "profiles",
@@ -3596,9 +3600,10 @@
       "crm_lead_subfunnel_assignments",
       "crm_stage_reminder_configs"
     ];
+  }
 
-    const channel = state.supabase.channel("crm-live-sync");
-    tables.forEach((table) => {
+  function registerLiveSyncTableSubscriptions(channel) {
+    getLiveSyncRealtimeTables().forEach((table) => {
       channel.on(
         "postgres_changes",
         { event: "*", schema: "public", table },
@@ -3607,20 +3612,23 @@
         }
       );
     });
+  }
+
+  function registerLiveSyncSharedMetaSubscription(channel) {
     channel.on(
       "postgres_changes",
       { event: "*", schema: "public", table: "change_history" },
       (payload) => {
         const entityType = String(payload?.new?.entity_type || payload?.old?.entity_type || "").trim();
         const entityId = String(payload?.new?.entity_id || payload?.old?.entity_id || "").trim();
-        if (![
-          SHARED_FUNNEL_META_ENTITY_TYPE,
-          SHARED_FUNNEL_GROUPS_ENTITY_TYPE,
-          SHARED_FUNNEL_LINKS_ENTITY_TYPE
-        ].includes(entityType) || entityId !== SHARED_FUNNEL_META_ENTITY_ID) return;
+        if (![SHARED_FUNNEL_META_ENTITY_TYPE, SHARED_FUNNEL_GROUPS_ENTITY_TYPE, SHARED_FUNNEL_LINKS_ENTITY_TYPE].includes(entityType)) return;
+        if (entityId !== SHARED_FUNNEL_META_ENTITY_ID) return;
         scheduleLiveDataRefresh("realtime:shared-funnel-meta", { immediate: true });
       }
     );
+  }
+
+  function registerLiveSyncBroadcastSubscription(channel) {
     channel.on(
       "broadcast",
       { event: "crm-sync" },
@@ -3628,17 +3636,31 @@
         scheduleLiveDataRefresh("broadcast", { immediate: true });
       }
     );
+  }
+
+  function startLiveSyncPolling() {
+    state.liveSyncPollTimer = window.setInterval(() => {
+      if (document.hidden) return;
+      scheduleLiveDataRefresh("poll");
+    }, 10000);
+  }
+
+  function startLiveSync() {
+    if (!state.currentUser || !isApprovedUser() || !state.supabase?.channel) return;
+
+    stopLiveSync();
+
+    const channel = state.supabase.channel("crm-live-sync");
+    registerLiveSyncTableSubscriptions(channel);
+    registerLiveSyncSharedMetaSubscription(channel);
+    registerLiveSyncBroadcastSubscription(channel);
     channel.subscribe((status) => {
       if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
         console.warn("Realtime indisponível. Mantendo sincronização por polling.");
       }
     });
     state.liveSyncChannel = channel;
-
-    state.liveSyncPollTimer = window.setInterval(() => {
-      if (document.hidden) return;
-      scheduleLiveDataRefresh("poll");
-    }, 10000);
+    startLiveSyncPolling();
   }
 
   function closeAllModals() {
@@ -5922,23 +5944,27 @@
     const cached = readStoredAppDataCache();
     if (!cached?.stages?.length && !cached?.leads?.length) return false;
 
-    state.stages = (cached.stages || []).map(normalizeStage);
-    const rawLeads = cached.leads || [];
+    applyHydratedAppDataCache(cached);
+    syncFunnelWorkspaceWithData(readStoredFunnelWorkspace());
+    syncSelectedLeadIds();
+    return state.stages.length > 0 || state.leads.length > 0;
+  }
+
+  function applyHydratedAppDataCache(cached = null) {
+    state.stages = (cached?.stages || []).map(normalizeStage);
+    const rawLeads = cached?.leads || [];
     state.ownerCanonicalMap = buildOwnerCanonicalMap(rawLeads.map((lead) => lead?.owner), state.profiles || []);
     state.socialSourceCanonicalMap = buildCanonicalValueMap(rawLeads.map((lead) => lead?.social_source), "social_source");
     state.leads = rawLeads.map((lead) => normalizeLead(lead, {
       ownerMap: state.ownerCanonicalMap,
       socialSourceMap: state.socialSourceCanonicalMap
     }));
-    state.leadSources = normalizeLeadSources(cached.leadSources || []);
+    state.leadSources = normalizeLeadSources(cached?.leadSources || []);
     state.socialSources = normalizeSocialSources([
-      ...(cached.socialSources || []),
+      ...(cached?.socialSources || []),
       ...rawLeads.map((lead) => lead?.social_source || "")
     ]);
-    state.departments = Array.isArray(cached.departments) ? cached.departments : [];
-    syncFunnelWorkspaceWithData(readStoredFunnelWorkspace());
-    syncSelectedLeadIds();
-    return state.stages.length > 0 || state.leads.length > 0;
+    state.departments = Array.isArray(cached?.departments) ? cached.departments : [];
   }
 
   function readNotificationDismissals() {
@@ -10725,12 +10751,7 @@
     }
   }
 
-  async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
-    if (!canManageStages()) {
-      alert("Somente administradores podem reordenar pipelines.");
-      return;
-    }
-
+  function collectStageMoveContext(stageId, targetIndex, subfunnelId = null) {
     const scopeSubfunnelId = subfunnelId || state.structureSubfunnelId;
     const useVisibleScopedStages = Boolean(
       scopeSubfunnelId
@@ -10742,60 +10763,71 @@
       : state.stages);
     const scopedVisibleStages = sortStagesByStablePosition(useVisibleScopedStages ? getScopedStages() : scopedAllStages);
     const currentIndex = scopedVisibleStages.findIndex((stage) => stage.id === stageId);
-    if (currentIndex === -1) return;
-    const movedStage = scopedVisibleStages[currentIndex] || getStageById(stageId) || null;
-
+    const movedStage = currentIndex >= 0
+      ? (scopedVisibleStages[currentIndex] || getStageById(stageId) || null)
+      : null;
     const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), scopedVisibleStages.length - 1));
-    if (!Number.isFinite(normalizedTargetIndex) || normalizedTargetIndex === currentIndex) return;
-
     const previousStages = state.stages.map((item) => normalizeStage(item));
     const scopedOrderedPositions = scopedAllStages
       .map((item) => Number(item.position))
       .filter((value) => Number.isFinite(value))
       .sort((a, b) => a - b);
 
-    let nextScopedStages = [];
+    return {
+      stageId,
+      scopeSubfunnelId,
+      useVisibleScopedStages,
+      scopedAllStages,
+      scopedVisibleStages,
+      currentIndex,
+      movedStage,
+      normalizedTargetIndex,
+      previousStages,
+      scopedOrderedPositions
+    };
+  }
 
-    if (useVisibleScopedStages) {
+  function buildNextScopedStagesForMove(context = {}) {
+    if (context.useVisibleScopedStages) {
       const groupKeyForStage = (stage) => normalizeComparisonText(stage?.name || "") || `stage:${stage?.id || ""}`;
-      const stageGroups = [];
       const groupMap = new Map();
 
-      scopedAllStages.forEach((stage) => {
+      context.scopedAllStages.forEach((stage) => {
         const key = groupKeyForStage(stage);
         if (!groupMap.has(key)) {
-          const group = { key, stages: [] };
-          groupMap.set(key, group);
-          stageGroups.push(group);
+          groupMap.set(key, { key, stages: [] });
         }
         groupMap.get(key).stages.push(stage);
       });
 
-      const visibleGroupKeys = scopedVisibleStages.map((stage) => groupKeyForStage(stage));
+      const visibleGroupKeys = context.scopedVisibleStages.map((stage) => groupKeyForStage(stage));
       const reorderedGroupKeys = [...visibleGroupKeys];
-      const [draggedGroupKey] = reorderedGroupKeys.splice(currentIndex, 1);
-      if (!draggedGroupKey) return;
-      reorderedGroupKeys.splice(normalizedTargetIndex, 0, draggedGroupKey);
+      const [draggedGroupKey] = reorderedGroupKeys.splice(context.currentIndex, 1);
+      if (!draggedGroupKey) return [];
+      reorderedGroupKeys.splice(context.normalizedTargetIndex, 0, draggedGroupKey);
 
-      nextScopedStages = reorderedGroupKeys.flatMap((groupKey) => {
+      return reorderedGroupKeys.flatMap((groupKey) => {
         const group = groupMap.get(groupKey);
         return Array.isArray(group?.stages) ? group.stages : [];
       }).map((item, index) => normalizeStage({
         ...item,
-        position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
-      }));
-    } else {
-      nextScopedStages = reorderListByIndex(scopedAllStages, currentIndex, normalizedTargetIndex).map((item, index) => normalizeStage({
-        ...item,
-        position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
+        position: context.scopedOrderedPositions[index] ?? Number(item.position) ?? index
       }));
     }
 
+    return reorderListByIndex(context.scopedAllStages, context.currentIndex, context.normalizedTargetIndex).map((item, index) => normalizeStage({
+      ...item,
+      position: context.scopedOrderedPositions[index] ?? Number(item.position) ?? index
+    }));
+  }
+
+  function buildStageMoveMutationContext(context = {}) {
+    const nextScopedStages = buildNextScopedStagesForMove(context);
     const nextScopedById = new Map(nextScopedStages.map((item) => [item.id, item]));
-    const optimisticStages = previousStages
+    const optimisticStages = context.previousStages
       .map((item) => nextScopedById.get(item.id) || item)
       .sort((a, b) => Number(a.position) - Number(b.position));
-    const previousPositions = new Map(previousStages.map((item) => [item.id, Number(item.position)]));
+    const previousPositions = new Map(context.previousStages.map((item) => [item.id, Number(item.position)]));
     const changedPositionRows = nextScopedStages
       .filter((item) => previousPositions.get(item.id) !== Number(item.position))
       .map((item) => ({
@@ -10803,34 +10835,57 @@
         position: Number(item.position)
       }));
 
+    return {
+      ...context,
+      nextScopedStages,
+      optimisticStages,
+      changedPositionRows
+    };
+  }
+
+  async function persistStageMoveMutation(context = {}) {
+    await executeCriticalMutation({
+      snapshot: {
+        stages: true
+      },
+      applyOptimistic: () => {
+        state.stages = context.optimisticStages;
+      },
+      persist: async () => {
+        await persistStagePositions(context.changedPositionRows);
+      },
+      afterPersist: async () => {
+        notifyLiveSyncChange("stage-order");
+        queueLocalConsistencyRefresh("stage-order", 900);
+        void logChange(
+          "reorder",
+          "stage",
+          context.stageId,
+          `A ordem do funil foi alterada por ${getUserDisplayName()}.`,
+          {
+            stage_id: context.stageId,
+            stage_name: context.movedStage?.name || "",
+            from_position: context.currentIndex,
+            to_position: context.normalizedTargetIndex
+          }
+        ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
+      }
+    });
+  }
+
+  async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
+    if (!canManageStages()) {
+      alert("Somente administradores podem reordenar pipelines.");
+      return;
+    }
+
+    const moveContext = collectStageMoveContext(stageId, targetIndex, subfunnelId);
+    if (moveContext.currentIndex === -1) return;
+    if (!Number.isFinite(moveContext.normalizedTargetIndex) || moveContext.normalizedTargetIndex === moveContext.currentIndex) return;
+    const mutationContext = buildStageMoveMutationContext(moveContext);
+
     try {
-      await executeCriticalMutation({
-        snapshot: {
-          stages: true
-        },
-        applyOptimistic: () => {
-          state.stages = optimisticStages;
-        },
-        persist: async () => {
-          await persistStagePositions(changedPositionRows);
-        },
-        afterPersist: async () => {
-          notifyLiveSyncChange("stage-order");
-          queueLocalConsistencyRefresh("stage-order", 900);
-          void logChange(
-            "reorder",
-            "stage",
-            stageId,
-            `A ordem do funil foi alterada por ${getUserDisplayName()}.`,
-            {
-              stage_id: stageId,
-              stage_name: movedStage?.name || "",
-              from_position: currentIndex,
-              to_position: normalizedTargetIndex
-            }
-          ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
-        }
-      });
+      await persistStageMoveMutation(mutationContext);
     } catch (error) {
       alert(formatSupabaseError(error, "Não foi possível reordenar o pipeline."));
     }
@@ -10975,7 +11030,7 @@
     return false;
   }
 
-  async function enterApp() {
+  function prepareAppShellEntry() {
     els.bootScreen.textContent = "Carregando sistema...";
     els.bootScreen.classList.remove("hidden");
     els.authScreen.classList.add("hidden");
@@ -10986,55 +11041,53 @@
     applyRoleBasedUi();
     setShellTab("crm");
     syncStickyChrome();
+  }
 
-    const finalizePrimaryRender = ({ rebindView = true, revealScreen = true } = {}) => {
-      if (rebindView) {
-        bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
-      }
-      renderAll();
-      startLiveSync();
-      if (revealScreen) {
-        showScreen("appScreen");
-      }
-    };
-
-    const runSecondaryLoads = () => {
-      void (async () => {
-        await waitForNextPaint();
-        try {
-          const results = await Promise.allSettled([
-            loadProfilesIfNeeded(false, { silent: true }),
-            loadAdminDataIfNeeded(false, { silent: true }),
-            runDeferredFunnelRouteMigration({ silent: true })
-          ]);
-          const shouldRerender = results.some((result) => result.status === "fulfilled" && result.value === true);
-          if (shouldRerender) {
-            renderAll();
-          }
-        } catch (error) {
-          console.error("Erro ao finalizar o carregamento secundário:", error);
-        }
-      })();
-    };
-
-    const hydratedFromCache = hydrateAppDataFromCache();
-    if (hydratedFromCache) {
-      restoreStoredFunnelUiState();
-      finalizePrimaryRender();
-      void (async () => {
-        await loadAppData({
-          includeProfiles: false,
-          includeAdminData: false,
-          runRouteMigration: false,
-          restoreUiState: false,
-          silentRender: true
-        });
-        finalizePrimaryRender({ rebindView: false, revealScreen: false });
-        runSecondaryLoads();
-      })();
-      return;
+  function finalizePrimaryAppRender({ rebindView = true, revealScreen = true } = {}) {
+    if (rebindView) {
+      bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
     }
+    renderAll();
+    startLiveSync();
+    if (revealScreen) {
+      showScreen("appScreen");
+    }
+  }
 
+  function runEnterAppSecondaryLoads() {
+    void (async () => {
+      await waitForNextPaint();
+      try {
+        const results = await Promise.allSettled([
+          loadProfilesIfNeeded(false, { silent: true }),
+          loadAdminDataIfNeeded(false, { silent: true }),
+          runDeferredFunnelRouteMigration({ silent: true })
+        ]);
+        const shouldRerender = results.some((result) => result.status === "fulfilled" && result.value === true);
+        if (shouldRerender) {
+          renderAll();
+        }
+      } catch (error) {
+        console.error("Erro ao finalizar o carregamento secundário:", error);
+      }
+    })();
+  }
+
+  async function hydrateEnterAppFromCache() {
+    restoreStoredFunnelUiState();
+    finalizePrimaryAppRender();
+    await loadAppData({
+      includeProfiles: false,
+      includeAdminData: false,
+      runRouteMigration: false,
+      restoreUiState: false,
+      silentRender: true
+    });
+    finalizePrimaryAppRender({ rebindView: false, revealScreen: false });
+    runEnterAppSecondaryLoads();
+  }
+
+  async function loadEnterAppFreshData() {
     await loadAppData({
       includeProfiles: false,
       includeAdminData: false,
@@ -11042,8 +11095,163 @@
       restoreUiState: true,
       silentRender: true
     });
-    finalizePrimaryRender();
-    runSecondaryLoads();
+    finalizePrimaryAppRender();
+    runEnterAppSecondaryLoads();
+  }
+
+  async function enterApp() {
+    prepareAppShellEntry();
+
+    const hydratedFromCache = hydrateAppDataFromCache();
+    if (hydratedFromCache) {
+      void hydrateEnterAppFromCache();
+      return;
+    }
+
+    await loadEnterAppFreshData();
+  }
+
+  function applyLoadedAppDataSnapshot({
+    stageRows = [],
+    leadRows = [],
+    profileRows = [],
+    stageTypeRows = [],
+    leadSourceRows = [],
+    accessRequestRows = [],
+    adminRequestRows = [],
+    departmentRows = [],
+    remoteFunnelWorkspace = null,
+    includeProfiles = false,
+    includeAdminData = false,
+    silentRender = false
+  } = {}) {
+    const stabilizedStageRows = stabilizeTransientStageRows(stageRows);
+    state.stages = stabilizedStageRows.map(normalizeStage);
+
+    const rawLeads = Array.isArray(leadRows) ? leadRows : [];
+    const missingSocialSourceLeadIds = rawLeads
+      .filter((lead) => !normalizeSpacing(lead?.social_source || ""))
+      .map((lead) => lead.id);
+    const profileOwnerNames = includeProfiles ? (profileRows || []) : state.profiles;
+
+    state.ownerCanonicalMap = buildOwnerCanonicalMap(rawLeads.map((lead) => lead?.owner), profileOwnerNames);
+    state.socialSourceCanonicalMap = buildCanonicalValueMap(rawLeads.map((lead) => lead?.social_source), "social_source");
+    state.leads = rawLeads.map((lead) => normalizeLead(lead, {
+      ownerMap: state.ownerCanonicalMap,
+      socialSourceMap: state.socialSourceCanonicalMap
+    }));
+    state.leadSources = normalizeLeadSources(leadSourceRows || []);
+    state.socialSources = normalizeSocialSources([
+      ...readStoredSocialSources(),
+      DEFAULT_SOCIAL_SOURCE,
+      ...rawLeads.map((lead) => lead?.social_source || "")
+    ]);
+    writeStoredSocialSources();
+
+    state.customStageTypes = persistCustomStageTypes([
+      ...getStoredCustomStageTypes(),
+      ...(stageTypeRows || []).map((item) => item?.name)
+    ]);
+    state.hiddenPresetStageTypes = persistHiddenPresetStageTypes(getStoredHiddenPresetStageTypes());
+    state.departments = departmentRows || [];
+
+    if (includeProfiles) {
+      state.profiles = profileRows || [];
+      state.profilesLoaded = true;
+    }
+    if (includeAdminData) {
+      state.accessRequests = accessRequestRows || [];
+      state.adminRequests = adminRequestRows || [];
+      state.adminDataLoaded = true;
+    }
+
+    renderDepartmentSelects();
+    syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
+    writeStoredAppDataCache();
+    void ensureStageNamesWithoutTrailingPeriods({ silent: silentRender });
+    void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
+  }
+
+  async function runLoadAppDataRouteMigration({
+    includeProfiles = false,
+    includeAdminData = false
+  } = {}) {
+    const migratedRoutes = await ensureFunnelRouteMigration();
+    if (!migratedRoutes) return false;
+    return loadAppData({
+      includeProfiles,
+      includeAdminData,
+      runRouteMigration: false
+    });
+  }
+
+  async function runLoadAppDataCaptureNormalization({
+    includeProfiles = false,
+    includeAdminData = false,
+    restoreUiState = false,
+    silentRender = false
+  } = {}) {
+    const normalizedCapture = await ensureB2CExternalCaptureNormalization();
+    if (!normalizedCapture) return false;
+    return loadAppData({
+      includeProfiles,
+      includeAdminData,
+      runRouteMigration: false,
+      restoreUiState,
+      silentRender
+    });
+  }
+
+  async function runLoadAppDataFollowUps({
+    includeProfiles = false,
+    includeAdminData = false,
+    runRouteMigration = true,
+    restoreUiState = false,
+    silentRender = false
+  } = {}) {
+    if (runRouteMigration) {
+      try {
+        const routeMigrationResult = await runLoadAppDataRouteMigration({
+          includeProfiles,
+          includeAdminData
+        });
+        if (routeMigrationResult) {
+          return routeMigrationResult;
+        }
+      } catch (migrationError) {
+        console.error("Erro ao executar migração automática de funis:", migrationError);
+        const message = String(migrationError?.message || "");
+        if (!/row-level security policy/i.test(message)) {
+          alert(`Não foi possível concluir a migração automática dos funis: ${message}`);
+        }
+      }
+    }
+
+    try {
+      await ensureExternalActionsFunnelMerge();
+    } catch (mergeError) {
+      console.warn("Erro ao consolidar funis de Ações Externas:", mergeError);
+    }
+
+    try {
+      const captureNormalizationResult = await runLoadAppDataCaptureNormalization({
+        includeProfiles,
+        includeAdminData,
+        restoreUiState,
+        silentRender
+      });
+      if (captureNormalizationResult) {
+        return captureNormalizationResult;
+      }
+    } catch (captureNormalizationError) {
+      console.warn("Erro ao normalizar Captura na ação do B2C:", captureNormalizationError);
+      const message = String(captureNormalizationError?.message || "");
+      if (!/row-level security policy/i.test(message)) {
+        alert(`Não foi possível normalizar o subfunil Captura na ação: ${message}`);
+      }
+    }
+
+    return null;
   }
 
   async function loadAppData(options = {}) {
@@ -11095,89 +11303,30 @@
       return;
     }
 
-    const stabilizedStageRows = stabilizeTransientStageRows(stagesRes.data || []);
-    state.stages = stabilizedStageRows.map(normalizeStage);
-    const rawLeads = leadsRes.data || [];
-    const missingSocialSourceLeadIds = rawLeads
-      .filter((lead) => !normalizeSpacing(lead?.social_source || ""))
-      .map((lead) => lead.id);
-    const profileOwnerNames = includeProfiles ? (profilesRes.data || []) : state.profiles;
-    state.ownerCanonicalMap = buildOwnerCanonicalMap(rawLeads.map((lead) => lead?.owner), profileOwnerNames);
-    state.socialSourceCanonicalMap = buildCanonicalValueMap(rawLeads.map((lead) => lead?.social_source), "social_source");
-    state.leads = rawLeads.map((lead) => normalizeLead(lead, {
-      ownerMap: state.ownerCanonicalMap,
-      socialSourceMap: state.socialSourceCanonicalMap
-    }));
-    state.leadSources = normalizeLeadSources(leadSourcesRes.data || []);
-    state.socialSources = normalizeSocialSources([
-      ...readStoredSocialSources(),
-      DEFAULT_SOCIAL_SOURCE,
-      ...rawLeads.map((lead) => lead?.social_source || "")
-    ]);
-    writeStoredSocialSources();
-    state.customStageTypes = persistCustomStageTypes([
-      ...getStoredCustomStageTypes(),
-      ...(stageTypesRes.data || []).map((item) => item?.name)
-    ]);
-    state.hiddenPresetStageTypes = persistHiddenPresetStageTypes(getStoredHiddenPresetStageTypes());
-    state.departments = departmentsRes.data || [];
-    if (includeProfiles) {
-      state.profiles = profilesRes.data || [];
-      state.profilesLoaded = true;
-    }
-    if (includeAdminData) {
-      state.accessRequests = accessRequestsRes.data || [];
-      state.adminRequests = adminRequestsRes.data || [];
-      state.adminDataLoaded = true;
-    }
-    renderDepartmentSelects();
-    syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
-    writeStoredAppDataCache();
-    void ensureStageNamesWithoutTrailingPeriods({ silent: silentRender });
-    void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
+    applyLoadedAppDataSnapshot({
+      stageRows: stagesRes.data || [],
+      leadRows: leadsRes.data || [],
+      profileRows: profilesRes.data || [],
+      stageTypeRows: stageTypesRes.data || [],
+      leadSourceRows: leadSourcesRes.data || [],
+      accessRequestRows: accessRequestsRes.data || [],
+      adminRequestRows: adminRequestsRes.data || [],
+      departmentRows: departmentsRes.data || [],
+      remoteFunnelWorkspace,
+      includeProfiles,
+      includeAdminData,
+      silentRender
+    });
 
-    if (runRouteMigration) {
-      try {
-        const migratedRoutes = await ensureFunnelRouteMigration();
-        if (migratedRoutes) {
-          return loadAppData({
-            includeProfiles,
-            includeAdminData,
-            runRouteMigration: false
-          });
-        }
-      } catch (migrationError) {
-        console.error("Erro ao executar migração automática de funis:", migrationError);
-        const message = String(migrationError?.message || "");
-        if (!/row-level security policy/i.test(message)) {
-          alert(`Não foi possível concluir a migração automática dos funis: ${message}`);
-        }
-      }
-    }
-
-    try {
-      await ensureExternalActionsFunnelMerge();
-    } catch (mergeError) {
-      console.warn("Erro ao consolidar funis de Ações Externas:", mergeError);
-    }
-
-    try {
-      const normalizedCapture = await ensureB2CExternalCaptureNormalization();
-      if (normalizedCapture) {
-        return loadAppData({
-          includeProfiles,
-          includeAdminData,
-          runRouteMigration: false,
-          restoreUiState,
-          silentRender
-        });
-      }
-    } catch (captureNormalizationError) {
-      console.warn("Erro ao normalizar Captura na ação do B2C:", captureNormalizationError);
-      const message = String(captureNormalizationError?.message || "");
-      if (!/row-level security policy/i.test(message)) {
-        alert(`Não foi possível normalizar o subfunil Captura na ação: ${message}`);
-      }
+    const followUpResult = await runLoadAppDataFollowUps({
+      includeProfiles,
+      includeAdminData,
+      runRouteMigration,
+      restoreUiState,
+      silentRender
+    });
+    if (followUpResult) {
+      return followUpResult;
     }
 
     if (restoreUiState) {
@@ -11871,9 +12020,8 @@
     return result;
   }
 
-  function renderStats() {
-    const metrics = getDashboardMetrics();
-    const nextSignature = JSON.stringify({
+  function buildDashboardMetricsSignature(metrics = {}) {
+    return JSON.stringify({
       total: metrics.total,
       totalValue: Number(metrics.totalValue || 0).toFixed(2),
       closed: metrics.closed,
@@ -11887,14 +12035,12 @@
       topOwner: metrics.topOwner?.[0] || "-",
       topReferral: metrics.topReferral?.[0] || "-",
       bestMonth: metrics.bestMonth?.[0] || "-",
-      closedPlans: metrics.planSummary.reduce((sum, item) => sum + item.count, 0),
-      planSummary: metrics.planSummary.map((item) => [item.plan, item.unitValue, item.count, item.totalValue])
+      closedPlans: (metrics.planSummary || []).reduce((sum, item) => sum + item.count, 0),
+      planSummary: (metrics.planSummary || []).map((item) => [item.plan, item.unitValue, item.count, item.totalValue])
     });
-    if (state.reportStatsSignature === nextSignature) {
-      return;
-    }
-    state.reportStatsSignature = nextSignature;
+  }
 
+  function applyHeaderDashboardMetrics(metrics = {}) {
     if (els.totalLeads) els.totalLeads.textContent = metrics.total;
     if (els.totalValue) els.totalValue.textContent = brMoney(metrics.totalValue);
     if (els.closedDeals) els.closedDeals.textContent = metrics.closed;
@@ -11903,7 +12049,9 @@
     if (els.topStage) els.topStage.textContent = metrics.topStage?.name || "-";
     if (els.paidRate) els.paidRate.textContent = metrics.paidCount;
     if (els.organicLeads) els.organicLeads.textContent = metrics.organicCount;
+  }
 
+  function applyReportDashboardMetrics(metrics = {}) {
     if (els.reportTotalLeads) els.reportTotalLeads.textContent = metrics.total;
     if (els.reportClosedValue) els.reportClosedValue.textContent = brMoney(metrics.totalValue);
     if (els.reportClosedDeals) els.reportClosedDeals.textContent = metrics.closed;
@@ -11915,11 +12063,13 @@
     if (els.reportTopReferral) els.reportTopReferral.textContent = metrics.topReferral?.[0] || "-";
     if (els.reportTopStage) els.reportTopStage.textContent = metrics.topStage?.name || "-";
     if (els.reportBestMonth) els.reportBestMonth.textContent = metrics.bestMonth?.[0] ? formatMonthLabel(metrics.bestMonth[0]) : "-";
-    if (els.reportClosedPlans) els.reportClosedPlans.textContent = metrics.planSummary.reduce((sum, item) => sum + item.count, 0);
+    if (els.reportClosedPlans) els.reportClosedPlans.textContent = (metrics.planSummary || []).reduce((sum, item) => sum + item.count, 0);
+  }
 
-    if (els.planSummaryBody) {
-      els.planSummaryBody.innerHTML = metrics.planSummary.length
-        ? metrics.planSummary.map((item) => `
+  function renderPlanSummaryTable(metrics = {}) {
+    if (!els.planSummaryBody) return;
+    els.planSummaryBody.innerHTML = (metrics.planSummary || []).length
+      ? metrics.planSummary.map((item) => `
           <tr>
             <td>${escapeHtml(item.plan)}</td>
             <td>${formatPlanValue(item.unitValue)}</td>
@@ -11927,8 +12077,20 @@
             <td>${formatPlanValue(item.totalValue)}</td>
           </tr>
         `).join("")
-        : '<tr><td colspan="4" class="empty-state">Nenhum fechamento com valor encontrado.</td></tr>';
+      : '<tr><td colspan="4" class="empty-state">Nenhum fechamento com valor encontrado.</td></tr>';
+  }
+
+  function renderStats() {
+    const metrics = getDashboardMetrics();
+    const nextSignature = buildDashboardMetricsSignature(metrics);
+    if (state.reportStatsSignature === nextSignature) {
+      return;
     }
+    state.reportStatsSignature = nextSignature;
+
+    applyHeaderDashboardMetrics(metrics);
+    applyReportDashboardMetrics(metrics);
+    renderPlanSummaryTable(metrics);
   }
 
   function renderPipelineStageStrip(filtered = getFilteredLeads()) {
@@ -12787,29 +12949,43 @@
     return getChartPalette(state.stages.length);
   }
 
-  function scheduleReportChartsRender() {
+  function queueReportChartsRenderFrame(callback) {
     if (state.reportChartsRenderFrame) {
       cancelAnimationFrame(state.reportChartsRenderFrame);
     }
 
     state.reportChartsRenderFrame = requestAnimationFrame(() => {
       state.reportChartsRenderFrame = null;
+      callback?.();
+    });
+  }
+
+  function scheduleReportChartsRender() {
+    queueReportChartsRenderFrame(() => {
       if (state.activeView !== "relatorios") return;
       renderCharts();
     });
+  }
+
+  function isActiveReportViewMounted() {
+    const reportView = $("view-relatorios");
+    return Boolean(reportView && reportView.classList.contains("active-view"));
+  }
+
+  function cancelPendingReportChartBatch() {
+    if (state.reportChartsBatchFrame) {
+      cancelAnimationFrame(state.reportChartsBatchFrame);
+      state.reportChartsBatchFrame = null;
+    }
   }
 
   function renderCharts() {
     if (typeof Chart === "undefined") return;
     const reportChartKeys = ["pipeline", "traffic", "owner", "yearlyDaily", "monthly", "social", "ownerMonthlyAverage", "referralSector", "planCount", "planRevenue"];
 
-    if (state.reportChartsBatchFrame) {
-      cancelAnimationFrame(state.reportChartsBatchFrame);
-      state.reportChartsBatchFrame = null;
-    }
+    cancelPendingReportChartBatch();
 
-    const reportView = $("view-relatorios");
-    if (!reportView || !reportView.classList.contains("active-view")) return;
+    if (!isActiveReportViewMounted()) return;
 
     const filtered = getFilteredLeads();
     const metrics = getDashboardMetrics(filtered);
@@ -13434,16 +13610,8 @@
     document.body.classList.remove("modal-open");
   }
 
-  async function submitFunnelGroupForm(event) {
-    event.preventDefault();
-    if (!canManageAdminAreas() || !state.funnelWorkspace) return;
-
+  function collectFunnelGroupFormSubmissionContext() {
     const name = normalizeSpacing(els.funnelGroupName?.value || "");
-    if (!name) {
-      alert("Informe o nome do grupo.");
-      return;
-    }
-
     const category = FUNNEL_CATEGORIES.includes(String(els.funnelGroupCategory?.value || "").trim())
       ? String(els.funnelGroupCategory.value).trim()
       : "B2C";
@@ -13455,7 +13623,14 @@
 
     const existingGroup = getGroupById(els.funnelGroupId?.value || "");
     const categoryChanged = Boolean(existingGroup) && String(existingGroup.category || "") !== String(category || "");
-    const nextGroup = {
+    return {
+      name,
+      category,
+      ownerDepartmentId,
+      departmentPermissions,
+      existingGroup,
+      categoryChanged,
+      nextGroup: {
       id: existingGroup?.id || createFunnelGroupId(),
       name,
       category,
@@ -13465,47 +13640,72 @@
       collapsed: Boolean(existingGroup?.collapsed),
       created_by: existingGroup?.created_by || state.currentUser?.id || null,
       created_at: existingGroup?.created_at || new Date().toISOString()
+      }
     };
+  }
 
-    try {
-      await executeFunnelWorkspaceMetaMutation({
-        applyLocal: () => {
-          if (existingGroup) {
-            upsertFunnelGroupLocally(nextGroup);
-            updateFunnelsInGroupLocally(existingGroup.id, (funnel) => ({
-              ...funnel,
-              category
-            }));
-          } else {
-            upsertFunnelGroupLocally(nextGroup);
-          }
-        },
-        persist: async () => {
-          const affectedFunnels = categoryChanged
-            ? (state.funnelWorkspace?.funnels || []).filter((funnel) => (
-                String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
-              ))
-            : [];
-          if (affectedFunnels.length) {
-            await persistFunnelsSubsetToSupabase(affectedFunnels, {
-              includeSubfunnels: false,
-              includePermissions: false
-            });
-          }
-          await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
-        }
-      });
-    } catch (error) {
-      alert(`Erro ao salvar grupo: ${formatSupabaseError(error)}`);
+  function validateFunnelGroupFormSubmissionContext(context = {}) {
+    if (!context.name) {
+      alert("Informe o nome do grupo.");
+      return false;
+    }
+    return true;
+  }
+
+  function applyFunnelGroupSubmissionLocally(context = {}) {
+    if (context.existingGroup) {
+      upsertFunnelGroupLocally(context.nextGroup);
+      updateFunnelsInGroupLocally(context.existingGroup.id, (funnel) => ({
+        ...funnel,
+        category: context.category
+      }));
       return;
     }
+    upsertFunnelGroupLocally(context.nextGroup);
+  }
 
+  async function persistFunnelGroupSubmission(context = {}) {
+    const affectedFunnels = context.categoryChanged
+      ? (state.funnelWorkspace?.funnels || []).filter((funnel) => (
+          String(funnel?.group_id || "").trim() === String(context.nextGroup.id || "").trim()
+        ))
+      : [];
+    if (affectedFunnels.length) {
+      await persistFunnelsSubsetToSupabase(affectedFunnels, {
+        includeSubfunnels: false,
+        includePermissions: false
+      });
+    }
+    await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
+  }
+
+  function finalizeFunnelGroupMutation() {
     closeFunnelGroupModal();
     finalizeLocalMutation({
       notifyScope: "funnel-workspace",
       refreshReason: "group-save",
       cooldownMs: 1800
     });
+  }
+
+  async function submitFunnelGroupForm(event) {
+    event.preventDefault();
+    if (!canManageAdminAreas() || !state.funnelWorkspace) return;
+
+    const context = collectFunnelGroupFormSubmissionContext();
+    if (!validateFunnelGroupFormSubmissionContext(context)) return;
+
+    try {
+      await executeFunnelWorkspaceMetaMutation({
+        applyLocal: () => applyFunnelGroupSubmissionLocally(context),
+        persist: async () => persistFunnelGroupSubmission(context)
+      });
+    } catch (error) {
+      alert(`Erro ao salvar grupo: ${formatSupabaseError(error)}`);
+      return;
+    }
+
+    finalizeFunnelGroupMutation();
   }
 
   function toggleFunnelGroup(groupId) {
@@ -14092,56 +14292,69 @@
     return true;
   }
 
+  function buildFullFunnelSubmissionSubfunnels(context = {}) {
+    return buildFunnelSubfunnels(context.subfunnelNames, context.previousSubfunnels);
+  }
+
+  function applyFullFunnelSubmissionLocally(context = {}, nextSubfunnels = []) {
+    if (context.existingFunnel) {
+      applyExistingFunnelWorkspaceUpdate(context.existingFunnel.id, {
+        name: context.name,
+        category: context.category,
+        ownerDepartmentId: context.officialDepartmentId,
+        visibilityScope: context.visibilityScope,
+        visibilityAccessLevel: context.visibilityAccessLevel,
+        departmentPermissions: context.selectedDepartmentPermissions,
+        departmentIds: context.selectedDepartmentIds,
+        previousSubfunnels: context.previousSubfunnels,
+        nextSubfunnels
+      });
+      return;
+    }
+
+    createFunnelInWorkspace({
+      name: context.name,
+      category: context.category,
+      ownerDepartmentId: context.officialDepartmentId,
+      visibilityScope: context.visibilityScope,
+      visibilityAccessLevel: context.visibilityAccessLevel,
+      departmentPermissions: context.selectedDepartmentPermissions,
+      departmentIds: context.selectedDepartmentIds,
+      subfunnels: nextSubfunnels
+    });
+  }
+
+  async function persistFullFunnelSubmission(context = {}) {
+    const targetFunnelId = context.existingFunnel?.id || state.activeFunnelId;
+    await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
+      includeSubfunnels: true,
+      includePermissions: true
+    });
+    await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
+  }
+
+  function finalizeFullFunnelSubmission() {
+    finalizeFunnelModalMutation({
+      refreshReason: "funnel-save",
+      cooldownMs: 1800,
+      bindFunnelHub: true
+    });
+  }
+
   async function submitFullFunnelFormChange(context = {}) {
-    const nextSubfunnels = buildFunnelSubfunnels(context.subfunnelNames, context.previousSubfunnels);
+    const nextSubfunnels = buildFullFunnelSubmissionSubfunnels(context);
 
     try {
       await executeFunnelWorkspaceMetaMutation({
-        applyLocal: () => {
-          if (context.existingFunnel) {
-            applyExistingFunnelWorkspaceUpdate(context.existingFunnel.id, {
-              name: context.name,
-              category: context.category,
-              ownerDepartmentId: context.officialDepartmentId,
-              visibilityScope: context.visibilityScope,
-              visibilityAccessLevel: context.visibilityAccessLevel,
-              departmentPermissions: context.selectedDepartmentPermissions,
-              departmentIds: context.selectedDepartmentIds,
-              previousSubfunnels: context.previousSubfunnels,
-              nextSubfunnels
-            });
-          } else {
-            createFunnelInWorkspace({
-              name: context.name,
-              category: context.category,
-              ownerDepartmentId: context.officialDepartmentId,
-              visibilityScope: context.visibilityScope,
-              visibilityAccessLevel: context.visibilityAccessLevel,
-              departmentPermissions: context.selectedDepartmentPermissions,
-              departmentIds: context.selectedDepartmentIds,
-              subfunnels: nextSubfunnels
-            });
-          }
-        },
-        persist: async () => {
-          const targetFunnelId = context.existingFunnel?.id || state.activeFunnelId;
-          await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
-            includeSubfunnels: true,
-            includePermissions: true
-          });
-          await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
-        }
+        applyLocal: () => applyFullFunnelSubmissionLocally(context, nextSubfunnels),
+        persist: async () => persistFullFunnelSubmission(context)
       });
     } catch (error) {
       alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
       return false;
     }
 
-    finalizeFunnelModalMutation({
-      refreshReason: "funnel-save",
-      cooldownMs: 1800,
-      bindFunnelHub: true
-    });
+    finalizeFullFunnelSubmission();
     return true;
   }
 
@@ -14212,9 +14425,8 @@
 
     void ensureChartLibrary()
       .then(() => {
-        if (state.activeView === "relatorios") {
-          scheduleReportChartsRender();
-        }
+        if (state.activeView !== "relatorios") return;
+        scheduleReportChartsRender();
       })
       .catch((error) => {
         console.error("Erro ao carregar biblioteca de gráficos:", error);
@@ -16118,42 +16330,50 @@
     return true;
   }
 
+  function buildLeadNotificationNotes(context = {}) {
+    return serializeLeadMeta({
+      ...context.existingMeta,
+      reminder: context.nextReminder
+    });
+  }
+
+  async function persistLeadNotificationChange(targetId, context = {}) {
+    const nextNotes = buildLeadNotificationNotes(context);
+
+    await executeCriticalMutation({
+      snapshot: {
+        leads: true
+      },
+      applyOptimistic: () => {
+        applyLeadReminderLocally(targetId, context.nextReminder);
+      },
+      persist: async () => {
+        const { error } = await state.supabase
+          .from("leads")
+          .update({ notes: nextNotes })
+          .eq("id", targetId);
+        if (error) throw error;
+      },
+      afterPersist: async () => {
+        renderNotifications();
+        notifyLiveSyncChange("workspace");
+        await logChange(
+          "update",
+          "lead_notification",
+          targetId,
+          `Notificação do lead "${context.lead.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+          { before: context.existingMeta.reminder || null, after: context.nextReminder }
+        );
+      }
+    });
+  }
+
   async function submitLeadNotification(targetId) {
     const context = collectLeadNotificationContext(targetId);
     if (!validateLeadNotificationContext(context)) return false;
 
-    const nextNotes = serializeLeadMeta({
-      ...context.existingMeta,
-      reminder: context.nextReminder
-    });
-
     try {
-      await executeCriticalMutation({
-        snapshot: {
-          leads: true
-        },
-        applyOptimistic: () => {
-          applyLeadReminderLocally(targetId, context.nextReminder);
-        },
-        persist: async () => {
-          const { error } = await state.supabase
-            .from("leads")
-            .update({ notes: nextNotes })
-            .eq("id", targetId);
-          if (error) throw error;
-        },
-        afterPersist: async () => {
-          renderNotifications();
-          notifyLiveSyncChange("workspace");
-          await logChange(
-            "update",
-            "lead_notification",
-            targetId,
-            `Notificação do lead "${context.lead.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
-            { before: context.existingMeta.reminder || null, after: context.nextReminder }
-          );
-        }
-      });
+      await persistLeadNotificationChange(targetId, context);
     } catch (error) {
       alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
       return false;
@@ -16196,58 +16416,74 @@
     return true;
   }
 
+  async function persistConflictingLeadReminderCleanup(conflictingLeads = []) {
+    for (const lead of conflictingLeads) {
+      const meta = getLeadMeta(lead.notes || "", lead.value || 0);
+      const { error } = await state.supabase
+        .from("leads")
+        .update({
+          notes: serializeLeadMeta({
+            ...meta,
+            reminder: null
+          })
+        })
+        .eq("id", lead.id);
+      if (error) throw error;
+    }
+  }
+
+  async function persistStageNotificationChange(targetId, context = {}) {
+    await executeCriticalMutation({
+      snapshot: {
+        leads: true,
+        funnelWorkspace: true,
+        selectedLeadIds: true
+      },
+      applyOptimistic: () => {
+        applyStageReminderConfigLocally(targetId, context.nextReminder);
+        context.conflictingLeads.forEach((lead) => applyLeadReminderLocally(lead.id, null));
+      },
+      persist: async () => {
+        if (state.funnelDataLoadedFromSupabase) {
+          await persistStageReminderConfigToSupabase(targetId, context.nextReminder);
+        }
+        await persistConflictingLeadReminderCleanup(context.conflictingLeads);
+      },
+      afterPersist: async () => {
+        renderNotifications();
+        notifyLiveSyncChange("stage-reminder-config");
+        await logChange(
+          "update",
+          "stage_notification",
+          targetId,
+          `Notificação da pipeline "${context.stage?.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+          { before: context.previousReminder, after: context.nextReminder }
+        );
+      }
+    });
+  }
+
   async function submitStageNotification(targetId) {
     const context = collectStageNotificationContext(targetId);
     if (!validateStageNotificationContext(context)) return false;
 
     try {
-      await executeCriticalMutation({
-        snapshot: {
-          leads: true,
-          funnelWorkspace: true,
-          selectedLeadIds: true
-        },
-        applyOptimistic: () => {
-          applyStageReminderConfigLocally(targetId, context.nextReminder);
-          context.conflictingLeads.forEach((lead) => applyLeadReminderLocally(lead.id, null));
-        },
-        persist: async () => {
-          if (state.funnelDataLoadedFromSupabase) {
-            await persistStageReminderConfigToSupabase(targetId, context.nextReminder);
-          }
-
-          for (const lead of context.conflictingLeads) {
-            const meta = getLeadMeta(lead.notes || "", lead.value || 0);
-            const { error } = await state.supabase
-              .from("leads")
-              .update({
-                notes: serializeLeadMeta({
-                  ...meta,
-                  reminder: null
-                })
-              })
-              .eq("id", lead.id);
-            if (error) throw error;
-          }
-        },
-        afterPersist: async () => {
-          renderNotifications();
-          notifyLiveSyncChange("stage-reminder-config");
-          await logChange(
-            "update",
-            "stage_notification",
-            targetId,
-            `Notificação da pipeline "${context.stage?.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
-            { before: context.previousReminder, after: context.nextReminder }
-          );
-        }
-      });
+      await persistStageNotificationChange(targetId, context);
     } catch (error) {
       alert(`Erro ao salvar notificação da pipeline: ${formatSupabaseError(error)}`);
       return false;
     }
 
     return true;
+  }
+
+  function finalizeNotificationMutation() {
+    closeNotificationModal();
+    finalizeLocalMutation({
+      notifyScope: null,
+      refreshReason: "notification-save",
+      cooldownMs: 1200
+    });
   }
 
   async function submitNotification(event) {
@@ -16266,12 +16502,7 @@
       if (!savedStageNotification) return;
     }
 
-    closeNotificationModal();
-    finalizeLocalMutation({
-      notifyScope: null,
-      refreshReason: "notification-save",
-      cooldownMs: 1200
-    });
+    finalizeNotificationMutation();
   }
 
   function collectLeadMoveContext(leadId, stageId) {
@@ -16306,6 +16537,40 @@
     };
   }
 
+  function applyLeadMoveOptimistic(context = {}, stageId) {
+    updateLeadsLocallyByIds([context.lead.id], (item) => ({
+      ...item,
+      stage_id: stageId,
+      notes: context.nextNotes
+    }));
+    if (context.shouldPersistLeadSubfunnelChange) {
+      assignLeadToSubfunnel(context.lead.id, context.targetSubfunnelId, { deferSync: true });
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+    }
+  }
+
+  async function persistLeadMoveRecord(context = {}, stageId) {
+    const { error } = await state.supabase
+      .from("leads")
+      .update({
+        stage_id: stageId,
+        notes: context.nextNotes
+      })
+      .eq("id", context.lead.id);
+    if (error) throw error;
+
+    if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
+      await persistLeadAssignmentsToSupabase([context.lead.id], context.targetSubfunnelId);
+    }
+  }
+
+  async function finalizeLeadMovePersistence(context = {}) {
+    if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
+      notifyLiveSyncChange("funnel-workspace");
+    }
+  }
+
   function validateLeadMoveContext(context = {}, stageId) {
     if (!context.lead || !context.stage || context.lead.stage_id === stageId) return false;
     if (!canMoveLeads(context.lead)) {
@@ -16322,38 +16587,26 @@
         funnelWorkspace: true,
         selectedLeadIds: true
       },
-      applyOptimistic: () => {
-        updateLeadsLocallyByIds([context.lead.id], (item) => ({
-          ...item,
-          stage_id: stageId,
-          notes: context.nextNotes
-        }));
-        if (context.shouldPersistLeadSubfunnelChange) {
-          assignLeadToSubfunnel(context.lead.id, context.targetSubfunnelId, { deferSync: true });
-          state.suppressFunnelSync = true;
-          writeStoredFunnelWorkspace();
-        }
-      },
-      persist: async () => {
-        const { error } = await state.supabase
-          .from("leads")
-          .update({
-            stage_id: stageId,
-            notes: context.nextNotes
-          })
-          .eq("id", context.lead.id);
-        if (error) throw error;
-
-        if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
-          await persistLeadAssignmentsToSupabase([context.lead.id], context.targetSubfunnelId);
-        }
-      },
-      afterPersist: async () => {
-        if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
-          notifyLiveSyncChange("funnel-workspace");
-        }
-      }
+      applyOptimistic: () => applyLeadMoveOptimistic(context, stageId),
+      persist: async () => persistLeadMoveRecord(context, stageId),
+      afterPersist: async () => finalizeLeadMovePersistence(context)
     });
+  }
+
+  async function logLeadMoveChange(context = {}) {
+    await logChange(
+      "move_stage",
+      "lead",
+      context.lead.id,
+      `Lead "${context.lead.name}" foi movido de "${context.fromStage?.name || "-"}" para "${context.stage.name}" por ${getUserDisplayName()}.`,
+      {
+        lead_id: context.lead.id,
+        from_stage_id: context.fromStage?.id || null,
+        from_stage_name: context.fromStage?.name || null,
+        to_stage_id: context.stage.id,
+        to_stage_name: context.stage.name
+      }
+    );
   }
 
   async function moveLeadToStage(leadId, stageId) {
@@ -16368,19 +16621,7 @@
 
     queueLocalConsistencyRefresh("lead-move", 900);
 
-    void logChange(
-      "move_stage",
-      "lead",
-      context.lead.id,
-      `Lead "${context.lead.name}" foi movido de "${context.fromStage?.name || "-"}" para "${context.stage.name}" por ${getUserDisplayName()}.`,
-      {
-        lead_id: context.lead.id,
-        from_stage_id: context.fromStage?.id || null,
-        from_stage_name: context.fromStage?.name || null,
-        to_stage_id: context.stage.id,
-        to_stage_name: context.stage.name
-      }
-    ).catch((historyError) => {
+    void logLeadMoveChange(context).catch((historyError) => {
       console.error("Erro ao registrar movimentação de lead:", historyError);
     });
   }
