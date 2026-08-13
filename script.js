@@ -4339,11 +4339,7 @@
         if (error) throw error;
       }
 
-      const updateMap = new Map(updates.map((item) => [String(item.id), item.after]));
-      state.stages = state.stages.map((stage) => {
-        const nextName = updateMap.get(String(stage.id || ""));
-        return nextName ? normalizeStage({ ...stage, name: nextName }) : normalizeStage(stage);
-      });
+      applyStageNameUpdatesLocally(updates);
       writeStoredAppDataCache();
       if (!options.silent) {
         renderAll();
@@ -4692,17 +4688,16 @@
   }
 
   function applyLeadReminderLocally(leadId, nextReminder) {
-    state.leads = state.leads.map((lead) => {
-      if (lead.id !== leadId) return lead;
+    updateLeadsLocallyByIds([leadId], (lead) => {
       const meta = getLeadMeta(lead.notes || "", lead.value || 0);
       const nextMeta = {
         ...meta,
         reminder: nextReminder || null
       };
-      return normalizeLead({
+      return {
         ...lead,
         notes: serializeLeadMeta(nextMeta)
-      });
+      };
     });
   }
 
@@ -4803,6 +4798,168 @@
     );
   }
 
+  function sortStagesCollection(items = []) {
+    return [...(Array.isArray(items) ? items : [])].sort((a, b) => Number(a?.position) - Number(b?.position));
+  }
+
+  function sortStagesByStablePosition(items = []) {
+    return [...(Array.isArray(items) ? items : [])].sort((a, b) => {
+      const positionA = Number(a?.position);
+      const positionB = Number(b?.position);
+      const safePositionA = Number.isFinite(positionA) ? positionA : Number.MAX_SAFE_INTEGER;
+      const safePositionB = Number.isFinite(positionB) ? positionB : Number.MAX_SAFE_INTEGER;
+      if (safePositionA !== safePositionB) return safePositionA - safePositionB;
+      return String(a?.id || "").localeCompare(String(b?.id || ""));
+    });
+  }
+
+  function reorderListByIndex(items = [], currentIndex, targetIndex) {
+    const normalizedItems = Array.isArray(items) ? [...items] : [];
+    const boundedCurrentIndex = Math.max(0, Math.min(Number(currentIndex), normalizedItems.length - 1));
+    const boundedTargetIndex = Math.max(0, Math.min(Number(targetIndex), normalizedItems.length - 1));
+    if (!normalizedItems.length || !Number.isFinite(boundedCurrentIndex) || !Number.isFinite(boundedTargetIndex)) {
+      return normalizedItems;
+    }
+    if (boundedCurrentIndex === boundedTargetIndex) return normalizedItems;
+
+    const [movedItem] = normalizedItems.splice(boundedCurrentIndex, 1);
+    if (typeof movedItem === "undefined") return normalizedItems;
+    normalizedItems.splice(boundedTargetIndex, 0, movedItem);
+    return normalizedItems;
+  }
+
+  function reorderSubfunnelsInFunnelLocally(funnelId, subfunnelId, targetIndex) {
+    const funnel = getFunnelById(funnelId);
+    if (!funnel) return false;
+
+    const currentSubfunnels = [...(funnel.subfunnels || [])];
+    const currentIndex = currentSubfunnels.findIndex((item) => item.id === subfunnelId);
+    if (currentIndex === -1) return false;
+
+    const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), currentSubfunnels.length - 1));
+    if (!Number.isFinite(normalizedTargetIndex) || normalizedTargetIndex === currentIndex) return false;
+
+    funnel.subfunnels = reorderListByIndex(currentSubfunnels, currentIndex, normalizedTargetIndex);
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+    return true;
+  }
+
+  function upsertFunnelGroupLocally(group) {
+    if (!group?.id || !state.funnelWorkspace) return null;
+    const currentGroups = [...(state.funnelWorkspace.groups || [])];
+    const currentIndex = currentGroups.findIndex((item) => String(item?.id || "").trim() === String(group.id || "").trim());
+    if (currentIndex === -1) {
+      state.funnelWorkspace.groups = [...currentGroups, group];
+    } else {
+      state.funnelWorkspace.groups = currentGroups.map((item, index) => (index === currentIndex ? group : item));
+    }
+    return group;
+  }
+
+  function updateFunnelGroupLocally(groupId, updater) {
+    const normalizedGroupId = String(groupId || "").trim();
+    if (!normalizedGroupId || !state.funnelWorkspace || typeof updater !== "function") return null;
+
+    let updatedGroup = null;
+    state.funnelWorkspace.groups = (state.funnelWorkspace.groups || []).map((group) => {
+      if (String(group?.id || "").trim() !== normalizedGroupId) return group;
+      updatedGroup = updater(group) || group;
+      return updatedGroup;
+    });
+    return updatedGroup;
+  }
+
+  function upsertFunnelLocally(funnel) {
+    if (!funnel?.id || !state.funnelWorkspace) return null;
+    const currentFunnels = [...(state.funnelWorkspace.funnels || [])];
+    const currentIndex = currentFunnels.findIndex((item) => String(item?.id || "").trim() === String(funnel.id || "").trim());
+    if (currentIndex === -1) {
+      state.funnelWorkspace.funnels = [...currentFunnels, funnel];
+    } else {
+      state.funnelWorkspace.funnels = currentFunnels.map((item, index) => (index === currentIndex ? funnel : item));
+    }
+    return funnel;
+  }
+
+  function updateFunnelLocally(funnelId, updater) {
+    const normalizedFunnelId = String(funnelId || "").trim();
+    if (!normalizedFunnelId || !state.funnelWorkspace || typeof updater !== "function") return null;
+
+    let updatedFunnel = null;
+    state.funnelWorkspace.funnels = (state.funnelWorkspace.funnels || []).map((funnel) => {
+      if (String(funnel?.id || "").trim() !== normalizedFunnelId) return funnel;
+      updatedFunnel = updater(funnel) || funnel;
+      return updatedFunnel;
+    });
+    return updatedFunnel;
+  }
+
+  function updateFunnelsInGroupLocally(groupId, updater) {
+    const normalizedGroupId = String(groupId || "").trim();
+    if (!normalizedGroupId || !state.funnelWorkspace || typeof updater !== "function") return 0;
+
+    let updatedCount = 0;
+    state.funnelWorkspace.funnels = (state.funnelWorkspace.funnels || []).map((funnel) => {
+      if (String(funnel?.group_id || "").trim() !== normalizedGroupId) return funnel;
+      updatedCount += 1;
+      return updater(funnel) || funnel;
+    });
+    return updatedCount;
+  }
+
+  function removeFunnelGroupLocally(groupId) {
+    const normalizedGroupId = String(groupId || "").trim();
+    if (!normalizedGroupId || !state.funnelWorkspace) return 0;
+
+    const previousCount = (state.funnelWorkspace.groups || []).length;
+    state.funnelWorkspace.groups = (state.funnelWorkspace.groups || []).filter(
+      (group) => String(group?.id || "").trim() !== normalizedGroupId
+    );
+    return previousCount - state.funnelWorkspace.groups.length;
+  }
+
+  function clearFunnelsGroupLocally(groupId) {
+    const normalizedGroupId = String(groupId || "").trim();
+    if (!normalizedGroupId || !state.funnelWorkspace) return 0;
+
+    let updatedCount = 0;
+    state.funnelWorkspace.funnels = (state.funnelWorkspace.funnels || []).map((funnel) => {
+      if (String(funnel?.group_id || "").trim() !== normalizedGroupId) return funnel;
+      updatedCount += 1;
+      return {
+        ...funnel,
+        group_id: null
+      };
+    });
+    return updatedCount;
+  }
+
+  function removeFunnelLocally(funnelId) {
+    const normalizedFunnelId = String(funnelId || "").trim();
+    if (!normalizedFunnelId || !state.funnelWorkspace) return 0;
+
+    const previousCount = (state.funnelWorkspace.funnels || []).length;
+    state.funnelWorkspace.funnels = (state.funnelWorkspace.funnels || []).filter(
+      (funnel) => String(funnel?.id || "").trim() !== normalizedFunnelId
+    );
+    return previousCount - state.funnelWorkspace.funnels.length;
+  }
+
+  function upsertStageLocally(stage) {
+    if (!stage?.id) return null;
+    const normalizedStage = normalizeStage(stage);
+    const currentIndex = state.stages.findIndex((item) => item.id === normalizedStage.id);
+    if (currentIndex === -1) {
+      state.stages = sortStagesCollection([...state.stages, normalizedStage]);
+    } else {
+      state.stages = sortStagesCollection(
+        state.stages.map((item, index) => (index === currentIndex ? normalizedStage : item))
+      );
+    }
+    return normalizedStage;
+  }
+
   function upsertLeadLocally(lead) {
     if (!lead?.id) return null;
     const normalizedLead = normalizeLead(lead, {
@@ -4816,6 +4973,53 @@
       state.leads = state.leads.map((item, index) => (index === currentIndex ? normalizedLead : item));
     }
     return normalizedLead;
+  }
+
+  function normalizeAllLeadsLocally() {
+    state.leads = state.leads.map((lead) => normalizeLead(lead, {
+      ownerMap: state.ownerCanonicalMap,
+      socialSourceMap: state.socialSourceCanonicalMap
+    }));
+    return state.leads.length;
+  }
+
+  function updateLeadsLocallyByIds(leadIds = [], updater) {
+    const ids = new Set(normalizeIdList(leadIds));
+    if (!ids.size || typeof updater !== "function") return 0;
+
+    let updatedCount = 0;
+    state.leads = state.leads.map((lead) => {
+      const leadId = String(lead?.id || "").trim();
+      if (!ids.has(leadId)) return lead;
+      updatedCount += 1;
+      const nextLead = updater(lead);
+      return normalizeLead(nextLead || lead, {
+        ownerMap: state.ownerCanonicalMap,
+        socialSourceMap: state.socialSourceCanonicalMap
+      });
+    });
+
+    return updatedCount;
+  }
+
+  function applyStageNameUpdatesLocally(updates = []) {
+    const updateMap = new Map(
+      (Array.isArray(updates) ? updates : [])
+        .map((item) => [String(item?.id || "").trim(), item?.after])
+        .filter(([id, name]) => id && name)
+    );
+    if (!updateMap.size) return 0;
+
+    let updatedCount = 0;
+    state.stages = state.stages.map((stage) => {
+      const stageId = String(stage?.id || "").trim();
+      const nextName = updateMap.get(stageId);
+      if (!nextName) return normalizeStage(stage);
+      updatedCount += 1;
+      return normalizeStage({ ...stage, name: nextName });
+    });
+
+    return updatedCount;
   }
 
   function removeLeadsLocally(leadIds = []) {
@@ -4833,6 +5037,48 @@
     }
     state.selectedLeadIds = new Set([...state.selectedLeadIds].filter((leadId) => !ids.has(leadId)));
     return previousCount - state.leads.length;
+  }
+
+  function removeStagesLocally(stageIds = []) {
+    const ids = new Set(normalizeIdList(stageIds));
+    if (!ids.size) return 0;
+
+    const previousCount = state.stages.length;
+    state.stages = state.stages.filter((stage) => !ids.has(String(stage?.id || "").trim()));
+
+    if (state.funnelWorkspace?.stageAssignments) {
+      ids.forEach((stageId) => {
+        delete state.funnelWorkspace.stageAssignments[stageId];
+      });
+    }
+
+    if (state.funnelWorkspace?.stageReminderConfigs) {
+      ids.forEach((stageId) => {
+        delete state.funnelWorkspace.stageReminderConfigs[stageId];
+      });
+    }
+
+    if (state.funnelWorkspace) {
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+    }
+
+    return previousCount - state.stages.length;
+  }
+
+  function moveLeadsToStageLocally(sourceStageIds = [], targetStageId) {
+    const normalizedSourceStageIds = new Set(normalizeIdList(sourceStageIds));
+    const normalizedTargetStageId = String(targetStageId || "").trim();
+    if (!normalizedSourceStageIds.size || !normalizedTargetStageId) return 0;
+
+    const leadIds = state.leads
+      .filter((lead) => normalizedSourceStageIds.has(String(lead?.stage_id || "").trim()))
+      .map((lead) => lead.id);
+
+    return updateLeadsLocallyByIds(leadIds, (lead) => ({
+      ...lead,
+      stage_id: normalizedTargetStageId
+    }));
   }
 
   function closeFilterDropdowns(except = null) {
@@ -5373,14 +5619,10 @@
         if (error) throw error;
       }
 
-      state.leads = state.leads.map((lead) => (
-        editableIds.includes(lead.id)
-          ? normalizeLead({ ...lead, social_source: DEFAULT_SOCIAL_SOURCE }, {
-              ownerMap: state.ownerCanonicalMap,
-              socialSourceMap: state.socialSourceCanonicalMap
-            })
-          : lead
-      ));
+      updateLeadsLocallyByIds(editableIds, (lead) => ({
+        ...lead,
+        social_source: DEFAULT_SOCIAL_SOURCE
+      }));
       state.socialSourceCanonicalMap.set(getCanonicalValueKey(DEFAULT_SOCIAL_SOURCE), DEFAULT_SOCIAL_SOURCE);
       state.socialSources = normalizeSocialSources([...(state.socialSources || []), DEFAULT_SOCIAL_SOURCE]);
       writeStoredSocialSources();
@@ -6674,8 +6916,7 @@
       created_at: new Date().toISOString()
     };
 
-    state.funnelWorkspace.groups = [...(state.funnelWorkspace?.groups || []), nextGroup];
-    return nextGroup;
+    return upsertFunnelGroupLocally(nextGroup);
   }
 
   function ensureWorkspaceFunnel(category, groupName, funnelName, template = null) {
@@ -6710,8 +6951,7 @@
       is_default: false
     };
 
-    state.funnelWorkspace.funnels = [...(state.funnelWorkspace?.funnels || []), nextFunnel];
-    return nextFunnel;
+    return upsertFunnelLocally(nextFunnel);
   }
 
   function ensureWorkspaceSubfunnel(funnel, subfunnelName) {
@@ -6755,9 +6995,8 @@
         throw new Error(`Erro ao replicar pipeline "${sourceStage.name}": ${error.message}`);
       }
 
-      const normalizedStage = normalizeStage(data);
+      const normalizedStage = upsertStageLocally(data);
       insertedStages.push(normalizedStage);
-      state.stages.push(normalizedStage);
       state.funnelWorkspace.stageAssignments[normalizedStage.id] = targetSubfunnelId;
     }
 
@@ -6793,6 +7032,10 @@
           throw new Error(`Erro ao mover leads para a pipeline destino: ${error.message}`);
         }
       }
+      updateLeadsLocallyByIds(leadIds, (lead) => ({
+        ...lead,
+        stage_id: stageId
+      }));
     }
 
     return leads.length;
@@ -7078,13 +7321,7 @@
       if (error) throw error;
 
       await persistLeadAssignmentsToSupabase(sourceLeadIds, targetSubfunnelId);
-      state.leads = state.leads.map((lead) => {
-        if (!sourceLeadIds.includes(String(lead?.id || "").trim())) return lead;
-        return normalizeLead({ ...lead, stage_id: targetStageId }, {
-          ownerMap: state.ownerCanonicalMap,
-          socialSourceMap: state.socialSourceCanonicalMap
-        });
-      });
+      moveLeadsToStageLocally(sourceLeadIds, targetStageId);
       sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, targetSubfunnelId, { deferSync: true }));
       return sourceLeadIds.length;
     };
@@ -8124,7 +8361,7 @@
           subfunnels: [...localRemovedSubfunnelIds]
         });
 
-        state.funnelWorkspace.funnels = (state.funnelWorkspace?.funnels || []).filter((item) => item.id !== localFunnel.id);
+        removeFunnelLocally(localFunnel.id);
 
         Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
           if (localRemovedSubfunnelIds.has(state.funnelWorkspace.stageAssignments[stageId]) && fallbackSubfunnelId) {
@@ -8194,22 +8431,15 @@
   function moveSubfunnelToIndex(funnelId, subfunnelId, targetIndex) {
     const funnel = getFunnelById(funnelId);
     if (!funnel || !canManageStages(funnel)) return;
-
-    const currentSubfunnels = [...(funnel.subfunnels || [])];
-    const currentIndex = currentSubfunnels.findIndex((item) => item.id === subfunnelId);
-    if (currentIndex === -1) return;
-
-    const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), currentSubfunnels.length - 1));
-    if (!Number.isFinite(normalizedTargetIndex) || normalizedTargetIndex === currentIndex) return;
-
-    const reordered = [...currentSubfunnels];
-    const [subfunnel] = reordered.splice(currentIndex, 1);
-    reordered.splice(normalizedTargetIndex, 0, subfunnel);
-    funnel.subfunnels = reordered;
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    const reordered = reorderSubfunnelsInFunnelLocally(funnelId, subfunnelId, targetIndex);
+    if (!reordered) return;
     queueSubfunnelOrderSync(funnelId);
-    renderAll();
+    finalizeLocalMutation({
+      notifyScope: null,
+      refresh: false,
+      syncSelectedLeadIds: false,
+      writeCache: false
+    });
   }
 
   function clearSubfunnelDragIndicators() {
@@ -10113,18 +10343,10 @@
       && isFunnelDetailActive()
       && scopeSubfunnelId === state.activeSubfunnelId
     );
-    const sortStagesByPosition = (items = []) => [...items].sort((a, b) => {
-      const positionA = Number(a?.position);
-      const positionB = Number(b?.position);
-      const safePositionA = Number.isFinite(positionA) ? positionA : Number.MAX_SAFE_INTEGER;
-      const safePositionB = Number.isFinite(positionB) ? positionB : Number.MAX_SAFE_INTEGER;
-      if (safePositionA !== safePositionB) return safePositionA - safePositionB;
-      return String(a?.id || "").localeCompare(String(b?.id || ""));
-    });
-    const scopedAllStages = sortStagesByPosition(scopeSubfunnelId
+    const scopedAllStages = sortStagesByStablePosition(scopeSubfunnelId
       ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
       : state.stages);
-    const scopedVisibleStages = sortStagesByPosition(useVisibleScopedStages ? getScopedStages() : scopedAllStages);
+    const scopedVisibleStages = sortStagesByStablePosition(useVisibleScopedStages ? getScopedStages() : scopedAllStages);
     const currentIndex = scopedVisibleStages.findIndex((stage) => stage.id === stageId);
     if (currentIndex === -1) return;
     const movedStage = scopedVisibleStages[currentIndex] || getStageById(stageId) || null;
@@ -10169,10 +10391,7 @@
         position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
       }));
     } else {
-      const reorderedScoped = [...scopedAllStages];
-      const [stage] = reorderedScoped.splice(currentIndex, 1);
-      reorderedScoped.splice(normalizedTargetIndex, 0, stage);
-      nextScopedStages = reorderedScoped.map((item, index) => normalizeStage({
+      nextScopedStages = reorderListByIndex(scopedAllStages, currentIndex, normalizedTargetIndex).map((item, index) => normalizeStage({
         ...item,
         position: scopedOrderedPositions[index] ?? Number(item.position) ?? index
       }));
@@ -10604,10 +10823,7 @@
     state.profiles = data || [];
     state.profilesLoaded = true;
     state.ownerCanonicalMap = buildOwnerCanonicalMap(state.leads.map((lead) => lead?.owner), state.profiles);
-    state.leads = state.leads.map((lead) => normalizeLead(lead, {
-      ownerMap: state.ownerCanonicalMap,
-      socialSourceMap: state.socialSourceCanonicalMap
-    }));
+    normalizeAllLeadsLocally();
     if (!silent) {
       renderAll();
       if (!els.historyModalOverlay.classList.contains("hidden")) renderHistoryText();
@@ -12789,13 +13005,13 @@
       await executeFunnelWorkspaceMetaMutation({
         applyLocal: () => {
           if (existingGroup) {
-            state.funnelWorkspace.groups = state.funnelWorkspace.groups.map((item) => item.id === existingGroup.id ? nextGroup : item);
-            state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((funnel) => {
-              if (funnel.group_id !== existingGroup.id) return funnel;
-              return { ...funnel, category };
-            });
+            upsertFunnelGroupLocally(nextGroup);
+            updateFunnelsInGroupLocally(existingGroup.id, (funnel) => ({
+              ...funnel,
+              category
+            }));
           } else {
-            state.funnelWorkspace.groups.push(nextGroup);
+            upsertFunnelGroupLocally(nextGroup);
           }
         },
         persist: async () => {
@@ -12828,9 +13044,10 @@
 
   function toggleFunnelGroup(groupId) {
     if (!state.funnelWorkspace || !groupId) return;
-    state.funnelWorkspace.groups = state.funnelWorkspace.groups.map((group) => (
-      group.id === groupId ? { ...group, collapsed: !group.collapsed } : group
-    ));
+    updateFunnelGroupLocally(groupId, (group) => ({
+      ...group,
+      collapsed: !group.collapsed
+    }));
     writeStoredFunnelWorkspace();
     renderFunnelNav();
   }
@@ -12841,15 +13058,11 @@
     if (!funnel || !canManageStages(funnel)) return;
 
     const targetGroup = groupId ? getGroupById(groupId) : null;
-    state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((item) => (
-      item.id === funnelId
-        ? {
-            ...item,
-            category: targetGroup?.category || item.category,
-            group_id: targetGroup?.id || null
-          }
-        : item
-    ));
+    updateFunnelLocally(funnelId, (item) => ({
+      ...item,
+      category: targetGroup?.category || item.category,
+      group_id: targetGroup?.id || null
+    }));
     writeStoredFunnelWorkspace();
     renderAll();
     if (state.activeView === "funil" && String(state.activeFunnelId || "") === String(funnelId)) {
@@ -12864,10 +13077,8 @@
 
     await executeFunnelWorkspaceMetaMutation({
       applyLocal: () => {
-        state.funnelWorkspace.groups = (state.funnelWorkspace?.groups || []).filter((item) => item.id !== groupId);
-        state.funnelWorkspace.funnels = (state.funnelWorkspace?.funnels || []).map((funnel) => (
-          funnel.group_id === groupId ? { ...funnel, group_id: null } : funnel
-        ));
+        removeFunnelGroupLocally(groupId);
+        clearFunnelsGroupLocally(groupId);
         rememberDeletedFunnelWorkspaceIds({ groups: [groupId] });
       },
       persist: async () => {
@@ -13444,7 +13655,7 @@
               is_default: false
             };
 
-            state.funnelWorkspace.funnels.push(newFunnel);
+            upsertFunnelLocally(newFunnel);
             state.activeFunnelId = newFunnel.id;
             state.activeSubfunnelId = null;
           }
@@ -14989,9 +15200,7 @@
             }
           });
 
-          state.stages = state.stages
-            .map((stage) => (stage.id === stageId ? normalizeStage({ ...stage, ...payload, id: stageId }) : stage))
-            .sort((a, b) => Number(a.position) - Number(b.position));
+          upsertStageLocally({ ...before, ...payload, id: stageId });
         }
 
       } else {
@@ -14999,7 +15208,7 @@
         if (error) return alert(`Erro no Supabase: ${error.message}`);
         await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
         if (data?.id) {
-          state.stages = [...state.stages, normalizeStage(data)].sort((a, b) => Number(a.position) - Number(b.position));
+          upsertStageLocally(data);
           await persistWorkspaceAssignmentsSafely({
             stageIds: [data.id],
             subfunnelId: selectedSubfunnelId,
@@ -15207,14 +15416,11 @@
           selectedLeadIds: true
         },
         applyOptimistic: () => {
-          state.leads = state.leads.map((item) => (
-            item.id === lead.id
-              ? normalizeLead({ ...item, stage_id: stageId, notes: nextNotes }, {
-                  ownerMap: state.ownerCanonicalMap,
-                  socialSourceMap: state.socialSourceCanonicalMap
-                })
-              : item
-          ));
+          updateLeadsLocallyByIds([lead.id], (item) => ({
+            ...item,
+            stage_id: stageId,
+            notes: nextNotes
+          }));
           if (shouldPersistLeadSubfunnelChange) {
             assignLeadToSubfunnel(lead.id, targetSubfunnelId, { deferSync: true });
             state.suppressFunnelSync = true;
@@ -15392,10 +15598,8 @@
       .eq("id", id);
 
     if (error) return alert(`Erro no Supabase: ${error.message}`);
-    if (state.funnelWorkspace?.stageReminderConfigs) {
-      delete state.funnelWorkspace.stageReminderConfigs[id];
-      writeStoredFunnelWorkspace();
-    }
+    moveLeadsToStageLocally([id], fallback.id);
+    removeStagesLocally([id]);
 
     await logChange(
       "delete",
@@ -15405,14 +15609,17 @@
       stage
     );
 
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-delete-legacy",
+      cooldownMs: 1500
+    });
   }
 
   async function createStageForSubfunnel(payload, subfunnelId, options = {}) {
     const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
     if (error) throw error;
-    const normalizedStage = normalizeStage(data);
-    state.stages.push(normalizedStage);
+    const normalizedStage = upsertStageLocally(data);
     if (data?.id) assignStageToSubfunnel(data.id, subfunnelId, { deferSync: options.deferSync === true });
     return normalizedStage;
   }
@@ -15461,18 +15668,7 @@
       await persistStageReminderConfigToSupabase(stageId, null);
     }
 
-    state.stages = state.stages.filter((stage) => !normalizedStageIds.includes(String(stage?.id || "").trim()));
-    if (state.funnelWorkspace?.stageAssignments) {
-      normalizedStageIds.forEach((stageId) => {
-        delete state.funnelWorkspace.stageAssignments[stageId];
-      });
-    }
-    if (state.funnelWorkspace?.stageReminderConfigs) {
-      normalizedStageIds.forEach((stageId) => {
-        delete state.funnelWorkspace.stageReminderConfigs[stageId];
-      });
-    }
-    return normalizedStageIds.length;
+    return removeStagesLocally(normalizedStageIds);
   }
 
   async function cleanupDuplicateStagesInSubfunnel(subfunnelId, stageName, options = {}) {
@@ -15600,23 +15796,12 @@
       ...(nextTargetPayload || {})
     });
 
-    state.leads = state.leads.map((lead) => {
-      if (!sourceLeadIds.includes(String(lead?.id || "").trim())) return lead;
-      return normalizeLead({ ...lead, stage_id: targetStage.id });
-    });
-    state.stages = state.stages
-      .filter((stage) => stage.id !== sourceStage.id)
-      .map((stage) => (stage.id === targetStage.id ? normalizedTargetStage : stage));
-
-    if (state.funnelWorkspace?.stageAssignments) {
-      delete state.funnelWorkspace.stageAssignments[sourceStage.id];
-      state.funnelWorkspace.stageAssignments[targetStage.id] = normalizedTargetSubfunnelId;
-    }
-    if (state.funnelWorkspace?.stageReminderConfigs) {
-      delete state.funnelWorkspace.stageReminderConfigs[sourceStage.id];
-      if (shouldCopyReminder) {
-        state.funnelWorkspace.stageReminderConfigs[targetStage.id] = sourceReminder;
-      }
+    moveLeadsToStageLocally([sourceStage.id], targetStage.id);
+    removeStagesLocally([sourceStage.id]);
+    upsertStageLocally(normalizedTargetStage);
+    assignStageToSubfunnel(targetStage.id, normalizedTargetSubfunnelId, { deferSync: true });
+    if (shouldCopyReminder) {
+      applyStageReminderConfigLocally(targetStage.id, sourceReminder);
     }
     sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, normalizedTargetSubfunnelId, { deferSync: true }));
     if (previousSourceSubfunnelId && previousSourceSubfunnelId !== normalizedTargetSubfunnelId) {
@@ -15920,14 +16105,10 @@
       removeLeadsLocally(affectedLeads.map((lead) => lead.id));
     }
     if (!deleteWithLeads && affectedLeads.length) {
-      state.leads = state.leads.map((lead) => {
-        if (!stageIdsToDelete.includes(String(lead?.stage_id || "").trim())) return lead;
+      moveLeadsToStageLocally(stageIdsToDelete, targetStage.id);
+      affectedLeads.forEach((lead) => {
         const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
         if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId, { deferSync: true });
-        return normalizeLead({ ...lead, stage_id: targetStage.id }, {
-          ownerMap: state.ownerCanonicalMap,
-          socialSourceMap: state.socialSourceCanonicalMap
-        });
       });
     }
 
