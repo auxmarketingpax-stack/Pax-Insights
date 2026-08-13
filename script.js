@@ -14693,16 +14693,12 @@
   }
 
   async function addDepartment() {
-    if (!canManageDepartments()) return;
-    const name = normalizeDepartmentName(els.departmentName?.value || "");
-    if (!name) {
-      alert("Informe o nome do departamento.");
-      return;
-    }
+    const context = collectDepartmentFormContext();
+    if (!validateDepartmentFormContext(context)) return;
 
     const { error } = await state.supabase
       .from("departments")
-      .insert([{ name, is_system: false, created_by: state.currentUser?.id || null }]);
+      .insert([{ name: context.name, is_system: false, created_by: state.currentUser?.id || null }]);
 
     if (error) {
       alert(`Erro ao adicionar departamento: ${error.message}`);
@@ -14713,14 +14709,23 @@
     await loadAppData({ includeProfiles: true });
   }
 
-  async function deleteDepartment(departmentId) {
-    if (!canManageDepartments() || !departmentId) return;
-    const department = state.departments.find((item) => String(item.id) === String(departmentId));
-    if (!department) return;
+  function collectDepartmentDeleteContext(departmentId) {
+    const department = state.departments.find((item) => String(item.id) === String(departmentId)) || null;
+    return { department };
+  }
 
-    if (!window.confirm(`Tem certeza que deseja excluir o departamento "${department.name}"?`)) {
-      return;
+  function validateDepartmentDeleteContext(departmentId, context = {}) {
+    if (!canManageDepartments() || !departmentId) return false;
+    if (!context.department) return false;
+    if (!window.confirm(`Tem certeza que deseja excluir o departamento "${context.department.name}"?`)) {
+      return false;
     }
+    return true;
+  }
+
+  async function deleteDepartment(departmentId) {
+    const context = collectDepartmentDeleteContext(departmentId);
+    if (!validateDepartmentDeleteContext(departmentId, context)) return;
 
     const { error } = await state.supabase
       .from("departments")
@@ -15058,65 +15063,82 @@
     return lead;
   }
 
+  async function applyApprovedDeleteFunnelRequest(request) {
+    try {
+      const deleted = await deleteFunnelByIdInternal(request.payload.funnel_id);
+      return Boolean(deleted);
+    } catch (deleteError) {
+      alert(`Erro ao excluir funil aprovado: ${formatSupabaseError(deleteError)}`);
+      return false;
+    }
+  }
+
+  async function applyApprovedDeleteLeadRequest(request) {
+    const { error: deleteError } = await deleteLeadsByIds([request.payload.lead_id]);
+    if (deleteError) {
+      alert(`Erro ao excluir lead aprovado: ${formatSupabaseError(deleteError)}`);
+      return false;
+    }
+    return true;
+  }
+
+  async function applyApprovedBulkDeleteLeadsRequest(request) {
+    const { error: deleteError } = await deleteLeadsByIds(request.payload.lead_ids);
+    if (deleteError) {
+      alert(`Erro ao excluir leads aprovados: ${formatSupabaseError(deleteError)}`);
+      return false;
+    }
+    return true;
+  }
+
+  async function applyApprovedDeleteObservationRequest(request) {
+    try {
+      await deleteObservationFromLead(request.payload || {});
+    } catch (deleteError) {
+      alert(`Erro ao excluir observacao aprovada: ${formatSupabaseError(deleteError)}`);
+      return false;
+    }
+    return true;
+  }
+
   async function applyApprovedAdminRequest(request) {
     if (!request) return true;
 
     if (request.request_type === "delete_funnel" && request.payload?.funnel_id) {
-      try {
-        const deleted = await deleteFunnelByIdInternal(request.payload.funnel_id);
-        return Boolean(deleted);
-      } catch (deleteError) {
-        alert(`Erro ao excluir funil aprovado: ${formatSupabaseError(deleteError)}`);
-        return false;
-      }
+      return applyApprovedDeleteFunnelRequest(request);
     }
 
     if (request.request_type === "delete_lead" && request.payload?.lead_id) {
-      const { error: deleteError } = await deleteLeadsByIds([request.payload.lead_id]);
-      if (deleteError) {
-        alert(`Erro ao excluir lead aprovado: ${formatSupabaseError(deleteError)}`);
-        return false;
-      }
-      return true;
+      return applyApprovedDeleteLeadRequest(request);
     }
 
     if (request.request_type === "bulk_delete_leads" && Array.isArray(request.payload?.lead_ids) && request.payload.lead_ids.length) {
-      const { error: deleteError } = await deleteLeadsByIds(request.payload.lead_ids);
-      if (deleteError) {
-        alert(`Erro ao excluir leads aprovados: ${formatSupabaseError(deleteError)}`);
-        return false;
-      }
-      return true;
+      return applyApprovedBulkDeleteLeadsRequest(request);
     }
 
     if (request.request_type === "delete_observation") {
-      try {
-        await deleteObservationFromLead(request.payload || {});
-      } catch (deleteError) {
-        alert(`Erro ao excluir observacao aprovada: ${formatSupabaseError(deleteError)}`);
-        return false;
-      }
+      return applyApprovedDeleteObservationRequest(request);
     }
 
     return true;
   }
 
-  async function resolveAdminRequest(requestId, action) {
-    if (!canManageAdminAreas()) return;
-    const request = state.adminRequests.find((item) => item.id === requestId);
-    if (!request) return;
-    if (!canManageAdminRequest(request)) {
+  function resolveAdminRequestContext(requestId) {
+    const request = state.adminRequests.find((item) => item.id === requestId) || null;
+    return { request };
+  }
+
+  function validateAdminRequestResolutionContext(context = {}) {
+    if (!canManageAdminAreas()) return false;
+    if (!context.request) return false;
+    if (!canManageAdminRequest(context.request)) {
       alert("Essa solicitação operacional não está dentro do seu escopo de departamento.");
-      return;
+      return false;
     }
+    return true;
+  }
 
-    if (action === "approve") {
-      const approved = await applyApprovedAdminRequest(request);
-      if (!approved) {
-        return;
-      }
-    }
-
+  async function persistAdminRequestResolution(requestId, action) {
     const nextStatus = action === "approve" ? ACCESS_STATUS.APPROVED : ACCESS_STATUS.REJECTED;
     const { error } = await state.supabase
       .from("admin_requests")
@@ -15129,24 +15151,64 @@
 
     if (error) {
       alert(`Erro ao atualizar solicitacao operacional: ${error.message}`);
-      return;
+      return false;
     }
+
+    return true;
+  }
+
+  async function resolveAdminRequest(requestId, action) {
+    const context = resolveAdminRequestContext(requestId);
+    if (!validateAdminRequestResolutionContext(context)) return;
+
+    if (action === "approve") {
+      const approved = await applyApprovedAdminRequest(context.request);
+      if (!approved) {
+        return;
+      }
+    }
+
+    const resolved = await persistAdminRequestResolution(requestId, action);
+    if (!resolved) return;
 
     await loadAppData({ includeProfiles: true });
   }
 
-  async function addLeadSource() {
-    if (!canManageLeadSources()) return;
+  function collectDepartmentFormContext() {
+    const name = normalizeDepartmentName(els.departmentName?.value || "");
+    return { name };
+  }
 
-    const name = String(els.leadSourceName?.value || "").trim();
-    if (!name) {
-      alert("Informe o nome da origem do lead.");
-      return;
+  function validateDepartmentFormContext(context = {}) {
+    if (!canManageDepartments()) return false;
+    if (!context.name) {
+      alert("Informe o nome do departamento.");
+      return false;
     }
+    return true;
+  }
+
+  function collectLeadSourceFormContext() {
+    const name = String(els.leadSourceName?.value || "").trim();
+    return { name };
+  }
+
+  function validateLeadSourceFormContext(context = {}) {
+    if (!canManageLeadSources()) return false;
+    if (!context.name) {
+      alert("Informe o nome da origem do lead.");
+      return false;
+    }
+    return true;
+  }
+
+  async function addLeadSource() {
+    const context = collectLeadSourceFormContext();
+    if (!validateLeadSourceFormContext(context)) return;
 
     const { error } = await state.supabase
       .from("lead_source_catalog")
-      .upsert({ name, created_by: state.currentUser?.id || null }, { onConflict: "name" });
+      .upsert({ name: context.name, created_by: state.currentUser?.id || null }, { onConflict: "name" });
 
     if (error && !isMissingRelationError(error)) {
       alert(`Erro ao salvar origem: ${error.message}`);
@@ -15157,16 +15219,25 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function addSocialSource() {
-    if (!canManageLeadSources()) return;
-
+  function collectSocialSourceFormContext() {
     const name = normalizeSpacing(els.socialSourceName?.value || "");
-    if (!name) {
-      alert("Informe o nome do canal de origem.");
-      return;
-    }
+    return { name };
+  }
 
-    const canonicalSource = getCanonicalDisplayLabel(name, "social_source");
+  function validateSocialSourceFormContext(context = {}) {
+    if (!canManageLeadSources()) return false;
+    if (!context.name) {
+      alert("Informe o nome do canal de origem.");
+      return false;
+    }
+    return true;
+  }
+
+  async function addSocialSource() {
+    const context = collectSocialSourceFormContext();
+    if (!validateSocialSourceFormContext(context)) return;
+
+    const canonicalSource = getCanonicalDisplayLabel(context.name, "social_source");
     state.socialSources = normalizeSocialSources([...(state.socialSources || []), canonicalSource]);
     writeStoredSocialSources();
     if (els.socialSourceName) els.socialSourceName.value = "";
@@ -15174,22 +15245,34 @@
     renderSocialSourceOptions(canonicalSource);
   }
 
-  async function editLeadSource(sourceName) {
-    if (!canManageLeadSources()) return;
-
+  function collectLeadSourceEditContext(sourceName) {
     const currentName = String(sourceName || "").trim();
-    if (!currentName) return;
-    if (isDefaultLeadSourceName(currentName)) {
-      alert("As origens padrao do sistema nao podem ser renomeadas.");
-      return;
-    }
     const nextName = window.prompt("Novo nome para a origem do lead:", currentName);
-    if (!nextName || nextName.trim() === currentName) return;
+    return {
+      currentName,
+      nextName: String(nextName || "").trim()
+    };
+  }
+
+  function validateLeadSourceEditContext(context = {}) {
+    if (!canManageLeadSources()) return false;
+    if (!context.currentName) return false;
+    if (isDefaultLeadSourceName(context.currentName)) {
+      alert("As origens padrao do sistema nao podem ser renomeadas.");
+      return false;
+    }
+    if (!context.nextName || context.nextName === context.currentName) return false;
+    return true;
+  }
+
+  async function editLeadSource(sourceName) {
+    const context = collectLeadSourceEditContext(sourceName);
+    if (!validateLeadSourceEditContext(context)) return;
 
     const { error: leadError } = await state.supabase
       .from("leads")
-      .update({ traffic_type: nextName.trim() })
-      .eq("traffic_type", currentName);
+      .update({ traffic_type: context.nextName })
+      .eq("traffic_type", context.currentName);
 
     if (leadError) {
       alert(`Erro ao atualizar leads: ${leadError.message}`);
@@ -15198,8 +15281,8 @@
 
     const { error: updateError } = await state.supabase
       .from("lead_source_catalog")
-      .update({ name: nextName.trim() })
-      .eq("name", currentName);
+      .update({ name: context.nextName })
+      .eq("name", context.currentName);
 
     if (updateError && !isMissingRelationError(updateError)) {
       alert(`Erro ao atualizar origem: ${updateError.message}`);
@@ -15209,41 +15292,51 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function deleteLeadSource(sourceName) {
+  function collectLeadSourceDeleteContext(sourceName) {
     const currentName = String(sourceName || "").trim();
-    if (!currentName) return;
-    if (isDefaultLeadSourceName(currentName)) {
-      alert("As origens padrao do sistema nao podem ser excluidas.");
-      return;
-    }
-
     const fallbackName = getLeadSourceNames().find((item) => item !== currentName) || DEFAULT_LEAD_SOURCES[0];
-    if (!fallbackName) {
-      alert("Mantenha ao menos uma origem do lead disponivel.");
-      return;
+    return {
+      currentName,
+      fallbackName
+    };
+  }
+
+  function validateLeadSourceDeleteContext(context = {}) {
+    if (!context.currentName) return false;
+    if (isDefaultLeadSourceName(context.currentName)) {
+      alert("As origens padrao do sistema nao podem ser excluidas.");
+      return false;
     }
-
-    if (!confirm(`Excluir a origem "${currentName}"? Leads existentes serao migrados para "${fallbackName}".`)) return;
-
+    if (!context.fallbackName) {
+      alert("Mantenha ao menos uma origem do lead disponivel.");
+      return false;
+    }
+    if (!confirm(`Excluir a origem "${context.currentName}"? Leads existentes serao migrados para "${context.fallbackName}".`)) return false;
     if (!canManageLeadSources()) {
       requestAdminAuthorization({
         requestType: "delete_lead_source",
         title: "Solicitar exclusao de origem do lead",
-        description: `Voce nao tem permissao para excluir a origem "${currentName}". Sua solicitacao sera enviada para o administrador.`,
+        description: `Voce nao tem permissao para excluir a origem "${context.currentName}". Sua solicitacao sera enviada para o administrador.`,
         entityType: "lead_source",
-        entityId: currentName,
+        entityId: context.currentName,
         payload: {
-          source_name: currentName,
-          fallback_name: fallbackName
+          source_name: context.currentName,
+          fallback_name: context.fallbackName
         }
       });
-      return;
+      return false;
     }
+    return true;
+  }
+
+  async function deleteLeadSource(sourceName) {
+    const context = collectLeadSourceDeleteContext(sourceName);
+    if (!validateLeadSourceDeleteContext(context)) return;
 
     const { error: leadError } = await state.supabase
       .from("leads")
-      .update({ traffic_type: fallbackName })
-      .eq("traffic_type", currentName);
+      .update({ traffic_type: context.fallbackName })
+      .eq("traffic_type", context.currentName);
 
     if (leadError) {
       alert(`Erro ao atualizar leads vinculados: ${leadError.message}`);
@@ -15253,7 +15346,7 @@
     const { error } = await state.supabase
       .from("lead_source_catalog")
       .delete()
-      .eq("name", currentName);
+      .eq("name", context.currentName);
 
     if (error && !isMissingRelationError(error)) {
       alert(`Erro ao excluir origem: ${error.message}`);
@@ -15263,22 +15356,32 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function editSocialSource(sourceName) {
-    if (!canManageLeadSources()) return;
-
+  function collectSocialSourceEditContext(sourceName) {
     const currentName = normalizeSpacing(sourceName);
-    if (!currentName) return;
-
     const nextName = window.prompt("Novo nome para o canal de origem:", currentName);
     const normalizedNextName = normalizeSpacing(nextName);
-    if (!normalizedNextName || normalizedNextName === currentName) return;
+    return {
+      currentName,
+      normalizedNextName,
+      canonicalNextName: getCanonicalDisplayLabel(normalizedNextName, "social_source")
+    };
+  }
 
-    const canonicalNextName = getCanonicalDisplayLabel(normalizedNextName, "social_source");
+  function validateSocialSourceEditContext(context = {}) {
+    if (!canManageLeadSources()) return false;
+    if (!context.currentName) return false;
+    if (!context.normalizedNextName || context.normalizedNextName === context.currentName) return false;
+    return true;
+  }
+
+  async function editSocialSource(sourceName) {
+    const context = collectSocialSourceEditContext(sourceName);
+    if (!validateSocialSourceEditContext(context)) return;
 
     const { error } = await state.supabase
       .from("leads")
-      .update({ social_source: canonicalNextName })
-      .eq("social_source", currentName);
+      .update({ social_source: context.canonicalNextName })
+      .eq("social_source", context.currentName);
 
     if (error) {
       alert(`Erro ao atualizar leads: ${error.message}`);
@@ -15287,44 +15390,54 @@
 
     state.socialSources = normalizeSocialSources(
       getSocialSourceItems()
-        .map((item) => (item.name === currentName ? canonicalNextName : item.name))
+        .map((item) => (item.name === context.currentName ? context.canonicalNextName : item.name))
     );
     writeStoredSocialSources();
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function deleteSocialSource(sourceName) {
+  function collectSocialSourceDeleteContext(sourceName) {
     const currentName = normalizeSpacing(sourceName);
-    if (!currentName) return;
-
     const items = getSocialSourceItems().map((item) => item.name);
     const fallbackName = items.find((item) => item !== currentName) || "";
-    if (!fallbackName) {
+    return {
+      currentName,
+      fallbackName
+    };
+  }
+
+  function validateSocialSourceDeleteContext(context = {}) {
+    if (!context.currentName) return false;
+    if (!context.fallbackName) {
       alert("Mantenha ao menos um canal de origem disponível.");
-      return;
+      return false;
     }
-
-    if (!confirm(`Excluir o canal "${currentName}"? Leads existentes serão migrados para "${fallbackName}".`)) return;
-
+    if (!confirm(`Excluir o canal "${context.currentName}"? Leads existentes serão migrados para "${context.fallbackName}".`)) return false;
     if (!canManageLeadSources()) {
       requestAdminAuthorization({
         requestType: "delete_social_source",
         title: "Solicitar exclusão de canal de origem",
-        description: `Você não tem permissão para excluir o canal "${currentName}". Sua solicitação será enviada para o administrador.`,
+        description: `Você não tem permissão para excluir o canal "${context.currentName}". Sua solicitação será enviada para o administrador.`,
         entityType: "social_source",
-        entityId: currentName,
+        entityId: context.currentName,
         payload: {
-          source_name: currentName,
-          fallback_name: fallbackName
+          source_name: context.currentName,
+          fallback_name: context.fallbackName
         }
       });
-      return;
+      return false;
     }
+    return true;
+  }
+
+  async function deleteSocialSource(sourceName) {
+    const context = collectSocialSourceDeleteContext(sourceName);
+    if (!validateSocialSourceDeleteContext(context)) return;
 
     const { error } = await state.supabase
       .from("leads")
-      .update({ social_source: fallbackName })
-      .eq("social_source", currentName);
+      .update({ social_source: context.fallbackName })
+      .eq("social_source", context.currentName);
 
     if (error) {
       alert(`Erro ao atualizar leads vinculados: ${error.message}`);
@@ -15332,7 +15445,7 @@
     }
 
     state.socialSources = normalizeSocialSources(
-      getSocialSourceItems().filter((item) => item.name !== currentName).map((item) => item.name)
+      getSocialSourceItems().filter((item) => item.name !== context.currentName).map((item) => item.name)
     );
     writeStoredSocialSources();
     await loadAppData({ includeProfiles: state.profilesLoaded });
