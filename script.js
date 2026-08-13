@@ -13608,6 +13608,72 @@
     `).join("");
   }
 
+  function getFunnelModalModeConfig({ mode = "create", funnel = null, subfunnel = null } = {}) {
+    let subfunnelNames = funnel?.subfunnels?.map((item) => item.name) || ["Entrada", "Fechamento"];
+    let modalTitle = mode === "edit" ? "Editar funil" : "Criar funil";
+    let saveLabel = mode === "edit" ? "Salvar alterações" : "Criar funil";
+    let subLabel = "Nome de cada subfunil";
+    let focusSelector = "#funnelName";
+    let useCompactSubfunnelMode = false;
+
+    if (mode === "edit-subfunnel") {
+      modalTitle = "Editar subfunil";
+      saveLabel = "Salvar subfunil";
+      subLabel = "Nome do subfunil";
+      subfunnelNames = [subfunnel?.name || ""];
+      focusSelector = "#funnelSubfield1";
+      useCompactSubfunnelMode = true;
+    } else if (mode === "create-subfunnel") {
+      modalTitle = "Adicionar subfunil";
+      saveLabel = "Adicionar subfunil";
+      subLabel = "Nome do subfunil";
+      subfunnelNames = [""];
+      focusSelector = "#funnelSubfield1";
+      useCompactSubfunnelMode = true;
+    }
+
+    return {
+      subfunnelNames,
+      modalTitle,
+      saveLabel,
+      subLabel,
+      focusSelector,
+      useCompactSubfunnelMode
+    };
+  }
+
+  function applyFunnelModalModeUiState({
+    modeConfig,
+    nameGroup,
+    categoryGroup,
+    countGroup
+  } = {}) {
+    if (!modeConfig) return;
+
+    if (modeConfig.useCompactSubfunnelMode) {
+      if (nameGroup) nameGroup.classList.add("hidden");
+      if (categoryGroup) categoryGroup.classList.add("hidden");
+      if (countGroup) countGroup.classList.add("hidden");
+      if (els.funnelName) {
+        els.funnelName.disabled = true;
+        els.funnelName.required = false;
+      }
+      if (els.funnelCategory) els.funnelCategory.disabled = true;
+      if (els.funnelVisibilityScope) els.funnelVisibilityScope.disabled = true;
+      if (els.funnelGlobalAccessLevel) els.funnelGlobalAccessLevel.disabled = true;
+      if (els.funnelOfficialDepartmentSelect) els.funnelOfficialDepartmentSelect.disabled = true;
+      els.funnelGlobalAccessGroup?.classList.add("hidden");
+      els.funnelOfficialDepartmentGroup?.classList.add("hidden");
+      els.funnelDepartmentsGroup?.classList.add("hidden");
+      if (els.funnelSubCount) els.funnelSubCount.disabled = true;
+      return;
+    }
+
+    els.funnelGlobalAccessGroup?.classList.remove("hidden");
+    els.funnelOfficialDepartmentGroup?.classList.remove("hidden");
+    els.funnelDepartmentsGroup?.classList.remove("hidden");
+  }
+
   function openFunnelModal(options = {}) {
     const mode = options.mode || "create";
     const funnel = options.funnel || null;
@@ -13669,60 +13735,21 @@
     );
     toggleFunnelDepartmentsVisibility(funnel?.visibility_scope || "all");
 
-    let subfunnelNames = funnel?.subfunnels?.map((item) => item.name) || ["Entrada", "Fechamento"];
-    let modalTitle = mode === "edit" ? "Editar funil" : "Criar funil";
-    let saveLabel = mode === "edit" ? "Salvar alterações" : "Criar funil";
-    let subLabel = "Nome de cada subfunil";
+    const modeConfig = getFunnelModalModeConfig({ mode, funnel, subfunnel });
+    applyFunnelModalModeUiState({
+      modeConfig,
+      nameGroup,
+      categoryGroup,
+      countGroup
+    });
 
-    if (mode === "edit-subfunnel") {
-      modalTitle = "Editar subfunil";
-      saveLabel = "Salvar subfunil";
-      subLabel = "Nome do subfunil";
-      subfunnelNames = [subfunnel?.name || ""];
-      if (nameGroup) nameGroup.classList.add("hidden");
-      if (categoryGroup) categoryGroup.classList.add("hidden");
-      if (countGroup) countGroup.classList.add("hidden");
-      if (els.funnelName) {
-        els.funnelName.disabled = true;
-        els.funnelName.required = false;
-      }
-      if (els.funnelCategory) els.funnelCategory.disabled = true;
-      if (els.funnelVisibilityScope) els.funnelVisibilityScope.disabled = true;
-      if (els.funnelGlobalAccessLevel) els.funnelGlobalAccessLevel.disabled = true;
-      if (els.funnelOfficialDepartmentSelect) els.funnelOfficialDepartmentSelect.disabled = true;
-      els.funnelGlobalAccessGroup?.classList.add("hidden");
-      els.funnelOfficialDepartmentGroup?.classList.add("hidden");
-      els.funnelDepartmentsGroup?.classList.add("hidden");
-      if (els.funnelSubCount) els.funnelSubCount.disabled = true;
-    } else if (mode === "create-subfunnel") {
-      modalTitle = "Adicionar subfunil";
-      saveLabel = "Adicionar subfunil";
-      subLabel = "Nome do subfunil";
-      subfunnelNames = [""];
-      if (nameGroup) nameGroup.classList.add("hidden");
-      if (categoryGroup) categoryGroup.classList.add("hidden");
-      if (countGroup) countGroup.classList.add("hidden");
-      if (els.funnelName) {
-        els.funnelName.disabled = true;
-        els.funnelName.required = false;
-      }
-      if (els.funnelCategory) els.funnelCategory.disabled = true;
-      if (els.funnelVisibilityScope) els.funnelVisibilityScope.disabled = true;
-      if (els.funnelGlobalAccessLevel) els.funnelGlobalAccessLevel.disabled = true;
-      if (els.funnelOfficialDepartmentSelect) els.funnelOfficialDepartmentSelect.disabled = true;
-      els.funnelGlobalAccessGroup?.classList.add("hidden");
-      els.funnelOfficialDepartmentGroup?.classList.add("hidden");
-      els.funnelDepartmentsGroup?.classList.add("hidden");
-      if (els.funnelSubCount) els.funnelSubCount.disabled = true;
-    }
-
-    if (els.funnelModalTitle) els.funnelModalTitle.textContent = modalTitle;
-    if (els.saveFunnelBtn) els.saveFunnelBtn.textContent = saveLabel;
-    if (subfieldsLabel) subfieldsLabel.textContent = subLabel;
-    if (els.funnelSubCount) els.funnelSubCount.value = String(subfunnelNames.length || 1);
-    renderFunnelSubfields(subfunnelNames);
+    if (els.funnelModalTitle) els.funnelModalTitle.textContent = modeConfig.modalTitle;
+    if (els.saveFunnelBtn) els.saveFunnelBtn.textContent = modeConfig.saveLabel;
+    if (subfieldsLabel) subfieldsLabel.textContent = modeConfig.subLabel;
+    if (els.funnelSubCount) els.funnelSubCount.value = String(modeConfig.subfunnelNames.length || 1);
+    renderFunnelSubfields(modeConfig.subfunnelNames);
     syncBrandedSelects();
-    openModalOverlay(els.funnelModalOverlay, mode === "edit-subfunnel" || mode === "create-subfunnel" ? "#funnelSubfield1" : "#funnelName");
+    openModalOverlay(els.funnelModalOverlay, modeConfig.focusSelector);
   }
 
   function closeFunnelModal() {
@@ -13927,6 +13954,82 @@
     await submitFullFunnelFormChange(context);
   }
 
+  function renderActiveViewContent() {
+    if (state.activeView === "funil") {
+      renderFunnelHub();
+      if (isFunnelDetailActive()) {
+        renderPipeline();
+      } else if (els.pipeline) {
+        els.pipeline.innerHTML = "";
+        if (els.pipelineStageStrip) els.pipelineStageStrip.innerHTML = "";
+      }
+      return;
+    }
+
+    if (state.activeView === "leads") {
+      renderLeadTable();
+      return;
+    }
+
+    if (state.activeView === "equipe") {
+      renderTeam();
+      renderRequests();
+      return;
+    }
+
+    if (state.activeView === "estrutura") {
+      renderStagesConfig();
+      renderLeadSourcesConfig();
+      renderSocialSourcesConfig();
+      renderDepartmentsConfig();
+      return;
+    }
+
+    if (state.activeView === "configuracoes") {
+      renderHistoryText();
+    }
+  }
+
+  function renderReportChartsIfNeeded() {
+    if (state.activeView !== "relatorios") return;
+
+    if (typeof window.Chart !== "undefined") {
+      scheduleReportChartsRender();
+      return;
+    }
+
+    void ensureChartLibrary()
+      .then(() => {
+        if (state.activeView === "relatorios") {
+          scheduleReportChartsRender();
+        }
+      })
+      .catch((error) => {
+        console.error("Erro ao carregar biblioteca de gráficos:", error);
+      });
+  }
+
+  function highlightPendingLeadCardIfNeeded() {
+    if (!state.highlightedLeadId || !isFunnelDetailActive()) return;
+
+    const highlightedCard = document.querySelector(`#pipeline [data-lead-id="${CSS.escape(state.highlightedLeadId)}"]`);
+    if (!highlightedCard) return;
+
+    highlightedCard.classList.add("card-highlighted");
+    highlightedCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    window.setTimeout(() => highlightedCard.classList.remove("card-highlighted"), 2600);
+    state.highlightedLeadId = null;
+  }
+
+  function runPostRenderLayoutEffects({ highlightLead = false } = {}) {
+    requestAnimationFrame(() => {
+      updateStickyLayout();
+      if (highlightLead) {
+        highlightPendingLeadCardIfNeeded();
+      }
+    });
+  }
+
   function renderAll() {
     resetRenderComputationCache();
     syncSelectedLeadIds();
@@ -13944,65 +14047,12 @@
       renderFunnelNav();
     }
 
-    if (state.activeView === "funil") {
-      renderFunnelHub();
-      if (isFunnelDetailActive()) {
-        renderPipeline();
-      } else if (els.pipeline) {
-        els.pipeline.innerHTML = "";
-        if (els.pipelineStageStrip) els.pipelineStageStrip.innerHTML = "";
-      }
-    }
-
-    if (state.activeView === "leads") {
-      renderLeadTable();
-    }
-
-    if (state.activeView === "equipe") {
-      renderTeam();
-      renderRequests();
-    }
-
-    if (state.activeView === "estrutura") {
-      renderStagesConfig();
-      renderLeadSourcesConfig();
-      renderSocialSourcesConfig();
-      renderDepartmentsConfig();
-    }
-
-    if (state.activeView === "configuracoes") {
-      renderHistoryText();
-    }
+    renderActiveViewContent();
 
     renderNotifications();
-    if (state.activeView === "relatorios") {
-      if (typeof window.Chart !== "undefined") {
-        scheduleReportChartsRender();
-      } else {
-        void ensureChartLibrary()
-          .then(() => {
-            if (state.activeView === "relatorios") {
-              scheduleReportChartsRender();
-            }
-          })
-          .catch((error) => {
-            console.error("Erro ao carregar biblioteca de gráficos:", error);
-          });
-      }
-    }
+    renderReportChartsIfNeeded();
     bindGeneralActionEvents();
-    requestAnimationFrame(() => {
-      updateStickyLayout();
-      if (state.highlightedLeadId && isFunnelDetailActive()) {
-        const highlightedCard = document.querySelector(`#pipeline [data-lead-id="${CSS.escape(state.highlightedLeadId)}"]`);
-        if (highlightedCard) {
-          highlightedCard.classList.add("card-highlighted");
-          highlightedCard.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-          window.setTimeout(() => highlightedCard.classList.remove("card-highlighted"), 2600);
-          state.highlightedLeadId = null;
-        }
-      }
-    });
+    runPostRenderLayoutEffects({ highlightLead: true });
   }
 
   function renderPipelineInteractionFrame() {
@@ -14010,9 +14060,7 @@
     resetRenderComputationCache();
     renderPipeline();
     bindGeneralActionEvents();
-    requestAnimationFrame(() => {
-      updateStickyLayout();
-    });
+    runPostRenderLayoutEffects();
     return true;
   }
 
@@ -14076,6 +14124,28 @@
     openModalOverlay(els.modalOverlay, "#name");
   }
 
+  function prepareNotificationModal({
+    targetType,
+    targetId,
+    title,
+    description,
+    showLeadEditor = false,
+    showStageEditor = false,
+    hasReminder = false,
+    focusSelector = "#leadNotificationEnabled"
+  } = {}) {
+    closeAllModals();
+    els.notificationForm?.reset();
+    if (els.notificationTargetType) els.notificationTargetType.value = targetType || "";
+    if (els.notificationTargetId) els.notificationTargetId.value = targetId || "";
+    if (els.notificationModalTitle) els.notificationModalTitle.textContent = title || "Notificação";
+    if (els.notificationModalDescription) els.notificationModalDescription.textContent = description || "";
+    els.leadNotificationEditor?.classList.toggle("hidden", !showLeadEditor);
+    els.stageNotificationEditor?.classList.toggle("hidden", !showStageEditor);
+    toggleNotificationDeleteButton(Boolean(hasReminder));
+    openModalOverlay(els.notificationModalOverlay, focusSelector);
+  }
+
   function openLeadNotificationEditor(lead) {
     if (!lead) return;
     if (leadHasStageNotification(lead)) {
@@ -14083,21 +14153,20 @@
       return;
     }
     const reminder = getLeadReminder(lead);
-    closeAllModals();
-    els.notificationForm?.reset();
-    if (els.notificationTargetType) els.notificationTargetType.value = "lead";
-    if (els.notificationTargetId) els.notificationTargetId.value = lead.id || "";
-    if (els.notificationModalTitle) els.notificationModalTitle.textContent = "Notificação do lead";
-    if (els.notificationModalDescription) els.notificationModalDescription.textContent = `Configure a notificação do lead ${lead.name || "sem nome"}.`;
-    els.leadNotificationEditor?.classList.remove("hidden");
-    els.stageNotificationEditor?.classList.add("hidden");
+    prepareNotificationModal({
+      targetType: "lead",
+      targetId: lead.id || "",
+      title: "Notificação do lead",
+      description: `Configure a notificação do lead ${lead.name || "sem nome"}.`,
+      showLeadEditor: true,
+      hasReminder: reminder,
+      focusSelector: "#leadNotificationEnabled"
+    });
     if (els.leadNotificationEnabled) els.leadNotificationEnabled.checked = Boolean(reminder);
     if (els.leadNotificationDate) els.leadNotificationDate.min = getLocalIsoDate();
     if (els.leadNotificationDate) els.leadNotificationDate.value = reminder?.type === "date" ? (reminder.due_date || "") : "";
     if (els.leadNotificationMessage) els.leadNotificationMessage.value = reminder?.message || "";
-    toggleNotificationDeleteButton(Boolean(reminder));
     toggleLeadReminderFields({ clearWhenHidden: !reminder });
-    openModalOverlay(els.notificationModalOverlay, "#leadNotificationEnabled");
   }
 
   function closeLeadModal() {
@@ -14133,20 +14202,19 @@
   function openStageNotificationEditor(stage) {
     if (!stage) return;
     const reminder = getStageReminderConfig(stage.id);
-    closeAllModals();
-    els.notificationForm?.reset();
-    if (els.notificationTargetType) els.notificationTargetType.value = "stage";
-    if (els.notificationTargetId) els.notificationTargetId.value = stage.id || "";
-    if (els.notificationModalTitle) els.notificationModalTitle.textContent = "Notificação da pipeline";
-    if (els.notificationModalDescription) els.notificationModalDescription.textContent = `Configure a notificação da pipeline ${stage.name || "sem nome"}.`;
-    els.leadNotificationEditor?.classList.add("hidden");
-    els.stageNotificationEditor?.classList.remove("hidden");
+    prepareNotificationModal({
+      targetType: "stage",
+      targetId: stage.id || "",
+      title: "Notificação da pipeline",
+      description: `Configure a notificação da pipeline ${stage.name || "sem nome"}.`,
+      showStageEditor: true,
+      hasReminder: reminder,
+      focusSelector: "#stageNotificationEnabled"
+    });
     if (els.stageNotificationEnabled) els.stageNotificationEnabled.checked = Boolean(reminder);
     if (els.stageNotificationDays) els.stageNotificationDays.value = reminder?.days ? String(reminder.days) : "";
     if (els.stageNotificationMessage) els.stageNotificationMessage.value = reminder?.message || "";
-    toggleNotificationDeleteButton(Boolean(reminder));
     toggleStageReminderFields({ clearWhenHidden: !reminder });
-    openModalOverlay(els.notificationModalOverlay, "#stageNotificationEnabled");
   }
 
   function closeStageModal() {
