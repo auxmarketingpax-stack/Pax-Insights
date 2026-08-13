@@ -11983,6 +11983,102 @@
     };
   }
 
+  function requestLeadDeleteAuthorization(lead) {
+    if (!lead) return;
+    requestAdminAuthorization({
+      requestType: "delete_lead",
+      title: "Solicitar exclusao de lead",
+      description: `Voce nao tem permissao para excluir o lead "${lead.name}". Sua solicitacao sera enviada para o administrador.`,
+      entityType: "lead",
+      entityId: lead.id,
+      payload: {
+        lead_id: lead.id,
+        lead_name: lead.name,
+        lead_owner: lead.owner || null
+      }
+    });
+  }
+
+  function requestBulkLeadDeleteAuthorization(ids = []) {
+    requestAdminAuthorization({
+      requestType: "bulk_delete_leads",
+      title: "Solicitar exclusao em lote",
+      description: "Voce nao tem permissao para excluir leads em lote. Envie uma solicitacao para o administrador.",
+      entityType: "lead",
+      entityId: null,
+      payload: {
+        lead_ids: ids,
+        lead_names: state.leads.filter((lead) => ids.includes(lead.id)).map((lead) => lead.name)
+      }
+    });
+  }
+
+  async function finalizeDeletedLeadsLocally(ids = [], options = {}) {
+    const normalizedIds = normalizeIdList(ids);
+    if (!normalizedIds.length) return true;
+
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        applyOptimistic: () => {
+          removeLeadsLocally(normalizedIds);
+          if (options.clearSelection === true) {
+            state.selectedLeadIds.clear();
+          }
+        },
+        persist: async () => null,
+        afterPersist: async () => {
+          if (typeof options.afterPersist === "function") {
+            await options.afterPersist();
+          }
+          finalizeLocalMutation({
+            notifyScope: "workspace",
+            refreshReason: options.refreshReason || "lead-delete",
+            cooldownMs: Number(options.cooldownMs || 1200)
+          });
+        }
+      });
+    } catch (mutationError) {
+      const errorPrefix = String(options.localErrorPrefix || "Erro ao finalizar exclusão local dos leads").trim();
+      alert(`${errorPrefix}: ${formatSupabaseError(mutationError)}`);
+      return false;
+    }
+
+    return true;
+  }
+
+  function collectSingleLeadDeleteContext(id) {
+    const normalizedId = normalizeIdList([id])[0] || "";
+    const lead = state.leads.find((item) => item.id === normalizedId) || null;
+    return {
+      normalizedId,
+      lead
+    };
+  }
+
+  function validateSingleLeadDeleteContext(context = {}) {
+    if (!context.lead) return false;
+    if (deletingLeadIds.has(context.normalizedId)) return false;
+    if (!confirm(`Excluir o lead "${context.lead.name}"?`)) return false;
+    if (!canDeleteLeads(context.lead)) {
+      requestLeadDeleteAuthorization(context.lead);
+      return false;
+    }
+    return true;
+  }
+
+  async function executeLeadDeleteRequest(ids = [], options = {}) {
+    const normalizedIds = normalizeIdList(ids);
+    if (!normalizedIds.length) {
+      return { data: [], error: null };
+    }
+    return deleteLeadsByIds(normalizedIds, options);
+  }
+
   async function deleteSelectedLeads() {
     if (state.bulkDeleteInProgress) return;
 
@@ -11991,17 +12087,7 @@
     if (!confirm(`Tem certeza que deseja excluir ${ids.length} lead(s)?`)) return;
 
     if (!canDeleteLeads()) {
-      requestAdminAuthorization({
-        requestType: "bulk_delete_leads",
-        title: "Solicitar exclusao em lote",
-        description: "Voce nao tem permissao para excluir leads em lote. Envie uma solicitacao para o administrador.",
-        entityType: "lead",
-        entityId: null,
-        payload: {
-          lead_ids: ids,
-          lead_names: state.leads.filter((lead) => ids.includes(lead.id)).map((lead) => lead.name)
-        }
-      });
+      requestBulkLeadDeleteAuthorization(ids);
       return;
     }
 
@@ -12017,7 +12103,7 @@
     let error = null;
 
     try {
-      ({ data, error } = await deleteLeadsByIds(ids, {
+      ({ data, error } = await executeLeadDeleteRequest(ids, {
         onProgress(completed) {
           state.bulkDeleteCompleted = completed;
           updateBulkDeleteButton();
@@ -12032,39 +12118,24 @@
 
     if (error) return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
 
-    try {
-      await executeCriticalMutation({
-        snapshot: {
-          leads: true,
-          funnelWorkspace: true,
-          selectedLeadIds: true
-        },
-        applyOptimistic: () => {
-          removeLeadsLocally(ids);
-          state.selectedLeadIds.clear();
-        },
-        persist: async () => null,
-        afterPersist: async () => {
-          await logChange(
-            "bulk_delete",
-            "lead",
-            null,
-            `${ids.length} lead(s) foram excluídos por ${getUserDisplayName()}.`,
-            {
-              deleted_ids: data.map((item) => item?.deleted_id).filter(Boolean),
-              deleted_names: selectedLeads.map((lead) => lead.name)
-            }
-          );
-          finalizeLocalMutation({
-            notifyScope: "workspace",
-            refreshReason: "bulk-lead-delete",
-            cooldownMs: 1400
-          });
-        }
-      });
-    } catch (mutationError) {
-      return alert(`Erro ao finalizar exclusão local dos leads: ${formatSupabaseError(mutationError)}`);
-    }
+    await finalizeDeletedLeadsLocally(ids, {
+      clearSelection: true,
+      refreshReason: "bulk-lead-delete",
+      cooldownMs: 1400,
+      localErrorPrefix: "Erro ao finalizar exclusão local dos leads",
+      afterPersist: async () => {
+        await logChange(
+          "bulk_delete",
+          "lead",
+          null,
+          `${ids.length} lead(s) foram excluídos por ${getUserDisplayName()}.`,
+          {
+            deleted_ids: data.map((item) => item?.deleted_id).filter(Boolean),
+            deleted_names: selectedLeads.map((lead) => lead.name)
+          }
+        );
+      }
+    });
   }
 
   function renderLeadTable() {
@@ -15487,6 +15558,137 @@
     return true;
   }
 
+  function getDuplicateCustomStageType(context = {}) {
+    const customTypes = getCustomStageTypes();
+    return customTypes.find((item) =>
+      normalizeStageTypeNameKey(item) === normalizeStageTypeNameKey(context.payload?.custom_stage_type) &&
+      normalizeStageTypeNameKey(item) !== normalizeStageTypeNameKey(context.existingCustomType)
+    ) || null;
+  }
+
+  async function persistCustomStageTypeChanges(context = {}) {
+    const duplicateCustom = getDuplicateCustomStageType(context);
+
+    if (context.isCreatingNewCustom && duplicateCustom) {
+      alert("Esse tipo personalizado ja existe. Selecione-o na lista para editar.");
+      return false;
+    }
+
+    if (context.isEditingExistingCustom && context.desiredCustomType !== context.existingCustomType) {
+      if (duplicateCustom) {
+        alert("Ja existe outro tipo com esse nome. Selecione-o na lista para editar.");
+        return false;
+      }
+      const renamed = await renameCustomStageType(context.existingCustomType, context.desiredCustomType);
+      if (!renamed) {
+        alert("Nao foi possivel atualizar o tipo personalizado.");
+        return false;
+      }
+      return true;
+    }
+
+    if (context.isCreatingNewCustom) {
+      const savedType = await saveCustomStageType(context.payload?.custom_stage_type);
+      if (!savedType) {
+        alert("Nao foi possivel salvar o novo tipo personalizado.");
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  function collectStageUpdatePersistenceContext(context = {}) {
+    const stageId = String(els.stageId.value || "").trim();
+    const before = state.stages.find((stage) => stage.id === stageId) || null;
+    const previousStageName = normalizeStageName(before?.name || context.payload?.name || "");
+    const previousAssignedSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
+    const matchingTargetStage = findMatchingStageInSubfunnelByName(context.payload?.name, context.selectedSubfunnelId, stageId);
+    const leadIdsInStage = state.leads
+      .filter((lead) => String(lead.stage_id || "").trim() === stageId)
+      .map((lead) => lead.id)
+      .filter(Boolean);
+
+    return {
+      stageId,
+      before,
+      previousStageName,
+      previousAssignedSubfunnelId,
+      matchingTargetStage,
+      leadIdsInStage
+    };
+  }
+
+  async function persistUpdatedStage(context = {}) {
+    const updateContext = collectStageUpdatePersistenceContext(context);
+
+    if (updateContext.before && updateContext.matchingTargetStage) {
+      await mergeStageIntoExistingTarget({
+        sourceStage: updateContext.before,
+        targetStage: updateContext.matchingTargetStage,
+        targetSubfunnelId: context.selectedSubfunnelId,
+        payload: context.payload
+      });
+      return;
+    }
+
+    const { error } = await state.supabase
+      .from("stages")
+      .update({
+        name: context.payload.name,
+        color: context.payload.color,
+        stage_type: context.payload.stage_type,
+        custom_stage_type: context.payload.custom_stage_type,
+        position: context.payload.position
+      })
+      .eq("id", updateContext.stageId);
+    if (error) throw error;
+
+    await persistWorkspaceAssignmentsSafely({
+      stageIds: [updateContext.stageId],
+      leadIds: updateContext.leadIdsInStage,
+      subfunnelId: context.selectedSubfunnelId,
+      notify: updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId,
+      notifyScope: "funnel-workspace"
+    });
+
+    if (updateContext.previousAssignedSubfunnelId && updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId) {
+      await cleanupDuplicateStagesInSubfunnel(updateContext.previousAssignedSubfunnelId, updateContext.previousStageName, {
+        removeAllWhenNoLeads: true
+      });
+    }
+    await cleanupDuplicateStagesInSubfunnel(context.selectedSubfunnelId, context.payload.name, {
+      keepStageId: updateContext.stageId
+    });
+
+    await logChange("update", "stage", updateContext.stageId, `Etapa "${updateContext.before?.name || context.payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
+      before: updateContext.before,
+      after: {
+        ...context.payload,
+        previous_subfunnel_id: updateContext.previousAssignedSubfunnelId || null,
+        subfunnel_id: context.selectedSubfunnelId
+      }
+    });
+
+    upsertStageLocally({ ...updateContext.before, ...context.payload, id: updateContext.stageId });
+  }
+
+  async function persistNewStage(context = {}) {
+    const { data, error } = await state.supabase.from("stages").insert([context.payload]).select().single();
+    if (error) throw error;
+
+    await logChange("insert", "stage", data?.id, `Etapa "${context.payload.name}" foi criada por ${getUserDisplayName()}.`, context.payload);
+    if (data?.id) {
+      upsertStageLocally(data);
+      await persistWorkspaceAssignmentsSafely({
+        stageIds: [data.id],
+        subfunnelId: context.selectedSubfunnelId,
+        notify: true,
+        notifyScope: "funnel-workspace"
+      });
+    }
+  }
+
   async function submitStage(event) {
     event.preventDefault();
 
@@ -15512,100 +15714,14 @@
       if (!savedType) return alert("Não foi possível salvar o novo tipo personalizado.");
     }
 
-    const customTypes = getCustomStageTypes();
-    const duplicateCustom = customTypes.find((item) =>
-      normalizeStageTypeNameKey(item) === normalizeStageTypeNameKey(payload.custom_stage_type) &&
-      normalizeStageTypeNameKey(item) !== normalizeStageTypeNameKey(existingCustomType)
-    );
-
-    if (isCreatingNewCustom && duplicateCustom) {
-      return alert("Esse tipo personalizado ja existe. Selecione-o na lista para editar.");
-    }
-
-    if (isEditingExistingCustom && desiredCustomType !== existingCustomType) {
-      if (duplicateCustom) return alert("Ja existe outro tipo com esse nome. Selecione-o na lista para editar.");
-      const renamed = await renameCustomStageType(existingCustomType, desiredCustomType);
-      if (!renamed) return alert("Nao foi possivel atualizar o tipo personalizado.");
-    } else if (isCreatingNewCustom) {
-      const savedType = await saveCustomStageType(payload.custom_stage_type);
-      if (!savedType) return alert("Nao foi possivel salvar o novo tipo personalizado.");
-    }
+    const customTypePersisted = await persistCustomStageTypeChanges(context);
+    if (!customTypePersisted) return;
 
     try {
       if (els.stageId.value) {
-        const stageId = String(els.stageId.value || "").trim();
-        const before = state.stages.find((s) => s.id === stageId);
-        const previousStageName = normalizeStageName(before?.name || payload.name || "");
-        const previousAssignedSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
-        const matchingTargetStage = findMatchingStageInSubfunnelByName(payload.name, selectedSubfunnelId, stageId);
-        const leadIdsInStage = state.leads
-          .filter((lead) => String(lead.stage_id || "").trim() === stageId)
-          .map((lead) => lead.id)
-          .filter(Boolean);
-
-        if (before && matchingTargetStage) {
-          await mergeStageIntoExistingTarget({
-            sourceStage: before,
-            targetStage: matchingTargetStage,
-            targetSubfunnelId: selectedSubfunnelId,
-            payload
-          });
-        } else {
-
-          const { error } = await state.supabase
-            .from("stages")
-            .update({
-              name: payload.name,
-              color: payload.color,
-              stage_type: payload.stage_type,
-              custom_stage_type: payload.custom_stage_type,
-              position: payload.position
-            })
-            .eq("id", stageId);
-          if (error) return alert(`Erro no Supabase: ${error.message}`);
-
-          await persistWorkspaceAssignmentsSafely({
-            stageIds: [stageId],
-            leadIds: leadIdsInStage,
-            subfunnelId: selectedSubfunnelId,
-            notify: previousAssignedSubfunnelId !== selectedSubfunnelId,
-            notifyScope: "funnel-workspace"
-          });
-
-          if (previousAssignedSubfunnelId && previousAssignedSubfunnelId !== selectedSubfunnelId) {
-            await cleanupDuplicateStagesInSubfunnel(previousAssignedSubfunnelId, previousStageName, {
-              removeAllWhenNoLeads: true
-            });
-          }
-          await cleanupDuplicateStagesInSubfunnel(selectedSubfunnelId, payload.name, {
-            keepStageId: stageId
-          });
-
-          await logChange("update", "stage", stageId, `Etapa "${before?.name || payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
-            before,
-            after: {
-              ...payload,
-              previous_subfunnel_id: previousAssignedSubfunnelId || null,
-              subfunnel_id: selectedSubfunnelId
-            }
-          });
-
-          upsertStageLocally({ ...before, ...payload, id: stageId });
-        }
-
+        await persistUpdatedStage(context);
       } else {
-        const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
-        if (error) return alert(`Erro no Supabase: ${error.message}`);
-        await logChange("insert", "stage", data?.id, `Etapa "${payload.name}" foi criada por ${getUserDisplayName()}.`, payload);
-        if (data?.id) {
-          upsertStageLocally(data);
-          await persistWorkspaceAssignmentsSafely({
-            stageIds: [data.id],
-            subfunnelId: selectedSubfunnelId,
-            notify: true,
-            notifyScope: "funnel-workspace"
-          });
-        }
+        await persistNewStage(context);
       }
     } catch (error) {
       return alert(`Erro ao salvar pipeline: ${formatSupabaseError(error)}`);
@@ -15619,150 +15735,200 @@
     });
   }
 
+  function collectNotificationSubmissionContext() {
+    const targetType = String(els.notificationTargetType?.value || "").trim();
+    const targetId = String(els.notificationTargetId?.value || "").trim();
+    return {
+      targetType,
+      targetId
+    };
+  }
+
+  function collectLeadNotificationContext(targetId) {
+    const lead = state.leads.find((item) => item.id === targetId) || null;
+    const existingMeta = getLeadMeta(lead?.notes || "", lead?.value || 0);
+    const enabled = Boolean(els.leadNotificationEnabled?.checked);
+    const nextReminder = enabled
+      ? normalizeLeadReminder({
+          type: "date",
+          due_date: els.leadNotificationDate?.value || "",
+          message: els.leadNotificationMessage?.value || ""
+        })
+      : null;
+    return {
+      lead,
+      existingMeta,
+      enabled,
+      nextReminder
+    };
+  }
+
+  function validateLeadNotificationContext(context = {}) {
+    if (!context.lead || !canEditLeads(context.lead)) {
+      alert("Seu perfil não tem permissão para alterar esta notificação.");
+      return false;
+    }
+    if (leadHasStageNotification(context.lead)) {
+      alert("Esta pipeline já possui uma notificação ativa. Neste lead não é possível manter outra notificação.");
+      return false;
+    }
+    if (context.enabled && !context.nextReminder) {
+      alert("Informe a data da notificação.");
+      return false;
+    }
+    if (context.enabled && context.nextReminder?.due_date && context.nextReminder.due_date < getLocalIsoDate()) {
+      alert(`A data da notificação do lead não pode ser anterior a ${formatDate(getLocalIsoDate())}.`);
+      return false;
+    }
+    return true;
+  }
+
+  async function submitLeadNotification(targetId) {
+    const context = collectLeadNotificationContext(targetId);
+    if (!validateLeadNotificationContext(context)) return false;
+
+    const nextNotes = serializeLeadMeta({
+      ...context.existingMeta,
+      reminder: context.nextReminder
+    });
+
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true
+        },
+        applyOptimistic: () => {
+          applyLeadReminderLocally(targetId, context.nextReminder);
+        },
+        persist: async () => {
+          const { error } = await state.supabase
+            .from("leads")
+            .update({ notes: nextNotes })
+            .eq("id", targetId);
+          if (error) throw error;
+        },
+        afterPersist: async () => {
+          renderNotifications();
+          notifyLiveSyncChange("workspace");
+          await logChange(
+            "update",
+            "lead_notification",
+            targetId,
+            `Notificação do lead "${context.lead.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+            { before: context.existingMeta.reminder || null, after: context.nextReminder }
+          );
+        }
+      });
+    } catch (error) {
+      alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
+      return false;
+    }
+
+    return true;
+  }
+
+  function collectStageNotificationContext(targetId) {
+    const stage = getStageById(targetId);
+    const previousReminder = getStageReminderConfig(targetId);
+    const enabled = Boolean(els.stageNotificationEnabled?.checked);
+    const nextReminder = enabled
+      ? normalizeStageReminderConfig({
+          days: els.stageNotificationDays?.value || 0,
+          message: els.stageNotificationMessage?.value || ""
+        })
+      : null;
+    const conflictingLeads = nextReminder
+      ? state.leads.filter((lead) => String(lead?.stage_id || "").trim() === targetId && getLeadReminder(lead))
+      : [];
+    return {
+      stage,
+      previousReminder,
+      enabled,
+      nextReminder,
+      conflictingLeads
+    };
+  }
+
+  function validateStageNotificationContext(context = {}) {
+    if (!context.stage || !canManageStages()) {
+      alert("Somente administradores podem alterar esta notificação.");
+      return false;
+    }
+    if (context.enabled && !context.nextReminder) {
+      alert("Informe em quantos dias a notificação da pipeline deve aparecer.");
+      return false;
+    }
+    return true;
+  }
+
+  async function submitStageNotification(targetId) {
+    const context = collectStageNotificationContext(targetId);
+    if (!validateStageNotificationContext(context)) return false;
+
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        applyOptimistic: () => {
+          applyStageReminderConfigLocally(targetId, context.nextReminder);
+          context.conflictingLeads.forEach((lead) => applyLeadReminderLocally(lead.id, null));
+        },
+        persist: async () => {
+          if (state.funnelDataLoadedFromSupabase) {
+            await persistStageReminderConfigToSupabase(targetId, context.nextReminder);
+          }
+
+          for (const lead of context.conflictingLeads) {
+            const meta = getLeadMeta(lead.notes || "", lead.value || 0);
+            const { error } = await state.supabase
+              .from("leads")
+              .update({
+                notes: serializeLeadMeta({
+                  ...meta,
+                  reminder: null
+                })
+              })
+              .eq("id", lead.id);
+            if (error) throw error;
+          }
+        },
+        afterPersist: async () => {
+          renderNotifications();
+          notifyLiveSyncChange("stage-reminder-config");
+          await logChange(
+            "update",
+            "stage_notification",
+            targetId,
+            `Notificação da pipeline "${context.stage?.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
+            { before: context.previousReminder, after: context.nextReminder }
+          );
+        }
+      });
+    } catch (error) {
+      alert(`Erro ao salvar notificação da pipeline: ${formatSupabaseError(error)}`);
+      return false;
+    }
+
+    return true;
+  }
+
   async function submitNotification(event) {
     event.preventDefault();
 
-    const targetType = String(els.notificationTargetType?.value || "").trim();
-    const targetId = String(els.notificationTargetId?.value || "").trim();
+    const { targetType, targetId } = collectNotificationSubmissionContext();
     if (!targetType || !targetId) return;
 
     if (targetType === "lead") {
-      const lead = state.leads.find((item) => item.id === targetId) || null;
-      if (!lead || !canEditLeads(lead)) {
-        alert("Seu perfil não tem permissão para alterar esta notificação.");
-        return;
-      }
-      if (leadHasStageNotification(lead)) {
-        alert("Esta pipeline já possui uma notificação ativa. Neste lead não é possível manter outra notificação.");
-        return;
-      }
-
-      const existingMeta = getLeadMeta(lead.notes || "", lead.value || 0);
-      const enabled = Boolean(els.leadNotificationEnabled?.checked);
-      const nextReminder = enabled
-        ? normalizeLeadReminder({
-            type: "date",
-            due_date: els.leadNotificationDate?.value || "",
-            message: els.leadNotificationMessage?.value || ""
-          })
-        : null;
-
-      if (enabled && !nextReminder) {
-        alert("Informe a data da notificação.");
-        return;
-      }
-      if (enabled && nextReminder?.due_date && nextReminder.due_date < getLocalIsoDate()) {
-        alert(`A data da notificação do lead não pode ser anterior a ${formatDate(getLocalIsoDate())}.`);
-        return;
-      }
-
-      const nextNotes = serializeLeadMeta({
-        ...existingMeta,
-        reminder: nextReminder
-      });
-
-      try {
-        await executeCriticalMutation({
-          snapshot: {
-            leads: true
-          },
-          applyOptimistic: () => {
-            applyLeadReminderLocally(targetId, nextReminder);
-          },
-          persist: async () => {
-            const { error } = await state.supabase
-              .from("leads")
-              .update({ notes: nextNotes })
-              .eq("id", targetId);
-            if (error) throw error;
-          },
-          afterPersist: async () => {
-            renderNotifications();
-            notifyLiveSyncChange("workspace");
-            await logChange(
-              "update",
-              "lead_notification",
-              targetId,
-              `Notificação do lead "${lead.name || "sem nome"}" foi ${nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
-              { before: existingMeta.reminder || null, after: nextReminder }
-            );
-          }
-        });
-      } catch (error) {
-        return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
-      }
+      const savedLeadNotification = await submitLeadNotification(targetId);
+      if (!savedLeadNotification) return;
     }
 
     if (targetType === "stage") {
-      const stage = getStageById(targetId);
-      if (!stage || !canManageStages()) {
-        alert("Somente administradores podem alterar esta notificação.");
-        return;
-      }
-
-      const previousReminder = getStageReminderConfig(targetId);
-      const enabled = Boolean(els.stageNotificationEnabled?.checked);
-      const nextReminder = enabled
-        ? normalizeStageReminderConfig({
-            days: els.stageNotificationDays?.value || 0,
-            message: els.stageNotificationMessage?.value || ""
-          })
-        : null;
-
-      if (enabled && !nextReminder) {
-        alert("Informe em quantos dias a notificação da pipeline deve aparecer.");
-        return;
-      }
-
-      const conflictingLeads = nextReminder
-        ? state.leads.filter((lead) => String(lead?.stage_id || "").trim() === targetId && getLeadReminder(lead))
-        : [];
-
-      try {
-        await executeCriticalMutation({
-          snapshot: {
-            leads: true,
-            funnelWorkspace: true,
-            selectedLeadIds: true
-          },
-          applyOptimistic: () => {
-            applyStageReminderConfigLocally(targetId, nextReminder);
-            conflictingLeads.forEach((lead) => applyLeadReminderLocally(lead.id, null));
-          },
-          persist: async () => {
-            if (state.funnelDataLoadedFromSupabase) {
-              await persistStageReminderConfigToSupabase(targetId, nextReminder);
-            }
-
-            for (const lead of conflictingLeads) {
-              const meta = getLeadMeta(lead.notes || "", lead.value || 0);
-              const { error } = await state.supabase
-                .from("leads")
-                .update({
-                  notes: serializeLeadMeta({
-                    ...meta,
-                    reminder: null
-                  })
-                })
-                .eq("id", lead.id);
-              if (error) throw error;
-            }
-          },
-          afterPersist: async () => {
-            renderNotifications();
-            notifyLiveSyncChange("stage-reminder-config");
-            await logChange(
-              "update",
-              "stage_notification",
-              targetId,
-              `Notificação da pipeline "${stage?.name || "sem nome"}" foi ${nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
-              { before: previousReminder, after: nextReminder }
-            );
-          }
-        });
-      } catch (error) {
-        return alert(`Erro ao salvar notificação da pipeline: ${formatSupabaseError(error)}`);
-      }
+      const savedStageNotification = await submitStageNotification(targetId);
+      if (!savedStageNotification) return;
     }
 
     closeNotificationModal();
@@ -15773,17 +15939,10 @@
     });
   }
 
-  async function moveLeadToStage(leadId, stageId) {
-    const lead = state.leads.find((x) => x.id === leadId);
-    const stage = state.stages.find((x) => x.id === stageId);
-    const fromStage = state.stages.find((x) => x.id === lead?.stage_id);
-
-    if (!lead || !stage || lead.stage_id === stageId) return;
-    if (!canMoveLeads(lead)) {
-      alert("Seu perfil não tem permissão de edição neste funil.");
-      return;
-    }
-
+  function collectLeadMoveContext(leadId, stageId) {
+    const lead = state.leads.find((item) => item.id === leadId) || null;
+    const stage = state.stages.find((item) => item.id === stageId) || null;
+    const fromStage = state.stages.find((item) => item.id === lead?.stage_id) || null;
     const leadMeta = getLeadMeta(lead?.notes || "", lead?.value || 0);
     const nextStageTracking = normalizeLeadStageTracking(leadMeta.stage_tracking || {});
     nextStageTracking[stageId] = getLocalIsoDate();
@@ -15791,52 +15950,83 @@
       ...leadMeta,
       stage_tracking: nextStageTracking
     });
-    const previousLead = { ...lead };
-    const previousAssignedSubfunnelId = String(state.funnelWorkspace?.leadAssignments?.[lead.id] || "").trim();
+    const previousLead = lead ? { ...lead } : null;
+    const previousAssignedSubfunnelId = String(state.funnelWorkspace?.leadAssignments?.[lead?.id] || "").trim();
     const targetSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim() || previousAssignedSubfunnelId;
     const shouldPersistLeadSubfunnelChange = Boolean(
       targetSubfunnelId && targetSubfunnelId !== previousAssignedSubfunnelId
     );
 
-    try {
-      await executeCriticalMutation({
-        snapshot: {
-          leads: true,
-          funnelWorkspace: true,
-          selectedLeadIds: true
-        },
-        applyOptimistic: () => {
-          updateLeadsLocallyByIds([lead.id], (item) => ({
-            ...item,
-            stage_id: stageId,
-            notes: nextNotes
-          }));
-          if (shouldPersistLeadSubfunnelChange) {
-            assignLeadToSubfunnel(lead.id, targetSubfunnelId, { deferSync: true });
-            state.suppressFunnelSync = true;
-            writeStoredFunnelWorkspace();
-          }
-        },
-        persist: async () => {
-          const { error } = await state.supabase
-            .from("leads")
-            .update({
-              stage_id: stageId,
-              notes: nextNotes
-            })
-            .eq("id", lead.id);
-          if (error) throw error;
+    return {
+      lead,
+      stage,
+      fromStage,
+      leadMeta,
+      nextStageTracking,
+      nextNotes,
+      previousLead,
+      previousAssignedSubfunnelId,
+      targetSubfunnelId,
+      shouldPersistLeadSubfunnelChange
+    };
+  }
 
-          if (shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
-            await persistLeadAssignmentsToSupabase([lead.id], targetSubfunnelId);
-          }
-        },
-        afterPersist: async () => {
-          if (shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
-            notifyLiveSyncChange("funnel-workspace");
-          }
+  function validateLeadMoveContext(context = {}, stageId) {
+    if (!context.lead || !context.stage || context.lead.stage_id === stageId) return false;
+    if (!canMoveLeads(context.lead)) {
+      alert("Seu perfil não tem permissão de edição neste funil.");
+      return false;
+    }
+    return true;
+  }
+
+  async function persistLeadMove(context = {}, stageId) {
+    await executeCriticalMutation({
+      snapshot: {
+        leads: true,
+        funnelWorkspace: true,
+        selectedLeadIds: true
+      },
+      applyOptimistic: () => {
+        updateLeadsLocallyByIds([context.lead.id], (item) => ({
+          ...item,
+          stage_id: stageId,
+          notes: context.nextNotes
+        }));
+        if (context.shouldPersistLeadSubfunnelChange) {
+          assignLeadToSubfunnel(context.lead.id, context.targetSubfunnelId, { deferSync: true });
+          state.suppressFunnelSync = true;
+          writeStoredFunnelWorkspace();
         }
-      });
+      },
+      persist: async () => {
+        const { error } = await state.supabase
+          .from("leads")
+          .update({
+            stage_id: stageId,
+            notes: context.nextNotes
+          })
+          .eq("id", context.lead.id);
+        if (error) throw error;
+
+        if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
+          await persistLeadAssignmentsToSupabase([context.lead.id], context.targetSubfunnelId);
+        }
+      },
+      afterPersist: async () => {
+        if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
+          notifyLiveSyncChange("funnel-workspace");
+        }
+      }
+    });
+  }
+
+  async function moveLeadToStage(leadId, stageId) {
+    const context = collectLeadMoveContext(leadId, stageId);
+    if (!validateLeadMoveContext(context, stageId)) return;
+
+    try {
+      await persistLeadMove(context, stageId);
     } catch (error) {
       return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
     }
@@ -15846,14 +16036,14 @@
     void logChange(
       "move_stage",
       "lead",
-      lead.id,
-      `Lead "${lead.name}" foi movido de "${fromStage?.name || "-"}" para "${stage.name}" por ${getUserDisplayName()}.`,
+      context.lead.id,
+      `Lead "${context.lead.name}" foi movido de "${context.fromStage?.name || "-"}" para "${context.stage.name}" por ${getUserDisplayName()}.`,
       {
-        lead_id: lead.id,
-        from_stage_id: fromStage?.id || null,
-        from_stage_name: fromStage?.name || null,
-        to_stage_id: stage.id,
-        to_stage_name: stage.name
+        lead_id: context.lead.id,
+        from_stage_id: context.fromStage?.id || null,
+        from_stage_name: context.fromStage?.name || null,
+        to_stage_id: context.stage.id,
+        to_stage_name: context.stage.name
       }
     ).catch((historyError) => {
       console.error("Erro ao registrar movimentação de lead:", historyError);
@@ -15861,67 +16051,33 @@
   }
 
   async function deleteLead(id) {
-    const normalizedId = normalizeIdList([id])[0] || "";
-    const lead = state.leads.find((x) => x.id === normalizedId);
-    if (!lead) return;
-    if (deletingLeadIds.has(normalizedId)) return;
-    if (!confirm(`Excluir o lead "${lead.name}"?`)) return;
-    if (!canDeleteLeads(lead)) {
-      requestAdminAuthorization({
-        requestType: "delete_lead",
-        title: "Solicitar exclusao de lead",
-        description: `Voce nao tem permissao para excluir o lead "${lead.name}". Sua solicitacao sera enviada para o administrador.`,
-        entityType: "lead",
-        entityId: lead.id,
-        payload: {
-          lead_id: lead.id,
-          lead_name: lead.name,
-          lead_owner: lead.owner || null
-        }
-      });
-      return;
-    }
+    const context = collectSingleLeadDeleteContext(id);
+    if (!validateSingleLeadDeleteContext(context)) return;
 
-    deletingLeadIds.add(normalizedId);
+    deletingLeadIds.add(context.normalizedId);
     let error = null;
     try {
-      ({ error } = await deleteLeadsByIds([normalizedId]));
+      ({ error } = await executeLeadDeleteRequest([context.normalizedId]));
     } finally {
-      deletingLeadIds.delete(normalizedId);
+      deletingLeadIds.delete(context.normalizedId);
     }
 
     if (error) return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
 
-    try {
-      await executeCriticalMutation({
-        snapshot: {
-          leads: true,
-          funnelWorkspace: true,
-          selectedLeadIds: true
-        },
-        applyOptimistic: () => {
-          removeLeadsLocally([normalizedId]);
-        },
-        persist: async () => null,
-        afterPersist: async () => {
-          await logChange(
-            "delete",
-            "lead",
-            normalizedId,
-            `Lead "${lead.name}" foi excluído por ${getUserDisplayName()}.`,
-            lead
-          );
-
-          finalizeLocalMutation({
-            notifyScope: "workspace",
-            refreshReason: "lead-delete",
-            cooldownMs: 1200
-          });
-        }
-      });
-    } catch (mutationError) {
-      return alert(`Erro ao finalizar exclusão local do lead: ${formatSupabaseError(mutationError)}`);
-    }
+    await finalizeDeletedLeadsLocally([context.normalizedId], {
+      refreshReason: "lead-delete",
+      cooldownMs: 1200,
+      localErrorPrefix: "Erro ao finalizar exclusão local do lead",
+      afterPersist: async () => {
+        await logChange(
+          "delete",
+          "lead",
+          context.normalizedId,
+          `Lead "${context.lead.name}" foi excluído por ${getUserDisplayName()}.`,
+          context.lead
+        );
+      }
+    });
   }
 
   async function editStage(id) {
