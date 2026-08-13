@@ -525,6 +525,7 @@
   const CHART_JS_URL = "https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js";
   const ALLOWED_EXTERNAL_SCRIPT_URLS = new Set([CHART_JS_URL]);
   const deletingLeadIds = new Set();
+  const TRANSIENT_POSITION_BASE = 1000000;
   const CHART_GREEN_PALETTE = [
     "#14532D",
     "#166534",
@@ -10549,6 +10550,18 @@
     );
   }
 
+  function isTransientRemotePosition(value) {
+    return Number.isFinite(Number(value)) && Number(value) >= TRANSIENT_POSITION_BASE;
+  }
+
+  function hasTransientRemoteStagePositions(stageRows = []) {
+    return (Array.isArray(stageRows) ? stageRows : []).some((row) => isTransientRemotePosition(row?.position));
+  }
+
+  function hasTransientRemoteSubfunnelPositions(subfunnelRows = []) {
+    return (Array.isArray(subfunnelRows) ? subfunnelRows : []).some((row) => isTransientRemotePosition(row?.position));
+  }
+
   function updateStageColorPreview(value) {
     const color = sanitizeHexColor(value);
     if (els.stageColor && els.stageColor.value !== color) {
@@ -10974,6 +10987,21 @@
     if (firstError) {
       alert(`Erro ao carregar dados do Supabase: ${firstError.message}`);
       return;
+    }
+
+    if (hasTransientRemoteStagePositions(stagesRes.data || [])) {
+      console.warn("Snapshot remoto ignorado porque contém posições temporárias de pipeline.");
+      scheduleLiveDataRefresh("transient-stage-positions", { immediate: false });
+      return false;
+    }
+
+    const remoteSubfunnelRows = Array.isArray(remoteFunnelWorkspace?.funnels)
+      ? remoteFunnelWorkspace.funnels.flatMap((funnel) => funnel?.subfunnels || [])
+      : [];
+    if (hasTransientRemoteSubfunnelPositions(remoteSubfunnelRows)) {
+      console.warn("Snapshot remoto ignorado porque contém posições temporárias de subfunil.");
+      scheduleLiveDataRefresh("transient-subfunnel-positions", { immediate: false });
+      return false;
     }
 
     state.stages = (stagesRes.data || []).map(normalizeStage);
