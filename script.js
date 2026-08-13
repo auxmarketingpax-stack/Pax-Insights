@@ -15919,6 +15919,56 @@
     };
   }
 
+  async function persistStageRecordUpdate(updateContext = {}, context = {}) {
+    const { error } = await state.supabase
+      .from("stages")
+      .update({
+        name: context.payload.name,
+        color: context.payload.color,
+        stage_type: context.payload.stage_type,
+        custom_stage_type: context.payload.custom_stage_type,
+        position: context.payload.position
+      })
+      .eq("id", updateContext.stageId);
+    if (error) throw error;
+  }
+
+  async function persistUpdatedStageAssignments(updateContext = {}, context = {}) {
+    await persistWorkspaceAssignmentsSafely({
+      stageIds: [updateContext.stageId],
+      leadIds: updateContext.leadIdsInStage,
+      subfunnelId: context.selectedSubfunnelId,
+      notify: updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId,
+      notifyScope: "funnel-workspace"
+    });
+  }
+
+  async function cleanupUpdatedStageDuplicates(updateContext = {}, context = {}) {
+    if (updateContext.previousAssignedSubfunnelId && updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId) {
+      await cleanupDuplicateStagesInSubfunnel(updateContext.previousAssignedSubfunnelId, updateContext.previousStageName, {
+        removeAllWhenNoLeads: true
+      });
+    }
+    await cleanupDuplicateStagesInSubfunnel(context.selectedSubfunnelId, context.payload.name, {
+      keepStageId: updateContext.stageId
+    });
+  }
+
+  async function logUpdatedStageChange(updateContext = {}, context = {}) {
+    await logChange("update", "stage", updateContext.stageId, `Etapa "${updateContext.before?.name || context.payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
+      before: updateContext.before,
+      after: {
+        ...context.payload,
+        previous_subfunnel_id: updateContext.previousAssignedSubfunnelId || null,
+        subfunnel_id: context.selectedSubfunnelId
+      }
+    });
+  }
+
+  function applyUpdatedStageLocally(updateContext = {}, context = {}) {
+    upsertStageLocally({ ...updateContext.before, ...context.payload, id: updateContext.stageId });
+  }
+
   async function persistUpdatedStage(context = {}) {
     const updateContext = collectStageUpdatePersistenceContext(context);
 
@@ -15932,61 +15982,55 @@
       return;
     }
 
-    const { error } = await state.supabase
-      .from("stages")
-      .update({
-        name: context.payload.name,
-        color: context.payload.color,
-        stage_type: context.payload.stage_type,
-        custom_stage_type: context.payload.custom_stage_type,
-        position: context.payload.position
-      })
-      .eq("id", updateContext.stageId);
-    if (error) throw error;
+    await persistStageRecordUpdate(updateContext, context);
+    await persistUpdatedStageAssignments(updateContext, context);
+    await cleanupUpdatedStageDuplicates(updateContext, context);
+    await logUpdatedStageChange(updateContext, context);
+    applyUpdatedStageLocally(updateContext, context);
+  }
 
+  async function logCreatedStageChange(context = {}, createdStage = null) {
+    await logChange("insert", "stage", createdStage?.id, `Etapa "${context.payload.name}" foi criada por ${getUserDisplayName()}.`, context.payload);
+  }
+
+  async function persistCreatedStageAssignments(createdStage = null, context = {}) {
+    if (!createdStage?.id) return;
+    upsertStageLocally(createdStage);
     await persistWorkspaceAssignmentsSafely({
-      stageIds: [updateContext.stageId],
-      leadIds: updateContext.leadIdsInStage,
+      stageIds: [createdStage.id],
       subfunnelId: context.selectedSubfunnelId,
-      notify: updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId,
+      notify: true,
       notifyScope: "funnel-workspace"
     });
-
-    if (updateContext.previousAssignedSubfunnelId && updateContext.previousAssignedSubfunnelId !== context.selectedSubfunnelId) {
-      await cleanupDuplicateStagesInSubfunnel(updateContext.previousAssignedSubfunnelId, updateContext.previousStageName, {
-        removeAllWhenNoLeads: true
-      });
-    }
-    await cleanupDuplicateStagesInSubfunnel(context.selectedSubfunnelId, context.payload.name, {
-      keepStageId: updateContext.stageId
-    });
-
-    await logChange("update", "stage", updateContext.stageId, `Etapa "${updateContext.before?.name || context.payload.name}" foi atualizada por ${getUserDisplayName()}.`, {
-      before: updateContext.before,
-      after: {
-        ...context.payload,
-        previous_subfunnel_id: updateContext.previousAssignedSubfunnelId || null,
-        subfunnel_id: context.selectedSubfunnelId
-      }
-    });
-
-    upsertStageLocally({ ...updateContext.before, ...context.payload, id: updateContext.stageId });
   }
 
   async function persistNewStage(context = {}) {
     const { data, error } = await state.supabase.from("stages").insert([context.payload]).select().single();
     if (error) throw error;
 
-    await logChange("insert", "stage", data?.id, `Etapa "${context.payload.name}" foi criada por ${getUserDisplayName()}.`, context.payload);
-    if (data?.id) {
-      upsertStageLocally(data);
-      await persistWorkspaceAssignmentsSafely({
-        stageIds: [data.id],
-        subfunnelId: context.selectedSubfunnelId,
-        notify: true,
-        notifyScope: "funnel-workspace"
-      });
+    await logCreatedStageChange(context, data);
+    await persistCreatedStageAssignments(data, context);
+  }
+
+  function isStageFormEditing() {
+    return Boolean(String(els.stageId?.value || "").trim());
+  }
+
+  async function persistStageFormSubmission(context = {}) {
+    if (isStageFormEditing()) {
+      await persistUpdatedStage(context);
+      return;
     }
+    await persistNewStage(context);
+  }
+
+  function finalizeStageSaveMutation() {
+    closeStageModal();
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-save",
+      cooldownMs: 1500
+    });
   }
 
   async function submitStage(event) {
@@ -16018,21 +16062,12 @@
     if (!customTypePersisted) return;
 
     try {
-      if (els.stageId.value) {
-        await persistUpdatedStage(context);
-      } else {
-        await persistNewStage(context);
-      }
+      await persistStageFormSubmission(context);
     } catch (error) {
       return alert(`Erro ao salvar pipeline: ${formatSupabaseError(error)}`);
     }
 
-    closeStageModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-save",
-      cooldownMs: 1500
-    });
+    finalizeStageSaveMutation();
   }
 
   function collectNotificationSubmissionContext() {
