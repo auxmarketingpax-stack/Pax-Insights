@@ -13816,106 +13816,76 @@
     return true;
   }
 
-  async function submitFunnelForm(event) {
-    event.preventDefault();
-    const context = collectFunnelFormSubmissionContext();
-    if (!validateFunnelFormSubmissionContext(context)) {
-      return;
-    }
-    const {
-      modalContext,
-      name,
-      category,
-      visibilityScope,
-      visibilityAccessLevel,
-      officialDepartmentId,
-      selectedDepartmentPermissions,
-      selectedDepartmentIds,
-      existingFunnel,
-      previousSubfunnels,
-      subfunnelNames
-    } = context;
+  function getFunnelFormSubmissionRoute(context = {}) {
+    const modalMode = String(context.modalContext?.mode || "create").trim().toLowerCase();
+    if (modalMode === "create-subfunnel") return "create-subfunnel";
+    if (modalMode === "edit-subfunnel") return "edit-subfunnel";
+    return "funnel";
+  }
 
-    if (modalContext.mode === "create-subfunnel") {
-      const targetFunnel = getFunnelById(modalContext.funnelId);
-      if (!targetFunnel) {
-        alert("Funil não encontrado para adicionar o subfunil.");
-        return;
-      }
-      try {
-        await saveSingleSubfunnelModalChange({
-          funnelId: modalContext.funnelId,
-          subfunnelName: subfunnelNames[0],
-          mode: "create"
-        });
-      } catch (error) {
-        alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
-        return;
-      }
-      finalizeFunnelModalMutation({
-        refreshReason: "subfunnel-create",
-        cooldownMs: 1800
+  async function submitSingleSubfunnelFormChange(context = {}, mode = "create") {
+    const normalizedMode = String(mode || "").trim().toLowerCase();
+    const isEditMode = normalizedMode === "edit";
+    const targetFunnel = getFunnelById(context.modalContext?.funnelId);
+    const targetSubfunnel = isEditMode ? getSubfunnelById(context.modalContext?.subfunnelId) : null;
+
+    if (!targetFunnel || (isEditMode && !targetSubfunnel)) {
+      alert(isEditMode ? "Subfunil não encontrado para edição." : "Funil não encontrado para adicionar o subfunil.");
+      return false;
+    }
+
+    try {
+      await saveSingleSubfunnelModalChange({
+        funnelId: context.modalContext?.funnelId,
+        subfunnelId: context.modalContext?.subfunnelId,
+        subfunnelName: context.subfunnelNames?.[0] || "",
+        mode: normalizedMode
       });
-      return;
+    } catch (error) {
+      alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
+      return false;
     }
 
-    if (modalContext.mode === "edit-subfunnel") {
-      const targetFunnel = getFunnelById(modalContext.funnelId);
-      const targetSubfunnel = getSubfunnelById(modalContext.subfunnelId);
-      if (!targetFunnel || !targetSubfunnel) {
-        alert("Subfunil não encontrado para edição.");
-        return;
-      }
-      try {
-        await saveSingleSubfunnelModalChange({
-          funnelId: modalContext.funnelId,
-          subfunnelId: modalContext.subfunnelId,
-          subfunnelName: subfunnelNames[0],
-          mode: "edit"
-        });
-      } catch (error) {
-        alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
-        return;
-      }
-      finalizeFunnelModalMutation({
-        refreshReason: "subfunnel-edit",
-        cooldownMs: 1800
-      });
-      return;
-    }
+    finalizeFunnelModalMutation({
+      refreshReason: isEditMode ? "subfunnel-edit" : "subfunnel-create",
+      cooldownMs: 1800
+    });
+    return true;
+  }
 
-    const nextSubfunnels = buildFunnelSubfunnels(subfunnelNames, previousSubfunnels);
+  async function submitFullFunnelFormChange(context = {}) {
+    const nextSubfunnels = buildFunnelSubfunnels(context.subfunnelNames, context.previousSubfunnels);
 
     try {
       await executeFunnelWorkspaceMetaMutation({
         applyLocal: () => {
-          if (existingFunnel) {
-            applyExistingFunnelWorkspaceUpdate(existingFunnel.id, {
-              name,
-              category,
-              ownerDepartmentId: officialDepartmentId,
-              visibilityScope,
-              visibilityAccessLevel,
-              departmentPermissions: selectedDepartmentPermissions,
-              departmentIds: selectedDepartmentIds,
-              previousSubfunnels,
+          if (context.existingFunnel) {
+            applyExistingFunnelWorkspaceUpdate(context.existingFunnel.id, {
+              name: context.name,
+              category: context.category,
+              ownerDepartmentId: context.officialDepartmentId,
+              visibilityScope: context.visibilityScope,
+              visibilityAccessLevel: context.visibilityAccessLevel,
+              departmentPermissions: context.selectedDepartmentPermissions,
+              departmentIds: context.selectedDepartmentIds,
+              previousSubfunnels: context.previousSubfunnels,
               nextSubfunnels
             });
           } else {
             createFunnelInWorkspace({
-              name,
-              category,
-              ownerDepartmentId: officialDepartmentId,
-              visibilityScope,
-              visibilityAccessLevel,
-              departmentPermissions: selectedDepartmentPermissions,
-              departmentIds: selectedDepartmentIds,
+              name: context.name,
+              category: context.category,
+              ownerDepartmentId: context.officialDepartmentId,
+              visibilityScope: context.visibilityScope,
+              visibilityAccessLevel: context.visibilityAccessLevel,
+              departmentPermissions: context.selectedDepartmentPermissions,
+              departmentIds: context.selectedDepartmentIds,
               subfunnels: nextSubfunnels
             });
           }
         },
         persist: async () => {
-          const targetFunnelId = existingFunnel?.id || state.activeFunnelId;
+          const targetFunnelId = context.existingFunnel?.id || state.activeFunnelId;
           await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
             includeSubfunnels: true,
             includePermissions: true
@@ -13925,7 +13895,7 @@
       });
     } catch (error) {
       alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
-      return;
+      return false;
     }
 
     finalizeFunnelModalMutation({
@@ -13933,6 +13903,28 @@
       cooldownMs: 1800,
       bindFunnelHub: true
     });
+    return true;
+  }
+
+  async function submitFunnelForm(event) {
+    event.preventDefault();
+    const context = collectFunnelFormSubmissionContext();
+    if (!validateFunnelFormSubmissionContext(context)) {
+      return;
+    }
+    const route = getFunnelFormSubmissionRoute(context);
+
+    if (route === "create-subfunnel") {
+      await submitSingleSubfunnelFormChange(context, "create");
+      return;
+    }
+
+    if (route === "edit-subfunnel") {
+      await submitSingleSubfunnelFormChange(context, "edit");
+      return;
+    }
+
+    await submitFullFunnelFormChange(context);
   }
 
   function renderAll() {
