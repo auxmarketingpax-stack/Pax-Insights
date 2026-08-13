@@ -16921,26 +16921,34 @@
     if (!context.affectedLeads?.length) return true;
 
     if (context.deleteWithLeads) {
-      const { error: deleteLeadError } = await deleteLeadsByIds(context.affectedLeads.map((lead) => lead.id));
-      if (deleteLeadError) {
-        alert(`Erro ao excluir leads da pipeline: ${formatSupabaseError(deleteLeadError)}`);
-        return false;
-      }
-
-      await logChange(
-        "bulk_delete_stage_leads",
-        "lead",
-        null,
-        `${context.affectedLeads.length} lead(s) da pipeline "${context.stage.name}" foram excluídos por ${getUserDisplayName()}.`,
-        {
-          stage_id: context.stage.id,
-          stage_name: context.stage.name,
-          deleted_lead_count: context.affectedLeads.length
-        }
-      );
-      return true;
+      return deleteStageLeadsAndLog(context);
     }
 
+    return moveStageLeadsToDeleteTargetAndLog(context, targetStage);
+  }
+
+  async function deleteStageLeadsAndLog(context = {}) {
+    const { error: deleteLeadError } = await deleteLeadsByIds(context.affectedLeads.map((lead) => lead.id));
+    if (deleteLeadError) {
+      alert(`Erro ao excluir leads da pipeline: ${formatSupabaseError(deleteLeadError)}`);
+      return false;
+    }
+
+    await logChange(
+      "bulk_delete_stage_leads",
+      "lead",
+      null,
+      `${context.affectedLeads.length} lead(s) da pipeline "${context.stage.name}" foram excluídos por ${getUserDisplayName()}.`,
+      {
+        stage_id: context.stage.id,
+        stage_name: context.stage.name,
+        deleted_lead_count: context.affectedLeads.length
+      }
+    );
+    return true;
+  }
+
+  async function moveStageLeadsToDeleteTargetAndLog(context = {}, targetStage = null) {
     for (const sourceStageId of context.stageIdsToDelete) {
       const stageLeadIds = context.affectedLeads
         .filter((lead) => String(lead.stage_id || "").trim() === sourceStageId)
@@ -16989,6 +16997,40 @@
     }
   }
 
+  async function persistStageDeleteStages(context = {}) {
+    await removeStagesByIds(context.stageIdsToDelete);
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+  }
+
+  function buildStageDeleteHistoryPayload(context = {}, targetStage = null) {
+    return {
+      ...context.stage,
+      deleted_stage_ids: context.stageIdsToDelete,
+      delete_with_leads: context.deleteWithLeads,
+      moved_to_stage_id: targetStage?.id || null
+    };
+  }
+
+  async function logStageDeleteCompletion(context = {}, targetStage = null) {
+    await logChange(
+      "delete",
+      "stage",
+      context.stage.id,
+      `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
+      buildStageDeleteHistoryPayload(context, targetStage)
+    );
+  }
+
+  function finalizeStageDeleteMutation() {
+    closeStageDeleteModal();
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason: "stage-delete",
+      cooldownMs: 1500
+    });
+  }
+
   async function deleteStageWithStrategy(stageId, options = {}) {
     const context = getStageDeleteStrategyContext(stageId, options);
     if (!context.stage) return;
@@ -17011,35 +17053,15 @@
     }
 
     try {
-      await removeStagesByIds(context.stageIdsToDelete);
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      await persistStageDeleteStages(context);
     } catch (error) {
       alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
       return;
     }
 
     applyStageDeleteLocalState(context, targetStage);
-
-    await logChange(
-      "delete",
-      "stage",
-      context.stage.id,
-      `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
-      {
-        ...context.stage,
-        deleted_stage_ids: context.stageIdsToDelete,
-        delete_with_leads: context.deleteWithLeads,
-        moved_to_stage_id: targetStage?.id || null
-      }
-    );
-
-    closeStageDeleteModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-delete",
-      cooldownMs: 1500
-    });
+    await logStageDeleteCompletion(context, targetStage);
+    finalizeStageDeleteMutation();
   }
 
   function collectStageDeleteSubmissionContext() {
