@@ -13607,6 +13607,22 @@
     closeModalOverlay(els.funnelModalOverlay);
   }
 
+  function finalizeFunnelModalMutation({
+    refreshReason,
+    cooldownMs = 1800,
+    bindFunnelHub = false
+  } = {}) {
+    closeFunnelModal();
+    if (bindFunnelHub) {
+      bindView("funil", { resetFunnelDetail: false });
+    }
+    finalizeLocalMutation({
+      notifyScope: "funnel-workspace",
+      refreshReason,
+      cooldownMs
+    });
+  }
+
   async function submitFunnelForm(event) {
     event.preventDefault();
     const modalContext = state.funnelModalContext || { mode: "create" };
@@ -13680,9 +13696,7 @@
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
         return;
       }
-      closeFunnelModal();
-      finalizeLocalMutation({
-        notifyScope: "funnel-workspace",
+      finalizeFunnelModalMutation({
         refreshReason: "subfunnel-create",
         cooldownMs: 1800
       });
@@ -13720,9 +13734,7 @@
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
         return;
       }
-      closeFunnelModal();
-      finalizeLocalMutation({
-        notifyScope: "funnel-workspace",
+      finalizeFunnelModalMutation({
         refreshReason: "subfunnel-edit",
         cooldownMs: 1800
       });
@@ -13788,12 +13800,10 @@
       return;
     }
 
-    closeFunnelModal();
-    bindView("funil", { resetFunnelDetail: false });
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
+    finalizeFunnelModalMutation({
       refreshReason: "funnel-save",
-      cooldownMs: 1800
+      cooldownMs: 1800,
+      bindFunnelHub: true
     });
   }
 
