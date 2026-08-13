@@ -14570,13 +14570,19 @@
     await loadAppData({ includeProfiles: state.profilesLoaded });
   }
 
-  async function updateProfileRole(profileId, nextRole) {
-    if (!canManageAdminAreas() || !profileId) return;
-    const profile = state.profiles.find((item) => item.id === profileId);
-    if (!profile || !canManageProfile(profile, { action: "role", nextRole })) {
+  function resolveManageableProfile(profileId, options = {}) {
+    if (!canManageAdminAreas() || !profileId) return null;
+    const profile = state.profiles.find((item) => item.id === profileId) || null;
+    if (!profile || !canManageProfile(profile, options)) {
       alert("Você só pode alterar usuários do seu departamento.");
-      return;
+      return null;
     }
+    return profile;
+  }
+
+  async function updateProfileRole(profileId, nextRole) {
+    const profile = resolveManageableProfile(profileId, { action: "role", nextRole });
+    if (!profile) return;
 
     const role = normalizeUserRole(nextRole, USER_ROLE.USER);
     if (!canAssignRoleToProfile(profile, role)) {
@@ -14604,12 +14610,8 @@
   }
 
   async function updateProfileDepartment(profileId, departmentId, secondaryDepartmentId = null) {
-    if (!canManageAdminAreas() || !profileId) return;
-    const profile = state.profiles.find((item) => item.id === profileId);
-    if (!profile || !canManageProfile(profile, { action: "department" })) {
-      alert("Você só pode alterar usuários do seu departamento.");
-      return;
-    }
+    const profile = resolveManageableProfile(profileId, { action: "department" });
+    if (!profile) return;
 
     const normalizedSelection = normalizeDepartmentSelectionValues(departmentId, secondaryDepartmentId);
     const nextDepartmentId = normalizedSelection.primaryDepartmentId;
@@ -14644,6 +14646,50 @@
     }
 
     await loadAppData({ includeProfiles: true });
+  }
+
+  function collectTeamMemberDeleteContext(profileId) {
+    const profile = state.profiles.find((item) => item.id === profileId) || null;
+    const label = profile?.full_name || profile?.email || "este usuario";
+    return {
+      profile,
+      label
+    };
+  }
+
+  function validateTeamMemberDeleteContext(profileId, context = {}) {
+    if (!profileId) return false;
+    if (!context.profile) {
+      alert("Usuario nao encontrado.");
+      return false;
+    }
+    if (state.currentUser?.id === profileId) {
+      alert("Voce nao pode excluir o proprio usuario.");
+      return false;
+    }
+    if (!window.confirm(`Excluir ${context.label}? Esta acao remove o acesso ao CRM permanentemente.`)) {
+      return false;
+    }
+    if (!canManageAdminAreas()) {
+      requestAdminAuthorization({
+        requestType: "delete_user",
+        title: "Solicitar exclusao de usuario",
+        description: `Voce nao tem permissao para excluir ${context.label}. Sua solicitacao sera enviada para o administrador.`,
+        entityType: "profile",
+        entityId: profileId,
+        payload: {
+          profile_id: profileId,
+          profile_name: context.profile.full_name || null,
+          profile_email: context.profile.email || null
+        }
+      });
+      return false;
+    }
+    if (!canManageProfile(context.profile, { action: "delete" })) {
+      alert("Você só pode excluir usuários do seu departamento.");
+      return false;
+    }
+    return true;
   }
 
   async function addDepartment() {
@@ -14690,44 +14736,8 @@
   }
 
   async function deleteTeamMember(profileId) {
-    if (!profileId) return;
-
-    const profile = state.profiles.find((item) => item.id === profileId);
-    if (!profile) {
-      alert("Usuario nao encontrado.");
-      return;
-    }
-
-    if (state.currentUser?.id === profileId) {
-      alert("Voce nao pode excluir o proprio usuario.");
-      return;
-    }
-
-    const label = profile.full_name || profile.email || "este usuario";
-    if (!window.confirm(`Excluir ${label}? Esta acao remove o acesso ao CRM permanentemente.`)) {
-      return;
-    }
-
-    if (!canManageAdminAreas()) {
-      requestAdminAuthorization({
-        requestType: "delete_user",
-        title: "Solicitar exclusao de usuario",
-        description: `Voce nao tem permissao para excluir ${label}. Sua solicitacao sera enviada para o administrador.`,
-        entityType: "profile",
-        entityId: profileId,
-        payload: {
-          profile_id: profileId,
-          profile_name: profile.full_name || null,
-          profile_email: profile.email || null
-        }
-      });
-      return;
-    }
-
-    if (!canManageProfile(profile, { action: "delete" })) {
-      alert("Você só pode excluir usuários do seu departamento.");
-      return;
-    }
+    const context = collectTeamMemberDeleteContext(profileId);
+    if (!validateTeamMemberDeleteContext(profileId, context)) return;
 
     const { data, error } = await state.supabase.functions.invoke("admin-delete-user", {
       body: { profileId }
@@ -14743,8 +14753,8 @@
       "delete_user",
       "profile",
       profileId,
-      `Usuario removido: ${profile.full_name || profile.email || profileId}`,
-      { email: profile.email || null, role: profile.role || null }
+      `Usuario removido: ${context.profile.full_name || context.profile.email || profileId}`,
+      { email: context.profile.email || null, role: context.profile.role || null }
     );
 
     await loadAppData({ includeProfiles: true });
@@ -14772,67 +14782,80 @@
     }
   }
 
-  async function approveAccessRequest(requestId, role, departmentId = null, secondaryDepartmentId = null) {
-    if (!canManageAdminAreas()) return;
-    const normalizedSelection = normalizeDepartmentSelectionValues(departmentId, secondaryDepartmentId);
-    const approvedDepartmentId = normalizedSelection.primaryDepartmentId;
-    const approvedSecondaryDepartmentId = normalizedSelection.secondaryDepartmentId;
-    if (approvedDepartmentId && approvedSecondaryDepartmentId && approvedDepartmentId === approvedSecondaryDepartmentId) {
+  function validateApprovedDepartmentSelection(primaryDepartmentId, secondaryDepartmentId) {
+    if (primaryDepartmentId && secondaryDepartmentId && primaryDepartmentId === secondaryDepartmentId) {
       alert("Os dois departamentos precisam ser diferentes.");
-      return;
+      return false;
     }
-    if (!canAssignDepartmentScope(approvedDepartmentId, approvedSecondaryDepartmentId)) {
+    if (!canAssignDepartmentScope(primaryDepartmentId, secondaryDepartmentId)) {
       alert("Esse administrador só pode aprovar acessos dentro do próprio departamento.");
+      return false;
+    }
+    return true;
+  }
+
+  function buildApprovedProfilePayload(approvedRole, approvedDepartmentId, approvedSecondaryDepartmentId) {
+    return {
+      access_status: ACCESS_STATUS.APPROVED,
+      role: approvedRole,
+      department_id: approvedDepartmentId,
+      department_id_secondary: approvedSecondaryDepartmentId,
+      approved_at: new Date().toISOString(),
+      approved_by: state.currentUser.id
+    };
+  }
+
+  function buildApprovedAccessRequestPayload(approvedRole, approvedDepartmentId, approvedSecondaryDepartmentId) {
+    return {
+      status: ACCESS_STATUS.APPROVED,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: state.currentUser.id,
+      approved_role: approvedRole,
+      approved_department_id: approvedDepartmentId,
+      approved_department_id_secondary: approvedSecondaryDepartmentId
+    };
+  }
+
+  async function approveProfileAccessRequest(profileId, role, approvedDepartmentId, approvedSecondaryDepartmentId) {
+    const profile = state.profiles.find((item) => item.id === profileId) || null;
+    if (!profile) return;
+    if (!canManageProfile(profile, { action: "role", nextRole: role })) {
+      alert("Esse usuário não está dentro do seu escopo de departamento.");
       return;
     }
 
-    if (String(requestId || "").startsWith("profile:")) {
-      const profileId = String(requestId).slice("profile:".length);
-      const profile = state.profiles.find((item) => item.id === profileId);
-      if (!profile) return;
-      if (!canManageProfile(profile, { action: "role", nextRole: role })) {
-        alert("Esse usuário não está dentro do seu escopo de departamento.");
-        return;
-      }
+    const approvedRole = normalizeUserRole(role, USER_ROLE.USER);
+    if (!canAssignRoleToProfile(profile, approvedRole)) {
+      alert("Você não pode aprovar esse cargo para esse usuário.");
+      return;
+    }
+    const persistedApprovedRole = getPersistedRoleValue(approvedRole, profile.email || "");
 
-      const approvedRole = normalizeUserRole(role, USER_ROLE.USER);
-      if (!canAssignRoleToProfile(profile, approvedRole)) {
-        alert("Você não pode aprovar esse cargo para esse usuário.");
-        return;
-      }
-      const persistedApprovedRole = getPersistedRoleValue(approvedRole, profile.email || "");
+    const { error: profileError } = await state.supabase
+      .from("profiles")
+      .update(buildApprovedProfilePayload(
+        persistedApprovedRole,
+        approvedDepartmentId,
+        approvedSecondaryDepartmentId
+      ))
+      .eq("id", profileId);
 
-      const { error: profileError } = await state.supabase
-        .from("profiles")
-        .update({
-          access_status: ACCESS_STATUS.APPROVED,
-          role: persistedApprovedRole,
-          department_id: approvedDepartmentId,
-          department_id_secondary: approvedSecondaryDepartmentId,
-          approved_at: new Date().toISOString(),
-          approved_by: state.currentUser.id
-        })
-        .eq("id", profileId);
-
-      if (profileError) {
-        alert(`Erro ao aprovar acesso: ${profileError.message}`);
-        return;
-      }
-
-      await updateSyntheticAccessRequest(profile, {
-        status: ACCESS_STATUS.APPROVED,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: state.currentUser.id,
-        approved_role: approvedRole,
-        approved_department_id: approvedDepartmentId,
-        approved_department_id_secondary: approvedSecondaryDepartmentId
-      });
-
-      await loadAppData({ includeProfiles: true });
+    if (profileError) {
+      alert(`Erro ao aprovar acesso: ${profileError.message}`);
       return;
     }
 
-    const request = state.accessRequests.find((item) => item.id === requestId);
+    await updateSyntheticAccessRequest(profile, buildApprovedAccessRequestPayload(
+      approvedRole,
+      approvedDepartmentId,
+      approvedSecondaryDepartmentId
+    ));
+
+    await loadAppData({ includeProfiles: true });
+  }
+
+  async function approvePendingAccessRequest(requestId, role, approvedDepartmentId, approvedSecondaryDepartmentId) {
+    const request = state.accessRequests.find((item) => item.id === requestId) || null;
     if (!request) return;
     if (!canManageAccessRequest(request)) {
       alert("Essa solicitação não está dentro do seu escopo de departamento.");
@@ -14845,24 +14868,15 @@
       return;
     }
     const persistedApprovedRole = getPersistedRoleValue(approvedRole, request.email || "");
+    const approvedProfilePayload = buildApprovedProfilePayload(
+      persistedApprovedRole,
+      approvedDepartmentId,
+      approvedSecondaryDepartmentId
+    );
 
     const profileFilter = request.auth_user_id
-      ? state.supabase.from("profiles").update({
-          access_status: ACCESS_STATUS.APPROVED,
-          role: persistedApprovedRole,
-          department_id: approvedDepartmentId,
-          department_id_secondary: approvedSecondaryDepartmentId,
-          approved_at: new Date().toISOString(),
-          approved_by: state.currentUser.id
-        }).eq("id", request.auth_user_id)
-      : state.supabase.from("profiles").update({
-          access_status: ACCESS_STATUS.APPROVED,
-          role: persistedApprovedRole,
-          department_id: approvedDepartmentId,
-          department_id_secondary: approvedSecondaryDepartmentId,
-          approved_at: new Date().toISOString(),
-          approved_by: state.currentUser.id
-        }).eq("email", request.email);
+      ? state.supabase.from("profiles").update(approvedProfilePayload).eq("id", request.auth_user_id)
+      : state.supabase.from("profiles").update(approvedProfilePayload).eq("email", request.email);
 
     const { error: profileError } = await profileFilter;
     if (profileError) {
@@ -14872,14 +14886,110 @@
 
     const { error } = await state.supabase
       .from("access_requests")
-      .update({
-        status: ACCESS_STATUS.APPROVED,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: state.currentUser.id,
-        approved_role: approvedRole,
-        approved_department_id: approvedDepartmentId,
-        approved_department_id_secondary: approvedSecondaryDepartmentId
-      })
+      .update(buildApprovedAccessRequestPayload(
+        approvedRole,
+        approvedDepartmentId,
+        approvedSecondaryDepartmentId
+      ))
+      .eq("id", requestId);
+
+    if (error) {
+      alert(`Erro ao atualizar solicitacao: ${error.message}`);
+      return;
+    }
+
+    await loadAppData({ includeProfiles: true });
+  }
+
+  async function approveAccessRequest(requestId, role, departmentId = null, secondaryDepartmentId = null) {
+    if (!canManageAdminAreas()) return;
+    const normalizedSelection = normalizeDepartmentSelectionValues(departmentId, secondaryDepartmentId);
+    const approvedDepartmentId = normalizedSelection.primaryDepartmentId;
+    const approvedSecondaryDepartmentId = normalizedSelection.secondaryDepartmentId;
+    if (!validateApprovedDepartmentSelection(approvedDepartmentId, approvedSecondaryDepartmentId)) return;
+
+    if (String(requestId || "").startsWith("profile:")) {
+      const profileId = String(requestId).slice("profile:".length);
+      await approveProfileAccessRequest(
+        profileId,
+        role,
+        approvedDepartmentId,
+        approvedSecondaryDepartmentId
+      );
+      return;
+    }
+
+    await approvePendingAccessRequest(
+      requestId,
+      role,
+      approvedDepartmentId,
+      approvedSecondaryDepartmentId
+    );
+  }
+
+  function buildRejectedProfilePayload() {
+    return {
+      access_status: ACCESS_STATUS.REJECTED,
+      approved_by: state.currentUser.id,
+      denied_at: new Date().toISOString()
+    };
+  }
+
+  function buildRejectedAccessRequestPayload() {
+    return {
+      status: ACCESS_STATUS.REJECTED,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: state.currentUser.id
+    };
+  }
+
+  async function rejectProfileAccessRequest(profileId) {
+    const profile = state.profiles.find((item) => item.id === profileId) || null;
+    if (!profile) return;
+    if (!canManageProfile(profile, { action: "role", nextRole: profile.role })) {
+      alert("Esse usuário não está dentro do seu escopo de departamento.");
+      return;
+    }
+
+    const { error: profileError } = await state.supabase
+      .from("profiles")
+      .update(buildRejectedProfilePayload())
+      .eq("id", profileId);
+
+    if (profileError) {
+      alert(`Erro ao recusar acesso: ${profileError.message}`);
+      return;
+    }
+
+    await updateSyntheticAccessRequest(profile, buildRejectedAccessRequestPayload());
+    await loadAppData({ includeProfiles: true });
+  }
+
+  async function rejectPendingAccessRequest(requestId) {
+    const request = state.accessRequests.find((item) => item.id === requestId) || null;
+    if (!request) return;
+    if (!canManageAccessRequest(request)) {
+      alert("Essa solicitação não está dentro do seu escopo de departamento.");
+      return;
+    }
+
+    const rejectedProfilePayload = {
+      access_status: ACCESS_STATUS.REJECTED,
+      approved_by: state.currentUser.id
+    };
+    const profileFilter = request.auth_user_id
+      ? state.supabase.from("profiles").update(rejectedProfilePayload).eq("id", request.auth_user_id)
+      : state.supabase.from("profiles").update(rejectedProfilePayload).eq("email", request.email);
+
+    const { error: profileError } = await profileFilter;
+    if (profileError) {
+      alert(`Erro ao recusar acesso: ${profileError.message}`);
+      return;
+    }
+
+    const { error } = await state.supabase
+      .from("access_requests")
+      .update(buildRejectedAccessRequestPayload())
       .eq("id", requestId);
 
     if (error) {
@@ -14895,75 +15005,11 @@
 
     if (String(requestId || "").startsWith("profile:")) {
       const profileId = String(requestId).slice("profile:".length);
-      const profile = state.profiles.find((item) => item.id === profileId);
-      if (!profile) return;
-      if (!canManageProfile(profile, { action: "role", nextRole: profile.role })) {
-        alert("Esse usuário não está dentro do seu escopo de departamento.");
-        return;
-      }
-
-      const { error: profileError } = await state.supabase
-        .from("profiles")
-        .update({
-          access_status: ACCESS_STATUS.REJECTED,
-          approved_by: state.currentUser.id,
-          denied_at: new Date().toISOString()
-        })
-        .eq("id", profileId);
-
-      if (profileError) {
-        alert(`Erro ao recusar acesso: ${profileError.message}`);
-        return;
-      }
-
-      await updateSyntheticAccessRequest(profile, {
-        status: ACCESS_STATUS.REJECTED,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: state.currentUser.id
-      });
-
-      await loadAppData({ includeProfiles: true });
+      await rejectProfileAccessRequest(profileId);
       return;
     }
 
-    const request = state.accessRequests.find((item) => item.id === requestId);
-    if (!request) return;
-    if (!canManageAccessRequest(request)) {
-      alert("Essa solicitação não está dentro do seu escopo de departamento.");
-      return;
-    }
-
-    const profileFilter = request.auth_user_id
-      ? state.supabase.from("profiles").update({
-          access_status: ACCESS_STATUS.REJECTED,
-          approved_by: state.currentUser.id
-        }).eq("id", request.auth_user_id)
-      : state.supabase.from("profiles").update({
-          access_status: ACCESS_STATUS.REJECTED,
-          approved_by: state.currentUser.id
-        }).eq("email", request.email);
-
-    const { error: profileError } = await profileFilter;
-    if (profileError) {
-      alert(`Erro ao recusar acesso: ${profileError.message}`);
-      return;
-    }
-
-    const { error } = await state.supabase
-      .from("access_requests")
-      .update({
-        status: ACCESS_STATUS.REJECTED,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: state.currentUser.id
-      })
-      .eq("id", requestId);
-
-    if (error) {
-      alert(`Erro ao atualizar solicitacao: ${error.message}`);
-      return;
-    }
-
-    await loadAppData({ includeProfiles: true });
+    await rejectPendingAccessRequest(requestId);
   }
 
   async function deleteObservationFromLead(payload = {}) {
@@ -16090,53 +16136,79 @@
     openStageModal(stage);
   }
 
-  async function deleteStage(id) {
+  function collectLegacyStageDeleteContext(id) {
     const availableStages = isFunnelDetailActive() ? getScopedStages() : state.stages;
-    const stage = availableStages.find((x) => x.id === id);
-    const fallback = availableStages.find((x) => x.id !== id);
+    const stage = availableStages.find((item) => item.id === id) || null;
+    const fallback = availableStages.find((item) => item.id !== id) || null;
+    const affectedLeads = state.leads.filter((lead) => lead.stage_id === id);
+    return {
+      availableStages,
+      stage,
+      fallback,
+      affectedLeads
+    };
+  }
 
-    if (!stage) return;
-    if (!confirm(`Excluir a etapa "${stage.name}"?`)) return;
+  function validateLegacyStageDeleteContext(context = {}) {
+    if (!context.stage) return false;
+    if (!confirm(`Excluir a etapa "${context.stage.name}"?`)) return false;
     if (!canManageStages()) {
       requestAdminAuthorization({
         requestType: "delete_stage",
         title: "Solicitar exclusao de pipeline",
-        description: `Voce nao tem permissao para excluir a etapa "${stage.name}". Sua solicitacao sera enviada para o administrador.`,
+        description: `Voce nao tem permissao para excluir a etapa "${context.stage.name}". Sua solicitacao sera enviada para o administrador.`,
         entityType: "stage",
-        entityId: stage.id,
+        entityId: context.stage.id,
         payload: {
-          stage_id: stage.id,
-          stage_name: stage.name
+          stage_id: context.stage.id,
+          stage_name: context.stage.name
         }
       });
-      return;
+      return false;
     }
-    if (!fallback) return alert("Você precisa manter ao menos uma etapa.");
-
-    const affectedLeads = state.leads.filter((lead) => lead.stage_id === id);
-
-    if (affectedLeads.length) {
-      const { error: leadError } = await state.supabase
-        .from("leads")
-        .update({ stage_id: fallback.id })
-        .eq("stage_id", id);
-
-      if (leadError) return alert(leadError.message);
-
-      await logChange(
-        "bulk_move_stage",
-        "lead",
-        null,
-        `${affectedLeads.length} lead(s) foram movidos automaticamente de "${stage.name}" para "${fallback.name}" porque a etapa foi excluída por ${getUserDisplayName()}.`,
-        {
-          from_stage_id: stage.id,
-          from_stage_name: stage.name,
-          to_stage_id: fallback.id,
-          to_stage_name: fallback.name,
-          affected_count: affectedLeads.length
-        }
-      );
+    if (!context.fallback) {
+      alert("Você precisa manter ao menos uma etapa.");
+      return false;
     }
+    return true;
+  }
+
+  async function moveLegacyStageLeadsToFallback(context = {}) {
+    if (!context.affectedLeads?.length) return true;
+
+    const { error: leadError } = await state.supabase
+      .from("leads")
+      .update({ stage_id: context.fallback.id })
+      .eq("stage_id", context.stage.id);
+
+    if (leadError) {
+      alert(leadError.message);
+      return false;
+    }
+
+    await logChange(
+      "bulk_move_stage",
+      "lead",
+      null,
+      `${context.affectedLeads.length} lead(s) foram movidos automaticamente de "${context.stage.name}" para "${context.fallback.name}" porque a etapa foi excluída por ${getUserDisplayName()}.`,
+      {
+        from_stage_id: context.stage.id,
+        from_stage_name: context.stage.name,
+        to_stage_id: context.fallback.id,
+        to_stage_name: context.fallback.name,
+        affected_count: context.affectedLeads.length
+      }
+    );
+
+    return true;
+  }
+
+  async function deleteStage(id) {
+    const context = collectLegacyStageDeleteContext(id);
+    if (!validateLegacyStageDeleteContext(context)) return;
+
+    const leadsMoved = await moveLegacyStageLeadsToFallback(context);
+    if (!leadsMoved) return;
 
     const { error } = await state.supabase
       .from("stages")
@@ -16144,15 +16216,15 @@
       .eq("id", id);
 
     if (error) return alert(`Erro no Supabase: ${error.message}`);
-    moveLeadsToStageLocally([id], fallback.id);
+    moveLeadsToStageLocally([id], context.fallback.id);
     removeStagesLocally([id]);
 
     await logChange(
       "delete",
       "stage",
-      stage.id,
-      `Etapa "${stage.name}" foi excluída por ${getUserDisplayName()}.`,
-      stage
+      context.stage.id,
+      `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
+      context.stage
     );
 
     finalizeLocalMutation({
