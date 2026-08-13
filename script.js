@@ -13746,12 +13746,15 @@
     });
   }
 
-  async function submitFunnelForm(event) {
-    event.preventDefault();
+  function collectFunnelFormSubmissionContext() {
     const modalContext = state.funnelModalContext || { mode: "create" };
     const name = String(els.funnelName?.value || "").trim();
-    const category = FUNNEL_CATEGORIES.includes(String(els.funnelCategory?.value || "").trim()) ? String(els.funnelCategory.value).trim() : "B2C";
-    const visibilityScope = ["all", "owner", "departments"].includes(String(els.funnelVisibilityScope?.value || "").trim()) ? String(els.funnelVisibilityScope.value).trim() : "all";
+    const category = FUNNEL_CATEGORIES.includes(String(els.funnelCategory?.value || "").trim())
+      ? String(els.funnelCategory.value).trim()
+      : "B2C";
+    const visibilityScope = ["all", "owner", "departments"].includes(String(els.funnelVisibilityScope?.value || "").trim())
+      ? String(els.funnelVisibilityScope.value).trim()
+      : "all";
     const visibilityAccessLevel = getFunnelGlobalAccessLevelValue();
     const officialDepartmentId = (visibilityScope === "all" || visibilityScope === "departments")
       ? String(els.funnelOfficialDepartmentSelect?.value || "").trim()
@@ -13770,25 +13773,68 @@
       .map((input) => String(input.value || "").trim())
       .filter(Boolean);
 
-    if (modalContext.mode !== "create-subfunnel" && modalContext.mode !== "edit-subfunnel" && !name) {
+    return {
+      modalContext,
+      name,
+      category,
+      visibilityScope,
+      visibilityAccessLevel,
+      officialDepartmentId,
+      selectedDepartmentPermissions,
+      selectedDepartmentIds,
+      editingId,
+      existingFunnel,
+      previousSubfunnels,
+      subfunnelNames
+    };
+  }
+
+  function validateFunnelFormSubmissionContext(context = {}) {
+    const modalMode = String(context.modalContext?.mode || "create").trim();
+    const isSubfunnelOnlyMode = modalMode === "create-subfunnel" || modalMode === "edit-subfunnel";
+
+    if (!isSubfunnelOnlyMode && !String(context.name || "").trim()) {
       alert("Informe o nome do funil.");
-      return;
+      return false;
     }
 
-    if (modalContext.mode !== "create-subfunnel" && modalContext.mode !== "edit-subfunnel" && visibilityScope === "departments" && !officialDepartmentId) {
+    if (!isSubfunnelOnlyMode && context.visibilityScope === "departments" && !String(context.officialDepartmentId || "").trim()) {
       alert("Selecione o departamento dono do funil.");
-      return;
+      return false;
     }
 
-    if (modalContext.mode !== "create-subfunnel" && modalContext.mode !== "edit-subfunnel" && visibilityScope === "departments" && !selectedDepartmentIds.length) {
+    if (!isSubfunnelOnlyMode && context.visibilityScope === "departments" && !(context.selectedDepartmentIds || []).length) {
       alert("Selecione ao menos um departamento para esse funil.");
-      return;
+      return false;
     }
 
-    if (!subfunnelNames.length) {
+    if (!(context.subfunnelNames || []).length) {
       alert("Informe ao menos um subfunil.");
+      return false;
+    }
+
+    return true;
+  }
+
+  async function submitFunnelForm(event) {
+    event.preventDefault();
+    const context = collectFunnelFormSubmissionContext();
+    if (!validateFunnelFormSubmissionContext(context)) {
       return;
     }
+    const {
+      modalContext,
+      name,
+      category,
+      visibilityScope,
+      visibilityAccessLevel,
+      officialDepartmentId,
+      selectedDepartmentPermissions,
+      selectedDepartmentIds,
+      existingFunnel,
+      previousSubfunnels,
+      subfunnelNames
+    } = context;
 
     if (modalContext.mode === "create-subfunnel") {
       const targetFunnel = getFunnelById(modalContext.funnelId);
