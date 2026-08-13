@@ -477,6 +477,7 @@
     liveSyncPollTimer: null,
     liveSyncLocalMutationUntil: 0,
     liveSyncLocalMutationTimer: null,
+    liveSyncProtectedMutationCount: 0,
     lastSharedFunnelMetaSignature: "",
     lastSharedFunnelGroupsSignature: "",
     lastSharedFunnelLinksSignature: "",
@@ -3325,6 +3326,7 @@
   function isLiveSyncRefreshBlocked() {
     return Boolean(
       Date.now() < Number(state.liveSyncLocalMutationUntil || 0)
+      || Number(state.liveSyncProtectedMutationCount || 0) > 0
       || document.body.classList.contains("modal-open")
       || state.touchPipelineDrag
       || state.pipelineStageDrag
@@ -3339,6 +3341,16 @@
   function markLocalMutationCooldown(delayMs = 1200) {
     const duration = Math.max(300, Number(delayMs) || 1200);
     state.liveSyncLocalMutationUntil = Date.now() + duration;
+  }
+
+  function beginProtectedLiveSyncMutation(delayMs = 1200) {
+    state.liveSyncProtectedMutationCount = Math.max(0, Number(state.liveSyncProtectedMutationCount || 0)) + 1;
+    markLocalMutationCooldown(delayMs);
+  }
+
+  function endProtectedLiveSyncMutation(delayMs = 1200) {
+    state.liveSyncProtectedMutationCount = Math.max(0, Number(state.liveSyncProtectedMutationCount || 0) - 1);
+    markLocalMutationCooldown(delayMs);
   }
 
   function queueLocalConsistencyRefresh(reason = "local-mutation", delayMs = 1200) {
@@ -3437,19 +3449,22 @@
     const snapshot = options.snapshot
       ? createCriticalMutationSnapshot(options.snapshot)
       : null;
+    const protectedCooldownMs = Math.max(600, Number(options.protectedCooldownMs || options.cooldownMs || 1600));
 
-    if (typeof options.applyOptimistic === "function") {
-      await options.applyOptimistic(snapshot);
-      finalizeLocalMutation({
-        notifyScope: null,
-        refresh: false,
-        syncSelectedLeadIds: options.optimisticSyncSelectedLeadIds !== false,
-        writeCache: options.optimisticWriteCache !== false,
-        render: options.optimisticRender !== false
-      });
-    }
+    beginProtectedLiveSyncMutation(protectedCooldownMs);
 
     try {
+      if (typeof options.applyOptimistic === "function") {
+        await options.applyOptimistic(snapshot);
+        finalizeLocalMutation({
+          notifyScope: null,
+          refresh: false,
+          syncSelectedLeadIds: options.optimisticSyncSelectedLeadIds !== false,
+          writeCache: options.optimisticWriteCache !== false,
+          render: options.optimisticRender !== false
+        });
+      }
+
       const result = typeof options.persist === "function"
         ? await options.persist(snapshot)
         : null;
@@ -3462,6 +3477,8 @@
         restoreCriticalMutationSnapshot(snapshot, options.rollback || {});
       }
       throw error;
+    } finally {
+      endProtectedLiveSyncMutation(protectedCooldownMs);
     }
   }
 
@@ -3489,6 +3506,8 @@
 
   async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist } = {}) {
     const snapshot = createFunnelWorkspaceMetaSnapshot();
+    const protectedCooldownMs = 1800;
+    beginProtectedLiveSyncMutation(protectedCooldownMs);
     try {
       if (typeof applyLocal === "function") {
         await applyLocal(snapshot);
@@ -3505,6 +3524,8 @@
     } catch (error) {
       restoreFunnelWorkspaceMetaSnapshot(snapshot);
       throw error;
+    } finally {
+      endProtectedLiveSyncMutation(protectedCooldownMs);
     }
   }
 
