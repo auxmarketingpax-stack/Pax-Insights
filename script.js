@@ -8028,7 +8028,7 @@
     openFunnelModal({ mode: "create-subfunnel", funnel });
   }
 
-  function deleteSubfunnel(funnelId, subfunnelId) {
+  async function deleteSubfunnel(funnelId, subfunnelId) {
     const funnel = getFunnelById(funnelId);
     const subfunnel = getSubfunnelById(subfunnelId);
     if (!funnel || !subfunnel) return;
@@ -8057,36 +8057,50 @@
       alert("Esse funil precisa manter ao menos um subfunil.");
       return;
     }
-
     const fallbackSubfunnel = currentSubfunnels.find((item) => item.id !== subfunnelId) || null;
-    funnel.subfunnels = currentSubfunnels.filter((item) => item.id !== subfunnelId);
-    rememberDeletedFunnelWorkspaceIds({ subfunnels: [subfunnelId] });
+    const previousStructureSubfunnelId = state.structureSubfunnelId;
 
-    Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
-      if (state.funnelWorkspace.stageAssignments[stageId] === subfunnelId && fallbackSubfunnel?.id) {
-        state.funnelWorkspace.stageAssignments[stageId] = fallbackSubfunnel.id;
+    await executeFunnelWorkspaceMetaMutation({
+      applyLocal: () => {
+        const localFunnel = getFunnelById(funnelId);
+        if (!localFunnel) throw new Error("Funil não encontrado para excluir o subfunil.");
+        localFunnel.subfunnels = [...(localFunnel.subfunnels || [])].filter((item) => item.id !== subfunnelId);
+        rememberDeletedFunnelWorkspaceIds({ subfunnels: [subfunnelId] });
+
+        Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
+          if (state.funnelWorkspace.stageAssignments[stageId] === subfunnelId && fallbackSubfunnel?.id) {
+            state.funnelWorkspace.stageAssignments[stageId] = fallbackSubfunnel.id;
+          }
+        });
+
+        Object.keys(state.funnelWorkspace?.leadAssignments || {}).forEach((leadId) => {
+          if (state.funnelWorkspace.leadAssignments[leadId] === subfunnelId && fallbackSubfunnel?.id) {
+            state.funnelWorkspace.leadAssignments[leadId] = fallbackSubfunnel.id;
+          }
+        });
+
+        if (state.activeSubfunnelId === subfunnelId) {
+          state.activeSubfunnelId = null;
+        }
+
+        if (previousStructureSubfunnelId === subfunnelId) {
+          state.structureSubfunnelId = fallbackSubfunnel?.id || null;
+        }
+      },
+      persist: async () => {
+        if (state.funnelDataLoadedFromSupabase) {
+          await persistFunnelWorkspaceToSupabase();
+        }
+      },
+      afterPersist: async () => {
+        renderAll();
       }
+    }).catch((error) => {
+      alert(`Erro ao excluir subfunil: ${formatSupabaseError(error)}`);
     });
-
-    Object.keys(state.funnelWorkspace?.leadAssignments || {}).forEach((leadId) => {
-      if (state.funnelWorkspace.leadAssignments[leadId] === subfunnelId && fallbackSubfunnel?.id) {
-        state.funnelWorkspace.leadAssignments[leadId] = fallbackSubfunnel.id;
-      }
-    });
-
-    if (state.activeSubfunnelId === subfunnelId) {
-      state.activeSubfunnelId = null;
-    }
-
-    if (state.structureSubfunnelId === subfunnelId) {
-      state.structureSubfunnelId = fallbackSubfunnel?.id || null;
-    }
-
-    writeStoredFunnelWorkspace();
-    renderAll();
   }
 
-  function deleteFunnelByIdInternal(funnelId) {
+  async function deleteFunnelByIdInternal(funnelId) {
     const funnel = getFunnelById(funnelId);
     if (!funnel) return false;
     const currentFunnels = [...(state.funnelWorkspace?.funnels || [])];
@@ -8098,44 +8112,58 @@
     const fallbackFunnel = currentFunnels.find((item) => item.id !== funnel.id) || null;
     const fallbackSubfunnelId = fallbackFunnel?.subfunnels?.[0]?.id || null;
     const removedSubfunnelIds = new Set((funnel.subfunnels || []).map((item) => item.id));
-    rememberDeletedFunnelWorkspaceIds({
-      funnels: [funnel.id],
-      subfunnels: [...removedSubfunnelIds]
-    });
+    const previousStructureFunnelId = state.structureFunnelId;
 
-    state.funnelWorkspace.funnels = currentFunnels.filter((item) => item.id !== funnel.id);
+    await executeFunnelWorkspaceMetaMutation({
+      applyLocal: () => {
+        const localFunnel = getFunnelById(funnelId);
+        if (!localFunnel) throw new Error("Funil não encontrado para exclusão.");
+        const localRemovedSubfunnelIds = new Set((localFunnel.subfunnels || []).map((item) => item.id));
+        rememberDeletedFunnelWorkspaceIds({
+          funnels: [localFunnel.id],
+          subfunnels: [...localRemovedSubfunnelIds]
+        });
 
-    Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
-      if (removedSubfunnelIds.has(state.funnelWorkspace.stageAssignments[stageId]) && fallbackSubfunnelId) {
-        state.funnelWorkspace.stageAssignments[stageId] = fallbackSubfunnelId;
+        state.funnelWorkspace.funnels = (state.funnelWorkspace?.funnels || []).filter((item) => item.id !== localFunnel.id);
+
+        Object.keys(state.funnelWorkspace?.stageAssignments || {}).forEach((stageId) => {
+          if (localRemovedSubfunnelIds.has(state.funnelWorkspace.stageAssignments[stageId]) && fallbackSubfunnelId) {
+            state.funnelWorkspace.stageAssignments[stageId] = fallbackSubfunnelId;
+          }
+        });
+
+        Object.keys(state.funnelWorkspace?.leadAssignments || {}).forEach((leadId) => {
+          if (localRemovedSubfunnelIds.has(state.funnelWorkspace.leadAssignments[leadId]) && fallbackSubfunnelId) {
+            state.funnelWorkspace.leadAssignments[leadId] = fallbackSubfunnelId;
+          }
+        });
+
+        if (state.activeFunnelId === localFunnel.id) {
+          state.activeFunnelId = fallbackFunnel?.id || null;
+          state.activeSubfunnelId = null;
+        }
+
+        if (previousStructureFunnelId === localFunnel.id) {
+          state.structureFunnelId = fallbackFunnel?.id || null;
+          state.structureSubfunnelId = fallbackSubfunnelId;
+        }
+      },
+      persist: async () => {
+        if (state.funnelDataLoadedFromSupabase) {
+          await persistFunnelWorkspaceToSupabase();
+        }
+      },
+      afterPersist: async () => {
+        renderAll();
+        if (state.activeView === "funil") {
+          bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true, keepFunnelSidebarOpen: state.funnelSidebarOpen });
+        }
       }
     });
-
-    Object.keys(state.funnelWorkspace?.leadAssignments || {}).forEach((leadId) => {
-      if (removedSubfunnelIds.has(state.funnelWorkspace.leadAssignments[leadId]) && fallbackSubfunnelId) {
-        state.funnelWorkspace.leadAssignments[leadId] = fallbackSubfunnelId;
-      }
-    });
-
-    if (state.activeFunnelId === funnel.id) {
-      state.activeFunnelId = fallbackFunnel?.id || null;
-      state.activeSubfunnelId = null;
-    }
-
-    if (state.structureFunnelId === funnel.id) {
-      state.structureFunnelId = fallbackFunnel?.id || null;
-      state.structureSubfunnelId = fallbackSubfunnelId;
-    }
-
-    writeStoredFunnelWorkspace();
-    renderAll();
-    if (state.activeView === "funil") {
-      bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true, keepFunnelSidebarOpen: state.funnelSidebarOpen });
-    }
     return true;
   }
 
-  function deleteFunnel(funnelId) {
+  async function deleteFunnel(funnelId) {
     const funnel = getFunnelById(funnelId);
     if (!funnel) return;
 
@@ -8156,7 +8184,11 @@
       return;
     }
 
-    deleteFunnelByIdInternal(funnelId);
+    try {
+      await deleteFunnelByIdInternal(funnelId);
+    } catch (error) {
+      alert(`Erro ao excluir funil: ${formatSupabaseError(error)}`);
+    }
   }
 
   function moveSubfunnelToIndex(funnelId, subfunnelId, targetIndex) {
@@ -12825,22 +12857,34 @@
     }
   }
 
-  function deleteFunnelGroup(groupId) {
+  async function deleteFunnelGroup(groupId) {
     const group = getGroupById(groupId);
     if (!group || !canEditGroupItem(group)) return;
     if (!confirm(`Excluir o grupo "${group.name}"? Os funis continuarão existindo fora do grupo.`)) return;
 
-    state.funnelWorkspace.groups = state.funnelWorkspace.groups.filter((item) => item.id !== groupId);
-    state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((funnel) => (
-      funnel.group_id === groupId ? { ...funnel, group_id: null } : funnel
-    ));
-    rememberDeletedFunnelWorkspaceIds({ groups: [groupId] });
-    writeStoredFunnelWorkspace();
-    closeFunnelContextMenu();
-    renderAll();
-    if (state.activeView === "funil") {
-      bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true, keepFunnelSidebarOpen: state.funnelSidebarOpen });
-    }
+    await executeFunnelWorkspaceMetaMutation({
+      applyLocal: () => {
+        state.funnelWorkspace.groups = (state.funnelWorkspace?.groups || []).filter((item) => item.id !== groupId);
+        state.funnelWorkspace.funnels = (state.funnelWorkspace?.funnels || []).map((funnel) => (
+          funnel.group_id === groupId ? { ...funnel, group_id: null } : funnel
+        ));
+        rememberDeletedFunnelWorkspaceIds({ groups: [groupId] });
+      },
+      persist: async () => {
+        if (state.funnelDataLoadedFromSupabase) {
+          await persistFunnelWorkspaceToSupabase();
+        }
+      },
+      afterPersist: async () => {
+        closeFunnelContextMenu();
+        renderAll();
+        if (state.activeView === "funil") {
+          bindView("funil", { resetFunnelDetail: false, preserveFunnelSidebarState: true, keepFunnelSidebarOpen: state.funnelSidebarOpen });
+        }
+      }
+    }).catch((error) => {
+      alert(`Erro ao excluir grupo: ${formatSupabaseError(error)}`);
+    });
   }
 
   function getGroupAccessSummary(group) {
@@ -14332,6 +14376,49 @@
     return lead;
   }
 
+  async function applyApprovedAdminRequest(request) {
+    if (!request) return true;
+
+    if (request.request_type === "delete_funnel" && request.payload?.funnel_id) {
+      try {
+        const deleted = await deleteFunnelByIdInternal(request.payload.funnel_id);
+        return Boolean(deleted);
+      } catch (deleteError) {
+        alert(`Erro ao excluir funil aprovado: ${formatSupabaseError(deleteError)}`);
+        return false;
+      }
+    }
+
+    if (request.request_type === "delete_lead" && request.payload?.lead_id) {
+      const { error: deleteError } = await deleteLeadsByIds([request.payload.lead_id]);
+      if (deleteError) {
+        alert(`Erro ao excluir lead aprovado: ${formatSupabaseError(deleteError)}`);
+        return false;
+      }
+      return true;
+    }
+
+    if (request.request_type === "bulk_delete_leads" && Array.isArray(request.payload?.lead_ids) && request.payload.lead_ids.length) {
+      const { error: deleteError } = await deleteLeadsByIds(request.payload.lead_ids);
+      if (deleteError) {
+        alert(`Erro ao excluir leads aprovados: ${formatSupabaseError(deleteError)}`);
+        return false;
+      }
+      return true;
+    }
+
+    if (request.request_type === "delete_observation") {
+      try {
+        await deleteObservationFromLead(request.payload || {});
+      } catch (deleteError) {
+        alert(`Erro ao excluir observacao aprovada: ${formatSupabaseError(deleteError)}`);
+        return false;
+      }
+    }
+
+    return true;
+  }
+
   async function resolveAdminRequest(requestId, action) {
     if (!canManageAdminAreas()) return;
     const request = state.adminRequests.find((item) => item.id === requestId);
@@ -14342,36 +14429,9 @@
     }
 
     if (action === "approve") {
-      if (request.request_type === "delete_funnel" && request.payload?.funnel_id) {
-        const deleted = deleteFunnelByIdInternal(request.payload.funnel_id);
-        if (!deleted) {
-          return;
-        }
-      }
-
-      if (request.request_type === "delete_lead" && request.payload?.lead_id) {
-        const { error: deleteError } = await deleteLeadsByIds([request.payload.lead_id]);
-        if (deleteError) {
-          alert(`Erro ao excluir lead aprovado: ${formatSupabaseError(deleteError)}`);
-          return;
-        }
-      }
-
-      if (request.request_type === "bulk_delete_leads" && Array.isArray(request.payload?.lead_ids) && request.payload.lead_ids.length) {
-        const { error: deleteError } = await deleteLeadsByIds(request.payload.lead_ids);
-        if (deleteError) {
-          alert(`Erro ao excluir leads aprovados: ${formatSupabaseError(deleteError)}`);
-          return;
-        }
-      }
-
-      if (request.request_type === "delete_observation") {
-        try {
-          await deleteObservationFromLead(request.payload || {});
-        } catch (deleteError) {
-          alert(`Erro ao excluir observacao aprovada: ${formatSupabaseError(deleteError)}`);
-          return;
-        }
+      const approved = await applyApprovedAdminRequest(request);
+      if (!approved) {
+        return;
       }
     }
 
