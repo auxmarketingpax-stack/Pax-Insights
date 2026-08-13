@@ -3465,6 +3465,49 @@
     }
   }
 
+  function createFunnelWorkspaceMetaSnapshot() {
+    return {
+      funnelWorkspace: cloneMutableState(state.funnelWorkspace || getDefaultFunnelWorkspace(), getDefaultFunnelWorkspace()),
+      activeFunnelId: state.activeFunnelId || null,
+      activeSubfunnelId: state.activeSubfunnelId || null
+    };
+  }
+
+  function restoreFunnelWorkspaceMetaSnapshot(snapshot = null) {
+    if (!snapshot || typeof snapshot !== "object") return;
+    state.funnelWorkspace = cloneMutableState(snapshot.funnelWorkspace, getDefaultFunnelWorkspace()) || getDefaultFunnelWorkspace();
+    state.activeFunnelId = snapshot.activeFunnelId || null;
+    state.activeSubfunnelId = snapshot.activeSubfunnelId || null;
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
+    finalizeLocalMutation({
+      notifyScope: null,
+      refresh: false,
+      syncSelectedLeadIds: false
+    });
+  }
+
+  async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist } = {}) {
+    const snapshot = createFunnelWorkspaceMetaSnapshot();
+    try {
+      if (typeof applyLocal === "function") {
+        await applyLocal(snapshot);
+        state.suppressFunnelSync = true;
+        writeStoredFunnelWorkspace();
+      }
+      if (typeof persist === "function") {
+        await persist(snapshot);
+      }
+      if (typeof afterPersist === "function") {
+        await afterPersist(snapshot);
+      }
+      return true;
+    } catch (error) {
+      restoreFunnelWorkspaceMetaSnapshot(snapshot);
+      throw error;
+    }
+  }
+
   function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
     if (!state.currentUser || !isApprovedUser()) return;
     const immediate = options.immediate === true;
@@ -11487,24 +11530,39 @@
 
     if (error) return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
 
-    await logChange(
-      "bulk_delete",
-      "lead",
-      null,
-      `${ids.length} lead(s) foram excluídos por ${getUserDisplayName()}.`,
-      {
-        deleted_ids: data.map((item) => item?.deleted_id).filter(Boolean),
-        deleted_names: selectedLeads.map((lead) => lead.name)
-      }
-    );
-
-    removeLeadsLocally(ids);
-    state.selectedLeadIds.clear();
-    finalizeLocalMutation({
-      notifyScope: "workspace",
-      refreshReason: "bulk-lead-delete",
-      cooldownMs: 1400
-    });
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        applyOptimistic: () => {
+          removeLeadsLocally(ids);
+          state.selectedLeadIds.clear();
+        },
+        persist: async () => null,
+        afterPersist: async () => {
+          await logChange(
+            "bulk_delete",
+            "lead",
+            null,
+            `${ids.length} lead(s) foram excluídos por ${getUserDisplayName()}.`,
+            {
+              deleted_ids: data.map((item) => item?.deleted_id).filter(Boolean),
+              deleted_names: selectedLeads.map((lead) => lead.name)
+            }
+          );
+          finalizeLocalMutation({
+            notifyScope: "workspace",
+            refreshReason: "bulk-lead-delete",
+            cooldownMs: 1400
+          });
+        }
+      });
+    } catch (mutationError) {
+      return alert(`Erro ao finalizar exclusão local dos leads: ${formatSupabaseError(mutationError)}`);
+    }
   }
 
   function renderLeadTable() {
@@ -12665,7 +12723,6 @@
   async function submitFunnelGroupForm(event) {
     event.preventDefault();
     if (!canManageAdminAreas() || !state.funnelWorkspace) return;
-    const previousWorkspace = JSON.parse(JSON.stringify(state.funnelWorkspace || getDefaultFunnelWorkspace()));
 
     const name = normalizeSpacing(els.funnelGroupName?.value || "");
     if (!name) {
@@ -12696,35 +12753,35 @@
       created_at: existingGroup?.created_at || new Date().toISOString()
     };
 
-    if (existingGroup) {
-      state.funnelWorkspace.groups = state.funnelWorkspace.groups.map((item) => item.id === existingGroup.id ? nextGroup : item);
-      state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((funnel) => {
-        if (funnel.group_id !== existingGroup.id) return funnel;
-        return { ...funnel, category };
-      });
-    } else {
-      state.funnelWorkspace.groups.push(nextGroup);
-    }
-
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
     try {
-      const affectedFunnels = categoryChanged
-        ? (state.funnelWorkspace?.funnels || []).filter((funnel) => (
-            String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
-          ))
-        : [];
-      if (affectedFunnels.length) {
-        await persistFunnelsSubsetToSupabase(affectedFunnels, {
-          includeSubfunnels: false,
-          includePermissions: false
-        });
-      }
-      await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
+      await executeFunnelWorkspaceMetaMutation({
+        applyLocal: () => {
+          if (existingGroup) {
+            state.funnelWorkspace.groups = state.funnelWorkspace.groups.map((item) => item.id === existingGroup.id ? nextGroup : item);
+            state.funnelWorkspace.funnels = state.funnelWorkspace.funnels.map((funnel) => {
+              if (funnel.group_id !== existingGroup.id) return funnel;
+              return { ...funnel, category };
+            });
+          } else {
+            state.funnelWorkspace.groups.push(nextGroup);
+          }
+        },
+        persist: async () => {
+          const affectedFunnels = categoryChanged
+            ? (state.funnelWorkspace?.funnels || []).filter((funnel) => (
+                String(funnel?.group_id || "").trim() === String(nextGroup.id || "").trim()
+              ))
+            : [];
+          if (affectedFunnels.length) {
+            await persistFunnelsSubsetToSupabase(affectedFunnels, {
+              includeSubfunnels: false,
+              includePermissions: false
+            });
+          }
+          await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
+        }
+      });
     } catch (error) {
-      state.funnelWorkspace = previousWorkspace;
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
       alert(`Erro ao salvar grupo: ${formatSupabaseError(error)}`);
       return;
     }
@@ -13166,8 +13223,6 @@
 
   async function submitFunnelForm(event) {
     event.preventDefault();
-    const previousWorkspace = JSON.parse(JSON.stringify(state.funnelWorkspace || getDefaultFunnelWorkspace()));
-
     const modalContext = state.funnelModalContext || { mode: "create" };
     const name = String(els.funnelName?.value || "").trim();
     const category = FUNNEL_CATEGORIES.includes(String(els.funnelCategory?.value || "").trim()) ? String(els.funnelCategory.value).trim() : "B2C";
@@ -13216,18 +13271,23 @@
         alert("Funil não encontrado para adicionar o subfunil.");
         return;
       }
-      targetFunnel.subfunnels = [...(targetFunnel.subfunnels || []), { id: createSubfunnelId(), name: subfunnelNames[0] }];
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
       try {
-        await persistFunnelsSubsetToSupabase([targetFunnel], {
-          includeSubfunnels: true,
-          includePermissions: false
+        await executeFunnelWorkspaceMetaMutation({
+          applyLocal: () => {
+            const localTargetFunnel = getFunnelById(modalContext.funnelId);
+            if (!localTargetFunnel) throw new Error("Funil não encontrado para adicionar o subfunil.");
+            localTargetFunnel.subfunnels = [...(localTargetFunnel.subfunnels || []), { id: createSubfunnelId(), name: subfunnelNames[0] }];
+          },
+          persist: async () => {
+            const localTargetFunnel = getFunnelById(modalContext.funnelId);
+            if (!localTargetFunnel) throw new Error("Funil não encontrado para persistência.");
+            await persistFunnelsSubsetToSupabase([localTargetFunnel], {
+              includeSubfunnels: true,
+              includePermissions: false
+            });
+          }
         });
       } catch (error) {
-        state.funnelWorkspace = previousWorkspace;
-        state.suppressFunnelSync = true;
-        writeStoredFunnelWorkspace();
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
         return;
       }
@@ -13247,20 +13307,26 @@
         alert("Subfunil não encontrado para edição.");
         return;
       }
-      targetFunnel.subfunnels = (targetFunnel.subfunnels || []).map((item) => (
-        item.id === targetSubfunnel.id ? { ...item, name: subfunnelNames[0] } : item
-      ));
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
       try {
-        await persistFunnelsSubsetToSupabase([targetFunnel], {
-          includeSubfunnels: true,
-          includePermissions: false
+        await executeFunnelWorkspaceMetaMutation({
+          applyLocal: () => {
+            const localTargetFunnel = getFunnelById(modalContext.funnelId);
+            const localTargetSubfunnel = getSubfunnelById(modalContext.subfunnelId);
+            if (!localTargetFunnel || !localTargetSubfunnel) throw new Error("Subfunil não encontrado para edição.");
+            localTargetFunnel.subfunnels = (localTargetFunnel.subfunnels || []).map((item) => (
+              item.id === localTargetSubfunnel.id ? { ...item, name: subfunnelNames[0] } : item
+            ));
+          },
+          persist: async () => {
+            const localTargetFunnel = getFunnelById(modalContext.funnelId);
+            if (!localTargetFunnel) throw new Error("Funil não encontrado para persistência.");
+            await persistFunnelsSubsetToSupabase([localTargetFunnel], {
+              includeSubfunnels: true,
+              includePermissions: false
+            });
+          }
         });
       } catch (error) {
-        state.funnelWorkspace = previousWorkspace;
-        state.suppressFunnelSync = true;
-        writeStoredFunnelWorkspace();
         alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
         return;
       }
@@ -13278,78 +13344,82 @@
       name: subName
     }));
 
-    if (existingFunnel) {
-      const removedSubfunnelIds = previousSubfunnels
-        .filter((item) => !nextSubfunnels.some((nextItem) => nextItem.id === item.id))
-        .map((item) => item.id);
-      if (removedSubfunnelIds.length) {
-        rememberDeletedFunnelWorkspaceIds({ subfunnels: removedSubfunnelIds });
-      }
-      existingFunnel.name = name;
-      existingFunnel.category = category;
-      existingFunnel.owner_department_id = officialDepartmentId || null;
-      existingFunnel.visibility_scope = visibilityScope;
-      existingFunnel.visibility_access_level = visibilityAccessLevel;
-      existingFunnel.department_permissions = selectedDepartmentPermissions;
-      existingFunnel.department_ids = selectedDepartmentIds;
-      existingFunnel.subfunnels = nextSubfunnels;
-
-      const validSubfunnelIds = new Set(nextSubfunnels.map((item) => item.id));
-      Object.keys(state.funnelWorkspace.stageAssignments || {}).forEach((stageId) => {
-        const assignedId = state.funnelWorkspace.stageAssignments[stageId];
-        if (!previousSubfunnels.some((item) => item.id === assignedId)) return;
-        if (!validSubfunnelIds.has(assignedId)) {
-          state.funnelWorkspace.stageAssignments[stageId] = nextSubfunnels[0]?.id || assignedId;
-        }
-      });
-      Object.keys(state.funnelWorkspace.leadAssignments || {}).forEach((leadId) => {
-        const assignedId = state.funnelWorkspace.leadAssignments[leadId];
-        if (!previousSubfunnels.some((item) => item.id === assignedId)) return;
-        if (!validSubfunnelIds.has(assignedId)) {
-          state.funnelWorkspace.leadAssignments[leadId] = nextSubfunnels[0]?.id || assignedId;
-        }
-      });
-      state.activeFunnelId = existingFunnel.id;
-      if (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId)) {
-        state.activeSubfunnelId = null;
-      }
-    } else {
-      const newFunnel = {
-        id: createFunnelId(),
-        name,
-        category,
-        owner_department_id: officialDepartmentId || null,
-        visibility_scope: visibilityScope,
-        visibility_access_level: visibilityAccessLevel,
-        department_permissions: selectedDepartmentPermissions,
-        department_ids: selectedDepartmentIds,
-        created_by: state.currentUser?.id || null,
-        subfunnels: nextSubfunnels,
-        created_at: new Date().toISOString(),
-        is_default: false
-      };
-
-      state.funnelWorkspace.funnels.push(newFunnel);
-      state.activeFunnelId = newFunnel.id;
-      state.activeSubfunnelId = null;
-    }
-
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
     try {
-      const targetFunnel = existingFunnel || state.funnelWorkspace.funnels[state.funnelWorkspace.funnels.length - 1] || null;
-      if (!targetFunnel) {
-        throw new Error("Funil não encontrado para persistência.");
-      }
-      await persistFunnelsSubsetToSupabase([targetFunnel], {
-        includeSubfunnels: true,
-        includePermissions: true
+      await executeFunnelWorkspaceMetaMutation({
+        applyLocal: () => {
+          if (existingFunnel) {
+            const localExistingFunnel = getFunnelById(existingFunnel.id);
+            if (!localExistingFunnel) throw new Error("Funil não encontrado para edição.");
+            const removedSubfunnelIds = previousSubfunnels
+              .filter((item) => !nextSubfunnels.some((nextItem) => nextItem.id === item.id))
+              .map((item) => item.id);
+            if (removedSubfunnelIds.length) {
+              rememberDeletedFunnelWorkspaceIds({ subfunnels: removedSubfunnelIds });
+            }
+            localExistingFunnel.name = name;
+            localExistingFunnel.category = category;
+            localExistingFunnel.owner_department_id = officialDepartmentId || null;
+            localExistingFunnel.visibility_scope = visibilityScope;
+            localExistingFunnel.visibility_access_level = visibilityAccessLevel;
+            localExistingFunnel.department_permissions = selectedDepartmentPermissions;
+            localExistingFunnel.department_ids = selectedDepartmentIds;
+            localExistingFunnel.subfunnels = nextSubfunnels;
+
+            const validSubfunnelIds = new Set(nextSubfunnels.map((item) => item.id));
+            Object.keys(state.funnelWorkspace.stageAssignments || {}).forEach((stageId) => {
+              const assignedId = state.funnelWorkspace.stageAssignments[stageId];
+              if (!previousSubfunnels.some((item) => item.id === assignedId)) return;
+              if (!validSubfunnelIds.has(assignedId)) {
+                state.funnelWorkspace.stageAssignments[stageId] = nextSubfunnels[0]?.id || assignedId;
+              }
+            });
+            Object.keys(state.funnelWorkspace.leadAssignments || {}).forEach((leadId) => {
+              const assignedId = state.funnelWorkspace.leadAssignments[leadId];
+              if (!previousSubfunnels.some((item) => item.id === assignedId)) return;
+              if (!validSubfunnelIds.has(assignedId)) {
+                state.funnelWorkspace.leadAssignments[leadId] = nextSubfunnels[0]?.id || assignedId;
+              }
+            });
+            state.activeFunnelId = localExistingFunnel.id;
+            if (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId)) {
+              state.activeSubfunnelId = null;
+            }
+          } else {
+            const newFunnel = {
+              id: createFunnelId(),
+              name,
+              category,
+              owner_department_id: officialDepartmentId || null,
+              visibility_scope: visibilityScope,
+              visibility_access_level: visibilityAccessLevel,
+              department_permissions: selectedDepartmentPermissions,
+              department_ids: selectedDepartmentIds,
+              created_by: state.currentUser?.id || null,
+              subfunnels: nextSubfunnels,
+              created_at: new Date().toISOString(),
+              is_default: false
+            };
+
+            state.funnelWorkspace.funnels.push(newFunnel);
+            state.activeFunnelId = newFunnel.id;
+            state.activeSubfunnelId = null;
+          }
+        },
+        persist: async () => {
+          const targetFunnel = existingFunnel
+            ? getFunnelById(existingFunnel.id)
+            : (state.funnelWorkspace.funnels[state.funnelWorkspace.funnels.length - 1] || null);
+          if (!targetFunnel) {
+            throw new Error("Funil não encontrado para persistência.");
+          }
+          await persistFunnelsSubsetToSupabase([targetFunnel], {
+            includeSubfunnels: true,
+            includePermissions: true
+          });
+          await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
+        }
       });
-      await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
     } catch (error) {
-      state.funnelWorkspace = previousWorkspace;
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
       alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
       return;
     }
@@ -15166,20 +15236,36 @@
 
     if (error) return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
 
-    await logChange(
-      "delete",
-      "lead",
-      normalizedId,
-      `Lead "${lead.name}" foi excluído por ${getUserDisplayName()}.`,
-      lead
-    );
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        applyOptimistic: () => {
+          removeLeadsLocally([normalizedId]);
+        },
+        persist: async () => null,
+        afterPersist: async () => {
+          await logChange(
+            "delete",
+            "lead",
+            normalizedId,
+            `Lead "${lead.name}" foi excluído por ${getUserDisplayName()}.`,
+            lead
+          );
 
-    removeLeadsLocally([normalizedId]);
-    finalizeLocalMutation({
-      notifyScope: "workspace",
-      refreshReason: "lead-delete",
-      cooldownMs: 1200
-    });
+          finalizeLocalMutation({
+            notifyScope: "workspace",
+            refreshReason: "lead-delete",
+            cooldownMs: 1200
+          });
+        }
+      });
+    } catch (mutationError) {
+      return alert(`Erro ao finalizar exclusão local do lead: ${formatSupabaseError(mutationError)}`);
+    }
   }
 
   async function editStage(id) {
