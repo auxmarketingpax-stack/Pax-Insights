@@ -3661,7 +3661,7 @@
     return "";
   }
 
-  async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist } = {}) {
+  async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist, finalize } = {}) {
     const snapshot = createFunnelWorkspaceMetaSnapshot();
     const protectedCooldownMs = 1800;
     beginProtectedLiveSyncMutation(protectedCooldownMs);
@@ -3676,6 +3676,12 @@
       }
       if (typeof afterPersist === "function") {
         await afterPersist(snapshot);
+      }
+      const resolvedFinalizeOptions = typeof finalize === "function"
+        ? finalize(snapshot)
+        : finalize;
+      if (resolvedFinalizeOptions !== false) {
+        finalizeLocalMutation(resolvedFinalizeOptions || {});
       }
       return true;
     } catch (error) {
@@ -14063,15 +14069,6 @@
     await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
   }
 
-  function finalizeFunnelGroupMutation() {
-    closeFunnelGroupModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "group-save",
-      cooldownMs: 1800
-    });
-  }
-
   async function submitFunnelGroupForm(event) {
     event.preventDefault();
     if (!canManageAdminAreas() || !state.funnelWorkspace) return;
@@ -14082,14 +14079,20 @@
     try {
       await executeFunnelWorkspaceMetaMutation({
         applyLocal: () => applyFunnelGroupSubmissionLocally(context),
-        persist: async () => persistFunnelGroupSubmission(context)
+        persist: async () => persistFunnelGroupSubmission(context),
+        afterPersist: async () => {
+          closeFunnelGroupModal();
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "group-save",
+          cooldownMs: 1800
+        }
       });
     } catch (error) {
       alert(`Erro ao salvar grupo: ${formatSupabaseError(error)}`);
       return;
     }
-
-    finalizeFunnelGroupMutation();
   }
 
   function toggleFunnelGroup(groupId) {
@@ -14553,22 +14556,6 @@
     closeModalOverlay(els.funnelModalOverlay);
   }
 
-  function finalizeFunnelModalMutation({
-    refreshReason,
-    cooldownMs = 1800,
-    bindFunnelHub = false
-  } = {}) {
-    closeFunnelModal();
-    if (bindFunnelHub) {
-      bindView("funil", { resetFunnelDetail: false });
-    }
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason,
-      cooldownMs
-    });
-  }
-
   function collectFunnelFormSubmissionContext() {
     const modalContext = state.funnelModalContext || { mode: "create" };
     const name = String(els.funnelName?.value || "").trim();
@@ -14658,21 +14645,28 @@
     }
 
     try {
-      await saveSingleSubfunnelModalChange({
-        funnelId: context.modalContext?.funnelId,
-        subfunnelId: context.modalContext?.subfunnelId,
-        subfunnelName: context.subfunnelNames?.[0] || "",
-        mode: normalizedMode
+      await executeFunnelWorkspaceMetaMutation({
+        persist: async () => {
+          await saveSingleSubfunnelModalChange({
+            funnelId: context.modalContext?.funnelId,
+            subfunnelId: context.modalContext?.subfunnelId,
+            subfunnelName: context.subfunnelNames?.[0] || "",
+            mode: normalizedMode
+          });
+        },
+        afterPersist: async () => {
+          closeFunnelModal();
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: isEditMode ? "subfunnel-edit" : "subfunnel-create",
+          cooldownMs: 1800
+        }
       });
     } catch (error) {
       alert(`Erro ao salvar subfunil: ${formatSupabaseError(error)}`);
       return false;
     }
-
-    finalizeFunnelModalMutation({
-      refreshReason: isEditMode ? "subfunnel-edit" : "subfunnel-create",
-      cooldownMs: 1800
-    });
     return true;
   }
 
@@ -14717,28 +14711,27 @@
     await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
   }
 
-  function finalizeFullFunnelSubmission() {
-    finalizeFunnelModalMutation({
-      refreshReason: "funnel-save",
-      cooldownMs: 1800,
-      bindFunnelHub: true
-    });
-  }
-
   async function submitFullFunnelFormChange(context = {}) {
     const nextSubfunnels = buildFullFunnelSubmissionSubfunnels(context);
 
     try {
       await executeFunnelWorkspaceMetaMutation({
         applyLocal: () => applyFullFunnelSubmissionLocally(context, nextSubfunnels),
-        persist: async () => persistFullFunnelSubmission(context)
+        persist: async () => persistFullFunnelSubmission(context),
+        afterPersist: async () => {
+          closeFunnelModal();
+          bindView("funil", { resetFunnelDetail: false });
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "funnel-save",
+          cooldownMs: 1800
+        }
       });
     } catch (error) {
       alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
       return false;
     }
-
-    finalizeFullFunnelSubmission();
     return true;
   }
 
@@ -17551,15 +17544,6 @@
     });
   }
 
-  function finalizeStageDuplicateMutation() {
-    closeStageDuplicateModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-duplicate",
-      cooldownMs: 1500
-    });
-  }
-
   async function submitStageDuplicate(event) {
     event.preventDefault();
     if (!canManageStages()) {
@@ -17571,9 +17555,26 @@
     if (!validateStageDuplicateSubmissionContext(context)) return;
 
     try {
-      const { createdStage, duplicatedLeadIds } = await duplicateStageWithOptionalLeads(context);
-      await persistStageDuplicateAssignments(context, createdStage, duplicatedLeadIds);
-      finalizeStageDuplicateMutation();
+      await executeFinalizedCriticalMutation({
+        snapshot: {
+          stages: true,
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        persist: async () => {
+          const { createdStage, duplicatedLeadIds } = await duplicateStageWithOptionalLeads(context);
+          await persistStageDuplicateAssignments(context, createdStage, duplicatedLeadIds);
+        },
+        afterPersist: async () => {
+          closeStageDuplicateModal();
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "stage-duplicate",
+          cooldownMs: 1500
+        }
+      });
     } catch (error) {
       alert(`Erro ao duplicar pipeline: ${formatSupabaseError(error)}`);
     }
@@ -17737,15 +17738,6 @@
     );
   }
 
-  function finalizeStageDeleteMutation() {
-    closeStageDeleteModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-delete",
-      cooldownMs: 1500
-    });
-  }
-
   async function deleteStageWithStrategy(stageId, options = {}) {
     const context = getStageDeleteStrategyContext(stageId, options);
     if (!context.stage) return;
@@ -17762,21 +17754,39 @@
       return;
     }
 
-    const leadsHandled = await deleteStageLeadsWithStrategy(context, targetStage);
-    if (!leadsHandled) {
-      return;
-    }
-
     try {
-      await persistStageDeleteStages(context);
+      await executeFinalizedCriticalMutation({
+        snapshot: {
+          stages: true,
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        persist: async () => {
+          const leadsHandled = await deleteStageLeadsWithStrategy(context, targetStage);
+          if (!leadsHandled) {
+            const abortError = new Error("stage-delete-aborted");
+            abortError.silent = true;
+            throw abortError;
+          }
+          await persistStageDeleteStages(context);
+        },
+        afterPersist: async () => {
+          applyStageDeleteLocalState(context, targetStage);
+          await logStageDeleteCompletion(context, targetStage);
+          closeStageDeleteModal();
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "stage-delete",
+          cooldownMs: 1500
+        }
+      });
     } catch (error) {
+      if (error?.silent) return;
       alert(`Erro ao excluir pipeline: ${formatSupabaseError(error)}`);
       return;
     }
-
-    applyStageDeleteLocalState(context, targetStage);
-    await logStageDeleteCompletion(context, targetStage);
-    finalizeStageDeleteMutation();
   }
 
   function collectStageDeleteSubmissionContext() {
