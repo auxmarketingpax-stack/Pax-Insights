@@ -511,6 +511,7 @@
     pendingStagePositionCommits: new Map(),
     pendingStageAssignmentCommits: new Map(),
     pendingLeadAssignmentCommits: new Map(),
+    pendingLeadRowCommits: new Map(),
     pendingLeadMoveCommits: new Map()
   };
 
@@ -3380,6 +3381,12 @@
     state.profilesLoaded = false;
     state.adminDataLoaded = false;
     state.permissionRequestContext = null;
+    state.pendingSubfunnelPositionCommits.clear();
+    state.pendingStagePositionCommits.clear();
+    state.pendingStageAssignmentCommits.clear();
+    state.pendingLeadAssignmentCommits.clear();
+    state.pendingLeadRowCommits.clear();
+    state.pendingLeadMoveCommits.clear();
     setPasswordRecoveryMode(false);
     setShellTab("crm");
   }
@@ -5440,6 +5447,41 @@
     return newFunnel;
   }
 
+  function buildPendingLeadRowFields(lead = null) {
+    if (!lead || typeof lead !== "object") return {};
+
+    const fields = {};
+    [
+      "id",
+      "assigned_to",
+      "created_by",
+      "stage_id",
+      "name",
+      "contact",
+      "owner",
+      "value",
+      "start_date",
+      "social_source",
+      "traffic_type",
+      "notes",
+      "created_at"
+    ].forEach((key) => {
+      if (lead[key] !== undefined) {
+        fields[key] = lead[key];
+      }
+    });
+
+    return fields;
+  }
+
+  function registerPendingLeadRowsFromUpdates(updates = [], ttlMs = 10000) {
+    (Array.isArray(updates) ? updates : []).forEach((item) => {
+      const leadId = String(item?.id || "").trim();
+      if (!leadId) return;
+      registerPendingLeadRowCommit(leadId, item?.payload || {}, ttlMs);
+    });
+  }
+
   async function persistSingleFunnelSubsetByIdOrThrow(funnelId, options = {}) {
     const targetFunnel = getFunnelById(funnelId);
     if (!targetFunnel) {
@@ -6101,6 +6143,19 @@
       groups: [...current.groups, ...(partial.groups || [])],
       funnels: [...current.funnels, ...(partial.funnels || [])],
       subfunnels: [...current.subfunnels, ...(partial.subfunnels || [])]
+    });
+  }
+
+  function forgetDeletedFunnelWorkspaceIds(partial = {}) {
+    const current = readDeletedFunnelWorkspaceIds();
+    const groupsToForget = new Set(normalizeIdList(partial.groups || []));
+    const funnelsToForget = new Set(normalizeIdList(partial.funnels || []));
+    const subfunnelsToForget = new Set(normalizeIdList(partial.subfunnels || []));
+
+    writeDeletedFunnelWorkspaceIds({
+      groups: current.groups.filter((id) => !groupsToForget.has(id)),
+      funnels: current.funnels.filter((id) => !funnelsToForget.has(id)),
+      subfunnels: current.subfunnels.filter((id) => !subfunnelsToForget.has(id))
     });
   }
 
@@ -7991,6 +8046,7 @@
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
     const workspace = state.funnelWorkspace;
+    const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
     const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     const leadRows = Object.entries(workspace.leadAssignments || {}).map(([leadId, subfunnelId]) => ({
       lead_id: leadId,
@@ -8054,29 +8110,26 @@
       })
       .filter(Boolean);
 
-    const existingFunnelsRes = await supabaseApi.selectRows(state.supabase, "crm_funnels", { select: "id" });
-    if (existingFunnelsRes.error && !isMissingRelationError(existingFunnelsRes.error)) {
-      throw existingFunnelsRes.error;
-    }
-    const existingSubfunnelsRes = await supabaseApi.selectRows(state.supabase, "crm_subfunnels", { select: "id" });
-    if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
-      throw existingSubfunnelsRes.error;
-    }
+    const trackedRemovedFunnelIds = normalizeIdList(deletedWorkspaceIds.funnels || []);
+    const trackedRemovedSubfunnelIds = normalizeIdList(deletedWorkspaceIds.subfunnels || []);
+    const stageIdsInWorkspace = normalizeIdList([
+      ...Object.keys(workspace.stageAssignments || {}),
+      ...Object.keys(workspace.stageReminderConfigs || {})
+    ]);
     const existingStageRemindersRes = await supabaseApi.selectRows(state.supabase, "crm_stage_reminder_configs", {
-      select: "stage_id"
+      select: "stage_id",
+      ...(stageIdsInWorkspace.length
+        ? { filters: [{ column: "stage_id", op: "in", value: stageIdsInWorkspace }] }
+        : {})
     });
     const stageReminderTableAvailable = !isMissingRelationError(existingStageRemindersRes?.error);
     if (existingStageRemindersRes.error && stageReminderTableAvailable) {
       throw existingStageRemindersRes.error;
     }
-    const existingFunnelIds = new Set((existingFunnelsRes.data || []).map((item) => String(item.id)));
-    const existingSubfunnelIds = new Set((existingSubfunnelsRes.data || []).map((item) => String(item.id)));
     const existingStageReminderIds = new Set((existingStageRemindersRes.data || []).map((item) => String(item.stage_id)));
-    const nextFunnelIds = new Set(funnelRows.map((item) => String(item.id)));
-    const nextSubfunnelIds = new Set(subfunnelRows.map((item) => String(item.id)));
     const nextStageReminderIds = new Set(stageReminderRows.map((item) => String(item.stage_id)));
-    const removedFunnelIds = [...existingFunnelIds].filter((id) => !nextFunnelIds.has(id));
-    const removedSubfunnelIds = [...existingSubfunnelIds].filter((id) => !nextSubfunnelIds.has(id));
+    const removedFunnelIds = trackedRemovedFunnelIds;
+    const removedSubfunnelIds = trackedRemovedSubfunnelIds;
     const removedStageReminderIds = [...existingStageReminderIds].filter((id) => !nextStageReminderIds.has(id));
 
     if (funnelRows.length) {
@@ -8209,6 +8262,11 @@
     }
 
     await persistSharedFunnelWorkspaceMetaToSupabase(workspace);
+    forgetDeletedFunnelWorkspaceIds({
+      groups: deletedWorkspaceIds.groups || [],
+      funnels: removedFunnelIds,
+      subfunnels: removedSubfunnelIds
+    });
   }
 
   function buildFunnelRowPayload(funnel) {
@@ -8309,6 +8367,7 @@
 
     const includeSubfunnels = options.includeSubfunnels !== false;
     const includePermissions = options.includePermissions !== false;
+    const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
     const normalizedFunnels = (Array.isArray(funnels) ? funnels : []).filter((item) => item?.id);
     if (!normalizedFunnels.length) return;
 
@@ -8358,6 +8417,10 @@
         );
         if (finalResult.error) throw finalResult.error;
       }
+
+      forgetDeletedFunnelWorkspaceIds({
+        subfunnels: (deletedWorkspaceIds.subfunnels || []).filter((id) => removedSubfunnelIds.includes(String(id || "").trim()))
+      });
     }
 
     if (includePermissions) {
@@ -10030,17 +10093,29 @@
 
     if (!pendingUpdates.length) return 0;
 
-    const results = await Promise.all(
-      pendingUpdates.map((item) =>
-        state.supabase
-          .from("leads")
-          .update(item.payload)
-          .eq("id", item.id)
-      )
+    registerPendingLeadRowsFromUpdates(pendingUpdates, 12000);
+
+    const result = await supabaseApi.upsertRowsInChunks(
+      state.supabase,
+      "leads",
+      pendingUpdates.map((item) => ({
+        id: item.id,
+        ...item.payload
+      })),
+      { onConflict: "id", chunkSize: 80 }
     );
 
-    const failed = results.find((result) => result.error);
-    if (failed?.error) throw failed.error;
+    if (result?.error) {
+      clearPendingLeadRowCommits(pendingUpdates.map((item) => item.id));
+      throw result.error;
+    }
+
+    pendingUpdates.forEach((item) => {
+      updateLeadsLocallyByIds([item.id], (lead) => ({
+        ...lead,
+        ...item.payload
+      }));
+    });
 
     await logChange(
       "sync",
@@ -11062,6 +11137,55 @@
     return nextRows;
   }
 
+  function pruneExpiredPendingLeadRowCommits() {
+    const now = Date.now();
+    for (const [leadId, commit] of state.pendingLeadRowCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingLeadRowCommits.delete(leadId);
+      }
+    }
+  }
+
+  function registerPendingLeadRowCommit(leadId, fields = {}, ttlMs = 10000) {
+    const normalizedLeadId = String(leadId || "").trim();
+    if (!normalizedLeadId) return;
+    const currentCommit = state.pendingLeadRowCommits.get(normalizedLeadId) || {};
+    state.pendingLeadRowCommits.set(normalizedLeadId, {
+      ...currentCommit,
+      fields: {
+        ...(currentCommit.fields || {}),
+        ...(fields && typeof fields === "object" ? fields : {})
+      },
+      expiresAt: Date.now() + Math.max(2000, Number(ttlMs) || 10000)
+    });
+  }
+
+  function clearPendingLeadRowCommits(leadIds = []) {
+    normalizeIdList(leadIds).forEach((leadId) => {
+      state.pendingLeadRowCommits.delete(leadId);
+    });
+  }
+
+  function doesLeadRowMatchPendingFields(row = {}, fields = {}) {
+    return Object.entries(fields || {}).every(([key, expectedValue]) => {
+      const remoteValue = row?.[key];
+
+      if (expectedValue == null || remoteValue == null) {
+        return expectedValue == null && remoteValue == null;
+      }
+
+      if (typeof expectedValue === "number" || typeof remoteValue === "number") {
+        const expectedNumber = Number(expectedValue);
+        const remoteNumber = Number(remoteValue);
+        if (Number.isFinite(expectedNumber) && Number.isFinite(remoteNumber)) {
+          return expectedNumber === remoteNumber;
+        }
+      }
+
+      return String(remoteValue) === String(expectedValue);
+    });
+  }
+
   function pruneExpiredPendingStageAssignmentCommits() {
     const now = Date.now();
     for (const [stageId, commit] of state.pendingStageAssignmentCommits.entries()) {
@@ -11174,34 +11298,66 @@
   }
 
   function reconcileLeadRowsWithPendingCommits(leadRows = []) {
+    pruneExpiredPendingLeadRowCommits();
     pruneExpiredPendingLeadMoveCommits();
-    if (!state.pendingLeadMoveCommits.size) {
+    if (!state.pendingLeadMoveCommits.size && !state.pendingLeadRowCommits.size) {
       return Array.isArray(leadRows) ? leadRows : [];
     }
 
     const unresolvedLeadIds = [];
+    const seenLeadIds = new Set();
     const nextRows = (Array.isArray(leadRows) ? leadRows : []).map((row) => {
       const leadId = String(row?.id || "").trim();
+      if (leadId) seenLeadIds.add(leadId);
+      const pendingRowCommit = state.pendingLeadRowCommits.get(leadId);
       const pendingCommit = state.pendingLeadMoveCommits.get(leadId);
-      if (!pendingCommit) return row;
+      const nextRow = pendingRowCommit
+        ? {
+            ...row,
+            ...(pendingRowCommit.fields || {})
+          }
+        : row;
 
-      const remoteStageId = String(row?.stage_id || "").trim();
-      const remoteNotes = String(row?.notes || "");
+      if (pendingRowCommit && doesLeadRowMatchPendingFields(row, pendingRowCommit.fields || {})) {
+        state.pendingLeadRowCommits.delete(leadId);
+      } else if (pendingRowCommit) {
+        unresolvedLeadIds.push(leadId);
+      }
+
+      if (!pendingCommit) return nextRow;
+
+      const remoteStageId = String(nextRow?.stage_id || "").trim();
+      const remoteNotes = String(nextRow?.notes || "");
       const stageMatches = remoteStageId === pendingCommit.stageId;
       const notesMatch = !pendingCommit.notes || remoteNotes === pendingCommit.notes;
 
       if (stageMatches && notesMatch) {
         state.pendingLeadMoveCommits.delete(leadId);
-        return row;
+        return nextRow;
       }
 
-      unresolvedLeadIds.push(leadId);
+      if (!unresolvedLeadIds.includes(leadId)) {
+        unresolvedLeadIds.push(leadId);
+      }
       return {
-        ...row,
+        ...nextRow,
         stage_id: pendingCommit.stageId,
-        notes: pendingCommit.notes || row?.notes || ""
+        notes: pendingCommit.notes || nextRow?.notes || ""
       };
     });
+
+    for (const [leadId, commit] of state.pendingLeadRowCommits.entries()) {
+      if (seenLeadIds.has(leadId)) continue;
+      const pendingFields = commit?.fields || {};
+      if (!pendingFields || !Object.keys(pendingFields).length) continue;
+      nextRows.push({
+        id: leadId,
+        ...pendingFields
+      });
+      if (!unresolvedLeadIds.includes(leadId)) {
+        unresolvedLeadIds.push(leadId);
+      }
+    }
 
     if (unresolvedLeadIds.length) {
       console.warn("Snapshot remoto de leads estabilizado com movimentações locais pendentes.", unresolvedLeadIds);
@@ -13009,6 +13165,9 @@
           selectedLeadIds: true
         },
         applyOptimistic: () => {
+          clearPendingLeadRowCommits(normalizedIds);
+          clearPendingLeadMoveCommits(normalizedIds);
+          clearPendingLeadAssignmentCommits(normalizedIds);
           removeLeadsLocally(normalizedIds);
           if (options.clearSelection === true) {
             state.selectedLeadIds.clear();
@@ -16060,15 +16219,25 @@
     if (targetIndex < 0) return lead;
 
     observations.splice(targetIndex, 1);
+    const nextNotes = serializeLeadMeta({
+      ...leadMeta,
+      observations
+    });
+    registerPendingLeadRowCommit(leadId, { notes: nextNotes });
 
     const { error } = await supabaseApi.updateRowById(state.supabase, "leads", leadId, {
-      notes: serializeLeadMeta({
-        ...leadMeta,
-        observations
-      })
+      notes: nextNotes
     });
 
-    if (error) throw error;
+    if (error) {
+      clearPendingLeadRowCommits([leadId]);
+      throw error;
+    }
+
+    updateLeadsLocallyByIds([leadId], (item) => ({
+      ...item,
+      notes: nextNotes
+    }));
 
     await logChange(
       "delete_observation",
@@ -16096,20 +16265,30 @@
   }
 
   async function applyApprovedDeleteLeadRequest(request) {
-    const { error: deleteError } = await deleteLeadsByIds([request.payload.lead_id]);
+    const leadIds = normalizeIdList([request.payload.lead_id]);
+    const { error: deleteError } = await deleteLeadsByIds(leadIds);
     if (deleteError) {
       alert(`Erro ao excluir lead aprovado: ${formatSupabaseError(deleteError)}`);
       return false;
     }
+    clearPendingLeadRowCommits(leadIds);
+    clearPendingLeadMoveCommits(leadIds);
+    clearPendingLeadAssignmentCommits(leadIds);
+    removeLeadsLocally(leadIds);
     return true;
   }
 
   async function applyApprovedBulkDeleteLeadsRequest(request) {
-    const { error: deleteError } = await deleteLeadsByIds(request.payload.lead_ids);
+    const leadIds = normalizeIdList(request.payload.lead_ids);
+    const { error: deleteError } = await deleteLeadsByIds(leadIds);
     if (deleteError) {
       alert(`Erro ao excluir leads aprovados: ${formatSupabaseError(deleteError)}`);
       return false;
     }
+    clearPendingLeadRowCommits(leadIds);
+    clearPendingLeadMoveCommits(leadIds);
+    clearPendingLeadAssignmentCommits(leadIds);
+    removeLeadsLocally(leadIds);
     return true;
   }
 
@@ -16688,6 +16867,7 @@
               silentAssignmentError.silent = true;
               throw silentAssignmentError;
             }
+            registerPendingLeadRowCommit(savedLeadRecord.id, buildPendingLeadRowFields(savedLeadRecord));
           }
 
           closeLeadModal();
@@ -17046,8 +17226,12 @@
         applyLeadReminderLocally(targetId, context.nextReminder);
       },
       persist: async () => {
+        registerPendingLeadRowCommit(targetId, { notes: nextNotes });
         const { error } = await supabaseApi.updateRowById(state.supabase, "leads", targetId, { notes: nextNotes });
-        if (error) throw error;
+        if (error) {
+          clearPendingLeadRowCommits([targetId]);
+          throw error;
+        }
       },
       afterPersist: async () => {
         renderNotifications();
@@ -17120,13 +17304,18 @@
   async function persistConflictingLeadReminderCleanup(conflictingLeads = []) {
     for (const lead of conflictingLeads) {
       const meta = getLeadMeta(lead.notes || "", lead.value || 0);
-      const { error } = await supabaseApi.updateRowById(state.supabase, "leads", lead.id, {
-        notes: serializeLeadMeta({
-          ...meta,
-          reminder: null
-        })
+      const nextNotes = serializeLeadMeta({
+        ...meta,
+        reminder: null
       });
-      if (error) throw error;
+      registerPendingLeadRowCommit(lead.id, { notes: nextNotes });
+      const { error } = await supabaseApi.updateRowById(state.supabase, "leads", lead.id, {
+        notes: nextNotes
+      });
+      if (error) {
+        clearPendingLeadRowCommits([lead.id]);
+        throw error;
+      }
     }
   }
 
@@ -17641,6 +17830,14 @@
       .map((lead) => String(lead?.id || "").trim())
       .filter(Boolean);
 
+    registerPendingLeadRowsFromUpdates(
+      sourceLeadIds.map((leadId) => ({
+        id: leadId,
+        payload: { stage_id: targetStage.id }
+      })),
+      12000
+    );
+
     for (const chunk of chunkArray(sourceLeadIds, 200)) {
       const { error: moveLeadError } = await supabaseApi.updateRowsByIds(
         state.supabase,
@@ -17648,7 +17845,10 @@
         chunk,
         { stage_id: targetStage.id }
       );
-      if (moveLeadError) throw moveLeadError;
+      if (moveLeadError) {
+        clearPendingLeadRowCommits(sourceLeadIds);
+        throw moveLeadError;
+      }
     }
 
     if (sourceLeadIds.length) {
@@ -17965,11 +18165,16 @@
   }
 
   async function deleteStageLeadsAndLog(context = {}) {
-    const { error: deleteLeadError } = await deleteLeadsByIds(context.affectedLeads.map((lead) => lead.id));
+    const leadIds = normalizeIdList(context.affectedLeads.map((lead) => lead.id));
+    const { error: deleteLeadError } = await deleteLeadsByIds(leadIds);
     if (deleteLeadError) {
       alert(`Erro ao excluir leads da pipeline: ${formatSupabaseError(deleteLeadError)}`);
       return false;
     }
+
+    clearPendingLeadRowCommits(leadIds);
+    clearPendingLeadMoveCommits(leadIds);
+    clearPendingLeadAssignmentCommits(leadIds);
 
     await logChange(
       "bulk_delete_stage_leads",
@@ -17993,6 +18198,16 @@
         .filter(Boolean);
       if (!stageLeadIds.length) continue;
 
+      registerPendingLeadRowsFromUpdates(
+        context.affectedLeads
+          .filter((lead) => stageLeadIds.includes(String(lead.id || "").trim()))
+          .map((lead) => ({
+            id: lead.id,
+            payload: { stage_id: targetStage.id }
+          })),
+        12000
+      );
+
       const { error: moveError } = await supabaseApi.updateRowsByIds(
         state.supabase,
         "leads",
@@ -18001,9 +18216,15 @@
       );
 
       if (moveError) {
+        clearPendingLeadRowCommits(stageLeadIds);
         alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
         return false;
       }
+
+      updateLeadsLocallyByIds(stageLeadIds, (lead) => ({
+        ...lead,
+        stage_id: targetStage.id
+      }));
     }
 
     await logChange(
