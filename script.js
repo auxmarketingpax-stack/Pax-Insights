@@ -16331,64 +16331,80 @@
       stage_tracking: nextStageTracking
     });
 
-    let error;
     let savedLeadId = els.leadId.value || null;
     let savedLeadRecord = null;
+    const oldLead = els.leadId.value
+      ? state.leads.find((x) => x.id === els.leadId.value) || null
+      : null;
 
-    if (els.leadId.value) {
-      const oldLead = state.leads.find((x) => x.id === els.leadId.value);
+    try {
+      await executeFinalizedCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        persist: async () => {
+          if (els.leadId.value) {
+            const { error } = await supabaseApi.updateRowById(state.supabase, "leads", els.leadId.value, payload);
+            if (error) throw error;
 
-      ({ error } = await supabaseApi.updateRowById(state.supabase, "leads", els.leadId.value, payload));
+            await logChange(
+              "update",
+              "lead",
+              els.leadId.value,
+              `Lead "${payload.name}" foi atualizado por ${getUserDisplayName()}.`,
+              { before: oldLead || null, after: payload }
+            );
 
-      if (error) return alert(`Erro no Supabase: ${error.message}`);
+            savedLeadRecord = {
+              ...(oldLead || {}),
+              ...payload,
+              id: els.leadId.value
+            };
+            return;
+          }
 
-      await logChange(
-        "update",
-        "lead",
-        els.leadId.value,
-        `Lead "${payload.name}" foi atualizado por ${getUserDisplayName()}.`,
-        { before: oldLead || null, after: payload }
-      );
-      savedLeadRecord = {
-        ...(oldLead || {}),
-        ...payload,
-        id: els.leadId.value
-      };
-    } else {
-      const { data, error: insertError } = await supabaseApi.insertSingleRow(state.supabase, "leads", payload);
+          const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "leads", payload);
+          if (error) throw error;
 
-      error = insertError;
-      if (error) return alert(`Erro no Supabase: ${error.message}`);
-      savedLeadId = data?.id || null;
+          savedLeadId = data?.id || null;
+          await logChange(
+            "insert",
+            "lead",
+            data?.id,
+            `Lead "${payload.name}" foi criado por ${getUserDisplayName()}.`,
+            payload
+          );
+          savedLeadRecord = data ? { ...data, ...payload } : { ...payload, id: savedLeadId };
+        },
+        afterPersist: async () => {
+          if (savedLeadRecord?.id) {
+            upsertLeadLocally(savedLeadRecord);
+            try {
+              await persistLeadAssignmentsSafely([savedLeadRecord.id], selectedSubfunnelId, {
+                notifyScope: "funnel-workspace"
+              });
+            } catch (assignmentError) {
+              alert(`Lead salvo, mas não foi possível vincular o subfunil corretamente: ${formatSupabaseError(assignmentError)}`);
+              const silentAssignmentError = new Error("lead-subfunnel-assignment-failed");
+              silentAssignmentError.silent = true;
+              throw silentAssignmentError;
+            }
+          }
 
-      await logChange(
-        "insert",
-        "lead",
-        data?.id,
-        `Lead "${payload.name}" foi criado por ${getUserDisplayName()}.`,
-        payload
-      );
-      savedLeadRecord = data ? { ...data, ...payload } : { ...payload, id: savedLeadId };
+          closeLeadModal();
+        },
+        finalize: {
+          notifyScope: "workspace",
+          refreshReason: "lead-save",
+          cooldownMs: 1400
+        }
+      });
+    } catch (error) {
+      if (error?.silent) return;
+      return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
     }
-
-    if (savedLeadRecord?.id) {
-      upsertLeadLocally(savedLeadRecord);
-      try {
-        await persistLeadAssignmentsSafely([savedLeadRecord.id], selectedSubfunnelId, {
-          notifyScope: "funnel-workspace"
-        });
-      } catch (assignmentError) {
-        alert(`Lead salvo, mas não foi possível vincular o subfunil corretamente: ${formatSupabaseError(assignmentError)}`);
-        return;
-      }
-    }
-
-    closeLeadModal();
-    finalizeLocalMutation({
-      notifyScope: "workspace",
-      refreshReason: "lead-save",
-      cooldownMs: 1400
-    });
 
     void syncPlanValuesAcrossLeads(draftPlans, savedLeadId)
       .then((updatedCount) => {
@@ -16618,15 +16634,6 @@
     await persistNewStage(context);
   }
 
-  function finalizeStageSaveMutation() {
-    closeStageModal();
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-save",
-      cooldownMs: 1500
-    });
-  }
-
   async function submitStage(event) {
     event.preventDefault();
 
@@ -16656,12 +16663,22 @@
     if (!customTypePersisted) return;
 
     try {
-      await persistStageFormSubmission(context);
+      await executeFinalizedCriticalMutation({
+        persist: async () => {
+          await persistStageFormSubmission(context);
+        },
+        afterPersist: async () => {
+          closeStageModal();
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "stage-save",
+          cooldownMs: 1500
+        }
+      });
     } catch (error) {
       return alert(`Erro ao salvar pipeline: ${formatSupabaseError(error)}`);
     }
-
-    finalizeStageSaveMutation();
   }
 
   function collectNotificationSubmissionContext() {
