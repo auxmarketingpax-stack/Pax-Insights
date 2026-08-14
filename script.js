@@ -2156,6 +2156,18 @@
     };
   }
 
+  function getWorkspaceFunnelPermissionCapabilities(profile = state.profile) {
+    return getFunnelPermissionCapabilities(resolveStageManagementFunnel(), profile);
+  }
+
+  function getWorkspaceLeadPermissionCapabilities(profile = state.profile) {
+    return getLeadPermissionCapabilities(resolveStageManagementFunnel(), profile);
+  }
+
+  function getWorkspaceStagePermissionCapabilities(profile = state.profile) {
+    return getStagePermissionCapabilities(resolveStageManagementFunnel(), profile);
+  }
+
   function getLeadPermissionCapabilities(target = null, profile = state.profile) {
     const funnelPermissions = getFunnelPermissionCapabilities(target, profile);
     return {
@@ -2747,7 +2759,7 @@
 
   async function reconcileLeadOwnersWithProfilesOnce() {
     if (state.ownerReconciliationInProgress || state.ownerReconciliationDone) return false;
-    const workspaceLeadPermissions = getLeadPermissionCapabilities();
+    const workspaceLeadPermissions = getWorkspaceLeadPermissionCapabilities();
     if (!workspaceLeadPermissions.canAssignLeadOwner || !state.profilesLoaded || !state.profiles.length) return false;
 
     if (readStoredOwnerReconciliationDone()) {
@@ -3287,7 +3299,7 @@
 
   function applyRoleBasedUi() {
     const workspacePermissions = getWorkspacePermissionCapabilities();
-    const funnelPermissions = getFunnelPermissionCapabilities();
+    const funnelPermissions = getWorkspaceFunnelPermissionCapabilities();
     const adminVisible = workspacePermissions.canManageAdminAreas;
     const leadsVisible = workspacePermissions.canViewLeadsList;
     const teamVisible = workspacePermissions.canViewTeam;
@@ -7759,7 +7771,7 @@
   async function ensureExternalActionsFunnelMerge() {
     if (readStoredExternalActionsFunnelMergeDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) return false;
     if (!hasExternalActionsFunnelMergeCandidate()) {
       writeStoredExternalActionsFunnelMergeDone(true);
@@ -7778,7 +7790,7 @@
   async function ensureB2CExternalCaptureNormalization() {
     if (readStoredB2CExternalCaptureNormalizationDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) return false;
 
     const compareKey = (value) => getCanonicalValueKey(value);
@@ -7975,7 +7987,7 @@
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
     const workspace = state.funnelWorkspace;
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     const leadRows = Object.entries(workspace.leadAssignments || {}).map(([leadId, subfunnelId]) => ({
       lead_id: leadId,
       subfunnel_id: subfunnelId
@@ -9855,7 +9867,7 @@
     const selectedLabel = selectedOption?.label || stageTypeLabel(selected);
     if (!confirm(`Remover o tipo "${selectedLabel}" da lista? Os pipelines com esse tipo serao movidos para outro tipo disponivel.`)) return;
 
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) {
       requestAdminAuthorization({
         requestType: "delete_stage_type",
@@ -10709,7 +10721,7 @@
 
   function handlePipelineStageDragStart(event) {
     const item = getPipelineStageDropTarget(event.target);
-    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const stagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!item || !stagePermissions.canManageStages) {
       event.preventDefault();
       return;
@@ -11341,7 +11353,7 @@
   }
 
   async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
-    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const stagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!stagePermissions.canManageStages) {
       alert("Somente administradores podem reordenar pipelines.");
       return;
@@ -11892,7 +11904,7 @@
   async function runDeferredFunnelRouteMigration(options = {}) {
     const silent = options.silent === true;
     if (readStoredFunnelRouteMigrationDone()) return false;
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) return false;
 
     try {
@@ -12591,7 +12603,7 @@
   function renderPipelineStageStrip(filtered = getFilteredLeads(), stageLeadCounts = null) {
     if (!els.pipelineStageStrip) return;
     const stages = getScopedStages();
-    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const pipelinePermissions = getWorkspaceFunnelPermissionCapabilities();
     const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const resolvedStageLeadCounts = stageLeadCounts instanceof Map
       ? stageLeadCounts
@@ -12638,7 +12650,7 @@
 
   function renderPipeline() {
     const filtered = getFilteredLeads();
-    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const pipelinePermissions = getWorkspaceFunnelPermissionCapabilities();
     const canReorderPipelineLeads = pipelinePermissions.canMoveLeads;
     const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const stages = getScopedStages();
@@ -12863,7 +12875,7 @@
 
   async function deleteSelectedLeads() {
     if (state.bulkDeleteInProgress) return;
-    const workspaceLeadPermissions = getLeadPermissionCapabilities();
+    const workspaceLeadPermissions = getWorkspaceLeadPermissionCapabilities();
 
     const ids = normalizeIdList([...state.selectedLeadIds]);
     if (!ids.length) return;
@@ -13065,7 +13077,7 @@
 
   function renderStagesConfig() {
     if (!els.stagesConfigList) return;
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) {
       els.stagesConfigList.innerHTML = '<div class="stage-config-item">Somente administradores podem gerenciar pipelines.</div>';
       return;
@@ -13179,7 +13191,7 @@
 
   function handleStageConfigDragStart(event) {
     const item = getStageConfigDropTarget(event.target);
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!item || !workspaceStagePermissions.canManageStages) {
       event.preventDefault();
       return;
@@ -13897,7 +13909,7 @@
       .map((row, index) => {
         const name = row.nome || row.name || "";
         const contact = row.contato || row.contact || "";
-        const workspaceLeadPermissions = getLeadPermissionCapabilities();
+        const workspaceLeadPermissions = getWorkspaceLeadPermissionCapabilities();
         const owner = workspaceLeadPermissions.canAssignLeadOwner
           ? (row.responsavel || row.vendedor || row.owner || getCurrentLeadOwnerName())
           : getCurrentLeadOwnerName();
@@ -14580,7 +14592,7 @@
     const subfieldsGroup = els.funnelSubfields?.closest(".form-group");
     const subfieldsLabel = subfieldsGroup?.querySelector("label");
 
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) {
       alert(`Somente administradores podem ${mode === "edit" ? "editar" : "criar"} funis.`);
       return;
@@ -16731,7 +16743,7 @@
   async function submitStage(event) {
     event.preventDefault();
 
-    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const stagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!stagePermissions.canManageStages) {
       alert("Somente administradores podem alterar pipelines.");
       return;
@@ -17665,7 +17677,7 @@
 
   async function submitStageDuplicate(event) {
     event.preventDefault();
-    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) {
       alert("Somente administradores podem duplicar pipelines.");
       return;
@@ -18098,7 +18110,7 @@
   }
 
   function bindPipelineEvents() {
-    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const pipelinePermissions = getWorkspaceFunnelPermissionCapabilities();
     const canReorderPipelineLeads = pipelinePermissions.canMoveLeads;
     const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const buildLeadContextActions = (lead) => {
