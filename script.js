@@ -477,6 +477,7 @@
     liveSyncPollTimer: null,
     liveSyncLocalMutationUntil: 0,
     liveSyncLocalMutationTimer: null,
+    appDataCacheWriteTimer: null,
     liveSyncProtectedMutationCount: 0,
     lastSharedFunnelMetaSignature: "",
     lastSharedFunnelGroupsSignature: "",
@@ -3542,6 +3543,7 @@
       includeProfiles: state.profilesLoaded,
       includeAdminData: state.adminDataLoaded,
       runRouteMigration: false,
+      runFollowUps: false,
       restoreUiState: false,
       silentRender: true
     });
@@ -5899,6 +5901,18 @@
     } catch (_error) {
       // ignore local storage failures
     }
+  }
+
+  function scheduleAppDataCacheWrite(delayMs = 180) {
+    if (state.appDataCacheWriteTimer) {
+      clearTimeout(state.appDataCacheWriteTimer);
+      state.appDataCacheWriteTimer = null;
+    }
+
+    state.appDataCacheWriteTimer = window.setTimeout(() => {
+      state.appDataCacheWriteTimer = null;
+      writeStoredAppDataCache();
+    }, Math.max(0, Number(delayMs) || 0));
   }
 
   async function ensureDefaultSocialSourceForMissingLeads(leadIds = [], options = {}) {
@@ -10999,6 +11013,8 @@
         snapshot: {
           stages: true
         },
+        optimisticSyncSelectedLeadIds: false,
+        optimisticWriteCache: false,
         applyOptimistic: () => {
           state.stages = context.optimisticStages;
         },
@@ -11006,6 +11022,7 @@
           await persistStagePositions(context.changedPositionRows);
         },
         afterPersist: async () => {
+          scheduleAppDataCacheWrite(160);
           notifyLiveSyncChange("stage-order");
           queueLocalConsistencyRefresh("stage-order", 900);
           void logChange(
@@ -11324,7 +11341,11 @@
 
     renderDepartmentSelects();
     syncFunnelWorkspaceWithData(reconcileWorkspaceLeadAssignmentsWithPendingCommits(remoteFunnelWorkspace));
-    writeStoredAppDataCache();
+    if (silentRender) {
+      scheduleAppDataCacheWrite(220);
+    } else {
+      writeStoredAppDataCache();
+    }
     void ensureStageNamesWithoutTrailingPeriods({ silent: silentRender });
     void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
   }
@@ -11415,6 +11436,7 @@
     const includeProfiles = options.includeProfiles === true;
     const includeAdminData = options.includeAdminData === true || (options.includeAdminData !== false && canManageAdminAreas());
     const runRouteMigration = options.runRouteMigration === true || (options.runRouteMigration !== false);
+    const runFollowUps = options.runFollowUps !== false;
     const restoreUiState = options.restoreUiState === true;
     const silentRender = options.silentRender === true;
     const leadsPromise = fetchAllLeads();
@@ -11475,15 +11497,17 @@
       silentRender
     });
 
-    const followUpResult = await runLoadAppDataFollowUps({
-      includeProfiles,
-      includeAdminData,
-      runRouteMigration,
-      restoreUiState,
-      silentRender
-    });
-    if (followUpResult) {
-      return followUpResult;
+    if (runFollowUps) {
+      const followUpResult = await runLoadAppDataFollowUps({
+        includeProfiles,
+        includeAdminData,
+        runRouteMigration,
+        restoreUiState,
+        silentRender
+      });
+      if (followUpResult) {
+        return followUpResult;
+      }
     }
 
     if (restoreUiState) {
@@ -12250,13 +12274,36 @@
     renderPlanSummaryTable(metrics);
   }
 
-  function renderPipelineStageStrip(filtered = getFilteredLeads()) {
+  function buildPipelineStageLeadMap(leads = []) {
+    const leadsByStageId = new Map();
+    const stageLeadCounts = new Map();
+
+    (Array.isArray(leads) ? leads : []).forEach((lead) => {
+      const stageId = String(lead?.stage_id || "").trim();
+      if (!stageId) return;
+      if (!leadsByStageId.has(stageId)) {
+        leadsByStageId.set(stageId, []);
+      }
+      leadsByStageId.get(stageId).push(lead);
+      stageLeadCounts.set(stageId, Number(stageLeadCounts.get(stageId) || 0) + 1);
+    });
+
+    return {
+      leadsByStageId,
+      stageLeadCounts
+    };
+  }
+
+  function renderPipelineStageStrip(filtered = getFilteredLeads(), stageLeadCounts = null) {
     if (!els.pipelineStageStrip) return;
     const stages = getScopedStages();
     const canReorderPipelineStages = canManageStages();
+    const resolvedStageLeadCounts = stageLeadCounts instanceof Map
+      ? stageLeadCounts
+      : buildPipelineStageLeadMap(filtered).stageLeadCounts;
 
     els.pipelineStageStrip.innerHTML = stages.map((stage) => {
-      const count = filtered.filter((lead) => lead.stage_id === stage.id).length;
+      const count = Number(resolvedStageLeadCounts.get(stage.id) || 0);
       return `
         <article class="pipeline-stage-tab" data-stage-id="${stage.id}" draggable="${canReorderPipelineStages ? "true" : "false"}">
           <div class="pipeline-stage-tab-main">
@@ -12299,15 +12346,20 @@
     const canReorderPipelineLeads = canMoveLeads();
     const canReorderPipelineStages = canManageStages();
     const stages = getScopedStages();
-    renderPipelineStageStrip(filtered);
+    const pipelineStageLeadMap = buildPipelineStageLeadMap(filtered);
+    renderPipelineStageStrip(filtered, pipelineStageLeadMap.stageLeadCounts);
 
     els.pipeline.innerHTML = stages.map((stage, index) => {
-      const leads = filtered.filter((lead) => lead.stage_id === stage.id);
+      const leads = pipelineStageLeadMap.leadsByStageId.get(stage.id) || [];
 
       const cards = leads.length
         ? leads.map((lead) => {
           const canEditLead = canEditLeads(lead);
           const canDeleteLeadItem = canDeleteLeads(lead);
+          const latestObservation = getLeadLatestObservation(lead);
+          const referralName = getLeadReferralName(lead);
+          const referralSector = getLeadReferralSector(lead);
+          const contractNumbers = getLeadContractNumbers(lead);
           return `
           <article class="card" draggable="${canReorderPipelineLeads ? "true" : "false"}" data-lead-id="${lead.id}">
             <div class="card-top">
@@ -12325,13 +12377,13 @@
               <span><strong>Responsável:</strong> ${escapeHtml(lead.owner || "-")}</span>
               <span><strong>Início:</strong> ${formatDate(lead.start_date)}</span>
               <span><strong>Origem:</strong> ${escapeHtml(lead.traffic_type || "-")}</span>
-              ${getLeadReferralName(lead) ? `<span><strong>Indicou:</strong> ${escapeHtml(getLeadReferralName(lead))}</span>` : ""}
-              ${getLeadReferralSector(lead) ? `<span><strong>Setor do indicado:</strong> ${escapeHtml(getLeadReferralSector(lead))}</span>` : ""}
+              ${referralName ? `<span><strong>Indicou:</strong> ${escapeHtml(referralName)}</span>` : ""}
+              ${referralSector ? `<span><strong>Setor do indicado:</strong> ${escapeHtml(referralSector)}</span>` : ""}
               <span><strong>Canal de origem:</strong> ${escapeHtml(lead.social_source || "-")}</span>
-              ${getLeadContractNumbers(lead) ? `<span><strong>Contrato:</strong> ${escapeHtml(getLeadContractNumbers(lead))}</span>` : ""}
+              ${contractNumbers ? `<span><strong>Contrato:</strong> ${escapeHtml(contractNumbers)}</span>` : ""}
             </div>
 
-            ${getLeadLatestObservation(lead) ? `<div class="card-notes"><strong>Ultima observacao:</strong> ${escapeHtml(getLeadLatestObservation(lead).text)}${getLeadLatestObservation(lead).date ? `<small>${formatDate(getLeadLatestObservation(lead).date)}</small>` : ""}</div>` : ""}
+            ${latestObservation ? `<div class="card-notes"><strong>Ultima observacao:</strong> ${escapeHtml(latestObservation.text)}${latestObservation.date ? `<small>${formatDate(latestObservation.date)}</small>` : ""}</div>` : ""}
 
             ${canEditLead || canDeleteLeadItem ? `
               <div class="card-actions">
@@ -16751,9 +16803,14 @@
           funnelWorkspace: true,
           selectedLeadIds: true
         },
+        optimisticSyncSelectedLeadIds: false,
+        optimisticWriteCache: false,
         applyOptimistic: () => applyLeadMoveOptimistic(context, stageId),
         persist: async () => persistLeadMoveRecord(context, stageId),
-        afterPersist: async () => finalizeLeadMovePersistence(context)
+        afterPersist: async () => {
+          scheduleAppDataCacheWrite(160);
+          await finalizeLeadMovePersistence(context);
+        }
       });
     } catch (error) {
       clearPendingLeadMoveCommits([context.lead?.id]);
