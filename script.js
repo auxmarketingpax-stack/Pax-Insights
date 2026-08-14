@@ -2099,6 +2099,82 @@
     return null;
   }
 
+  function resolveStageManagementFunnel(target = null) {
+    return target
+      || getFunnelById(state.activeFunnelId)
+      || getFunnelById(state.structureFunnelId)
+      || getFunnelById(state.funnelModalContext?.funnelId)
+      || getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id)
+      || getFunnelById(getSubfunnelById(state.structureSubfunnelId)?.funnel_id)
+      || null;
+  }
+
+  function getFunnelPermissionCapabilities(target = null, profile = state.profile) {
+    const approvedUser = isApprovedUser();
+    const admin = hasAdminRole(profile);
+    const developer = isDeveloper(profile);
+    const unrestrictedDepartmentAdmin = admin && hasUnrestrictedDepartmentAccess(profile);
+    const funnel = resolveFunnelFromPermissionTarget(target);
+    const canEditContentInFunnel = Boolean(funnel) && approvedUser && canRoleEditFunnelContent(funnel, profile);
+    const canEditStructureInFunnel = Boolean(funnel) && admin && canEditFunnelItem(funnel, profile);
+    const hasEditableAvailableFunnel = !funnel && approvedUser
+      ? (state.funnelWorkspace?.funnels || []).some((item) => canRoleEditFunnelContent(item, profile))
+      : false;
+    const canEditLeadContent = funnel ? canEditContentInFunnel : hasEditableAvailableFunnel;
+    const canDeleteOrAssignLeadOwner = developer || (funnel ? canEditStructureInFunnel : unrestrictedDepartmentAdmin);
+
+    return {
+      approvedUser,
+      admin,
+      developer,
+      unrestrictedDepartmentAdmin,
+      funnel,
+      canEditContentInFunnel,
+      canEditStructureInFunnel,
+      hasEditableAvailableFunnel,
+      canEditLeads: canEditLeadContent,
+      canCreateLeads: canEditLeadContent,
+      canMoveLeads: canEditLeadContent,
+      canImportLeads: canEditLeadContent,
+      canExportLeads: canEditLeadContent,
+      canDeleteLeads: admin && canDeleteOrAssignLeadOwner,
+      canAssignLeadOwner: admin && canDeleteOrAssignLeadOwner,
+      canManageStages: admin && (developer || !funnel || canEditStructureInFunnel)
+    };
+  }
+
+  function getWorkspacePermissionCapabilities(profile = state.profile) {
+    const approvedUser = isApprovedUser();
+    const admin = hasAdminRole(profile);
+    return {
+      approvedUser,
+      admin,
+      canViewLeadsList: approvedUser,
+      canViewTeam: approvedUser && !isManagement(profile),
+      canManageAdminAreas: admin,
+      canViewHistory: admin
+    };
+  }
+
+  function getLeadPermissionCapabilities(target = null, profile = state.profile) {
+    const funnelPermissions = getFunnelPermissionCapabilities(target, profile);
+    return {
+      ...funnelPermissions,
+      canOpenNotificationEditor: funnelPermissions.canEditLeads
+    };
+  }
+
+  function getStagePermissionCapabilities(target = null, profile = state.profile) {
+    const funnelPermissions = getFunnelPermissionCapabilities(target, profile);
+    return {
+      ...funnelPermissions,
+      canEditStage: funnelPermissions.canManageStages,
+      canDuplicateStage: funnelPermissions.canManageStages,
+      canNotifyStage: funnelPermissions.canManageStages,
+      canDeleteStage: funnelPermissions.canManageStages
+    };
+  }
+
   function canRoleEditFunnelContent(funnel = null, profile = state.profile) {
     if (!funnel || !isApprovedUser()) return false;
     return getFunnelAccessLevelForProfile(funnel, profile) === FUNNEL_ACCESS_LEVEL.EDIT;
@@ -2405,73 +2481,52 @@
   }
 
   function canEditLeads(target = null) {
-    if (!isApprovedUser()) return false;
-    const funnel = resolveFunnelFromPermissionTarget(target);
-    if (funnel) return canRoleEditFunnelContent(funnel);
-    return getAvailableFunnels().some((item) => canRoleEditFunnelContent(item));
+    return getFunnelPermissionCapabilities(target).canEditLeads;
   }
 
   function canDeleteLeads(target = null) {
-    if (!hasAdminRole()) return false;
-    if (isDeveloper()) return true;
-    const funnel = resolveFunnelFromPermissionTarget(target);
-    if (funnel) return canEditFunnelItem(funnel);
-    return hasUnrestrictedDepartmentAccess(state.profile);
+    return getFunnelPermissionCapabilities(target).canDeleteLeads;
   }
 
   function canAssignLeadOwner(target = null) {
-    if (!hasAdminRole()) return false;
-    if (isDeveloper()) return true;
-    const funnel = resolveFunnelFromPermissionTarget(target);
-    if (funnel) return canEditFunnelItem(funnel);
-    return hasUnrestrictedDepartmentAccess(state.profile);
+    return getFunnelPermissionCapabilities(target).canAssignLeadOwner;
   }
 
   function canCreateLeads() {
-    return canEditLeads();
+    return getFunnelPermissionCapabilities().canCreateLeads;
   }
 
   function canMoveLeads(target = null) {
-    return canEditLeads(target);
+    return getFunnelPermissionCapabilities(target).canMoveLeads;
   }
 
   function canImportLeads(target = null) {
-    return canEditLeads(target);
+    return getFunnelPermissionCapabilities(target).canImportLeads;
   }
 
   function canExportLeads(target = null) {
-    return canEditLeads(target);
+    return getFunnelPermissionCapabilities(target).canExportLeads;
   }
 
   function canViewLeadsList() {
-    return isApprovedUser();
+    return getWorkspacePermissionCapabilities().canViewLeadsList;
   }
 
   function canViewTeam() {
-    return isApprovedUser() && !isManagement();
+    return getWorkspacePermissionCapabilities().canViewTeam;
   }
 
   function canManageAdminAreas() {
-    return hasAdminRole();
+    return getWorkspacePermissionCapabilities().canManageAdminAreas;
   }
 
   function canViewHistory() {
-    return hasAdminRole();
+    return getWorkspacePermissionCapabilities().canViewHistory;
   }
 
   function canManageStages(funnel = null) {
-    if (!hasAdminRole()) return false;
-    if (isDeveloper()) return true;
-    const targetFunnel = funnel
-      || getFunnelById(state.activeFunnelId)
-      || getFunnelById(state.structureFunnelId)
-      || getFunnelById(state.funnelModalContext?.funnelId)
-      || getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id)
-      || getFunnelById(getSubfunnelById(state.structureSubfunnelId)?.funnel_id)
-      || null;
-
-    if (!targetFunnel) return true;
-    return canEditFunnelItem(targetFunnel);
+    const targetFunnel = resolveStageManagementFunnel(funnel);
+    return getFunnelPermissionCapabilities(targetFunnel).canManageStages;
   }
 
   function canManageLeadSources() {
@@ -2491,7 +2546,8 @@
   }
 
   function resolveLeadOwnerForPersistence({ existingLead = null, requestedOwner = "" } = {}) {
-    if (canAssignLeadOwner(existingLead)) {
+    const leadPermissions = getLeadPermissionCapabilities(existingLead);
+    if (leadPermissions.canAssignLeadOwner) {
       return getCanonicalMappedValue(requestedOwner, state.ownerCanonicalMap, "owner");
     }
     if (existingLead) {
@@ -2691,7 +2747,8 @@
 
   async function reconcileLeadOwnersWithProfilesOnce() {
     if (state.ownerReconciliationInProgress || state.ownerReconciliationDone) return false;
-    if (!canAssignLeadOwner() || !state.profilesLoaded || !state.profiles.length) return false;
+    const workspaceLeadPermissions = getLeadPermissionCapabilities();
+    if (!workspaceLeadPermissions.canAssignLeadOwner || !state.profilesLoaded || !state.profiles.length) return false;
 
     if (readStoredOwnerReconciliationDone()) {
       state.ownerReconciliationDone = true;
@@ -3229,12 +3286,14 @@
   }
 
   function applyRoleBasedUi() {
-    const adminVisible = canManageAdminAreas();
-    const leadsVisible = canViewLeadsList();
-    const teamVisible = canViewTeam();
-    const canCreate = canCreateLeads();
-    const canImport = canImportLeads();
-    const canExport = canExportLeads();
+    const workspacePermissions = getWorkspacePermissionCapabilities();
+    const funnelPermissions = getFunnelPermissionCapabilities();
+    const adminVisible = workspacePermissions.canManageAdminAreas;
+    const leadsVisible = workspacePermissions.canViewLeadsList;
+    const teamVisible = workspacePermissions.canViewTeam;
+    const canCreate = funnelPermissions.canCreateLeads;
+    const canImport = funnelPermissions.canImportLeads;
+    const canExport = funnelPermissions.canExportLeads;
 
     document.querySelectorAll("[data-admin-only='true']").forEach((element) => {
       element.classList.toggle("hidden", !adminVisible);
@@ -3251,9 +3310,9 @@
     els.mobileAddLeadBtn?.classList.toggle("hidden", !canCreate);
     els.importCsvBtn?.classList.toggle("hidden", !canImport);
     els.exportCsvBtn?.classList.toggle("hidden", !canExport);
-    els.deleteSelectedBtn?.classList.toggle("hidden", !canDeleteLeads() || state.selectedLeadIds.size === 0);
+    els.deleteSelectedBtn?.classList.toggle("hidden", !funnelPermissions.canDeleteLeads || state.selectedLeadIds.size === 0);
     document.querySelectorAll("[data-funnel-create-category]").forEach((element) => {
-      element.classList.toggle("hidden", !canManageStages());
+      element.classList.toggle("hidden", !funnelPermissions.canManageStages);
     });
 
     if (els.userAccessLevel) {
@@ -6096,7 +6155,8 @@
 
     const editableIds = ids.filter((leadId) => {
       const lead = state.leads.find((item) => item.id === leadId);
-      return lead && canEditLeads(lead);
+      const leadPermissions = getLeadPermissionCapabilities(lead);
+      return lead && leadPermissions.canEditLeads;
     });
     if (!editableIds.length) return;
 
@@ -7699,7 +7759,8 @@
   async function ensureExternalActionsFunnelMerge() {
     if (readStoredExternalActionsFunnelMergeDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
-    if (!canManageStages()) return false;
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) return false;
     if (!hasExternalActionsFunnelMergeCandidate()) {
       writeStoredExternalActionsFunnelMergeDone(true);
       return false;
@@ -7717,7 +7778,8 @@
   async function ensureB2CExternalCaptureNormalization() {
     if (readStoredB2CExternalCaptureNormalizationDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
-    if (!canManageStages()) return false;
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) return false;
 
     const compareKey = (value) => getCanonicalValueKey(value);
     const expectedStages = [
@@ -7913,12 +7975,13 @@
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
     const workspace = state.funnelWorkspace;
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
     const leadRows = Object.entries(workspace.leadAssignments || {}).map(([leadId, subfunnelId]) => ({
       lead_id: leadId,
       subfunnel_id: subfunnelId
     }));
 
-    if (!canManageStages()) {
+    if (!workspaceStagePermissions.canManageStages) {
       if (!leadRows.length) return;
       const { error } = await supabaseApi.upsertRows(
         state.supabase,
@@ -8350,7 +8413,8 @@
     if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return;
 
     const funnel = getFunnelById(funnelId);
-    if (!funnel || !canManageStages(funnel)) return;
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+    if (!funnel || !funnelPermissions.canManageStages) return;
 
     const subfunnelRows = (funnel.subfunnels || []).map((subfunnel, index) => ({
       id: subfunnel.id,
@@ -8828,11 +8892,12 @@
   async function deleteSubfunnel(funnelId, subfunnelId) {
     const funnel = getFunnelById(funnelId);
     const subfunnel = getSubfunnelById(subfunnelId);
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
     if (!funnel || !subfunnel) return;
 
     if (!confirm(`Tem certeza que deseja excluir o subfunil "${subfunnel.name}"?`)) return;
 
-    if (!canManageStages()) {
+    if (!funnelPermissions.canManageStages) {
       requestAdminAuthorization({
         requestType: "delete_subfunnel",
         title: "Solicitar exclusao de subfunil",
@@ -8962,11 +9027,12 @@
 
   async function deleteFunnel(funnelId) {
     const funnel = getFunnelById(funnelId);
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
     if (!funnel) return;
 
     if (!confirm(`Tem certeza que deseja excluir o funil "${funnel.name}"?`)) return;
 
-    if (!canManageStages(funnel)) {
+    if (!funnelPermissions.canManageStages) {
       requestAdminAuthorization({
         requestType: "delete_funnel",
         title: "Solicitar exclusao de funil",
@@ -8990,7 +9056,8 @@
 
   function moveSubfunnelToIndex(funnelId, subfunnelId, targetIndex) {
     const funnel = getFunnelById(funnelId);
-    if (!funnel || !canManageStages(funnel)) return;
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+    if (!funnel || !funnelPermissions.canManageStages) return;
     const reordered = reorderSubfunnelsInFunnelLocally(funnelId, subfunnelId, targetIndex);
     if (!reordered) return;
     queueSubfunnelOrderSync(funnelId);
@@ -9086,7 +9153,9 @@
 
     const funnelId = String(item.dataset.parentFunnelId || "").trim();
     const subfunnelId = String(item.dataset.subfunnelOpen || "").trim();
-    if (!funnelId || !subfunnelId || !canManageStages(getFunnelById(funnelId))) {
+    const funnel = getFunnelById(funnelId);
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+    if (!funnelId || !subfunnelId || !funnelPermissions.canManageStages) {
       event.preventDefault();
       return;
     }
@@ -9786,7 +9855,8 @@
     const selectedLabel = selectedOption?.label || stageTypeLabel(selected);
     if (!confirm(`Remover o tipo "${selectedLabel}" da lista? Os pipelines com esse tipo serao movidos para outro tipo disponivel.`)) return;
 
-    if (!canManageStages()) {
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) {
       requestAdminAuthorization({
         requestType: "delete_stage_type",
         title: "Solicitar exclusao de tipo de pipeline",
@@ -10104,9 +10174,10 @@
       if (Number.isNaN(index) || !state.modalObservations[index]) return;
       const observation = state.modalObservations[index];
       const existingLead = state.leads.find((lead) => lead.id === els.leadId.value) || null;
+      const existingLeadPermissions = getLeadPermissionCapabilities(existingLead);
       if (!confirm("Tem certeza que deseja excluir esta observacao?")) return;
 
-      if (existingLead && !canDeleteLeads(existingLead) && observation._persisted) {
+      if (existingLead && !existingLeadPermissions.canDeleteLeads && observation._persisted) {
         requestAdminAuthorization({
           requestType: "delete_observation",
           title: "Solicitar exclusao de observacao",
@@ -10354,7 +10425,8 @@
     const card = event.target.closest(".card");
     if (!card || !els.pipeline?.contains(card)) return;
     const lead = state.leads.find((item) => item.id === card.dataset.leadId);
-    if (!canEditLeads(lead)) return;
+    const leadPermissions = getLeadPermissionCapabilities(lead);
+    if (!leadPermissions.canEditLeads) return;
     if (event.target.closest(".card-actions")) return;
     if (state.pipelineCardPan?.isPanning) return;
     openLeadEditorById(card.dataset.leadId);
@@ -10637,7 +10709,8 @@
 
   function handlePipelineStageDragStart(event) {
     const item = getPipelineStageDropTarget(event.target);
-    if (!item || !canManageStages()) {
+    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!item || !stagePermissions.canManageStages) {
       event.preventDefault();
       return;
     }
@@ -11103,7 +11176,8 @@
 
   function openLeadEditorById(leadId) {
     const lead = state.leads.find((item) => item.id === leadId);
-    if (!canEditLeads(lead)) return;
+    const leadPermissions = getLeadPermissionCapabilities(lead);
+    if (!leadPermissions.canEditLeads) return;
     if (lead) openLeadModal(lead);
   }
 
@@ -11267,7 +11341,8 @@
   }
 
   async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
-    if (!canManageStages()) {
+    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!stagePermissions.canManageStages) {
       alert("Somente administradores podem reordenar pipelines.");
       return;
     }
@@ -11817,7 +11892,8 @@
   async function runDeferredFunnelRouteMigration(options = {}) {
     const silent = options.silent === true;
     if (readStoredFunnelRouteMigrationDone()) return false;
-    if (!canManageStages()) return false;
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) return false;
 
     try {
       const migratedRoutes = await ensureFunnelRouteMigration();
@@ -12515,7 +12591,8 @@
   function renderPipelineStageStrip(filtered = getFilteredLeads(), stageLeadCounts = null) {
     if (!els.pipelineStageStrip) return;
     const stages = getScopedStages();
-    const canReorderPipelineStages = canManageStages();
+    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const resolvedStageLeadCounts = stageLeadCounts instanceof Map
       ? stageLeadCounts
       : buildPipelineStageLeadMap(filtered).stageLeadCounts;
@@ -12561,8 +12638,9 @@
 
   function renderPipeline() {
     const filtered = getFilteredLeads();
-    const canReorderPipelineLeads = canMoveLeads();
-    const canReorderPipelineStages = canManageStages();
+    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const canReorderPipelineLeads = pipelinePermissions.canMoveLeads;
+    const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const stages = getScopedStages();
     const pipelineStageLeadMap = buildPipelineStageLeadMap(filtered);
     renderPipelineStageStrip(filtered, pipelineStageLeadMap.stageLeadCounts);
@@ -12572,8 +12650,9 @@
 
       const cards = leads.length
         ? leads.map((lead) => {
-          const canEditLead = canEditLeads(lead);
-          const canDeleteLeadItem = canDeleteLeads(lead);
+          const leadPermissions = getLeadPermissionCapabilities(lead);
+          const canEditLead = leadPermissions.canEditLeads;
+          const canDeleteLeadItem = leadPermissions.canDeleteLeads;
           const latestObservation = getLeadLatestObservation(lead);
           const referralName = getLeadReferralName(lead);
           const referralSector = getLeadReferralSector(lead);
@@ -12764,9 +12843,10 @@
 
   function validateSingleLeadDeleteContext(context = {}) {
     if (!context.lead) return false;
+    const leadPermissions = getLeadPermissionCapabilities(context.lead);
     if (deletingLeadIds.has(context.normalizedId)) return false;
     if (!confirm(`Excluir o lead "${context.lead.name}"?`)) return false;
-    if (!canDeleteLeads(context.lead)) {
+    if (!leadPermissions.canDeleteLeads) {
       requestLeadDeleteAuthorization(context.lead);
       return false;
     }
@@ -12783,12 +12863,13 @@
 
   async function deleteSelectedLeads() {
     if (state.bulkDeleteInProgress) return;
+    const workspaceLeadPermissions = getLeadPermissionCapabilities();
 
     const ids = normalizeIdList([...state.selectedLeadIds]);
     if (!ids.length) return;
     if (!confirm(`Tem certeza que deseja excluir ${ids.length} lead(s)?`)) return;
 
-    if (!canDeleteLeads()) {
+    if (!workspaceLeadPermissions.canDeleteLeads) {
       requestBulkLeadDeleteAuthorization(ids);
       return;
     }
@@ -12864,8 +12945,9 @@
     }
 
     els.leadsTableBody.innerHTML = filtered.map((lead) => {
-      const canEditLead = canEditLeads(lead);
-      const canDeleteLeadItem = canDeleteLeads(lead);
+      const leadPermissions = getLeadPermissionCapabilities(lead);
+      const canEditLead = leadPermissions.canEditLeads;
+      const canDeleteLeadItem = leadPermissions.canDeleteLeads;
       return `
       <tr class="${state.selectedLeadIds.has(lead.id) ? "is-selected" : ""}">
         <td class="select-col">
@@ -12983,7 +13065,8 @@
 
   function renderStagesConfig() {
     if (!els.stagesConfigList) return;
-    if (!canManageStages()) {
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) {
       els.stagesConfigList.innerHTML = '<div class="stage-config-item">Somente administradores podem gerenciar pipelines.</div>';
       return;
     }
@@ -13096,7 +13179,8 @@
 
   function handleStageConfigDragStart(event) {
     const item = getStageConfigDropTarget(event.target);
-    if (!item || !canManageStages()) {
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!item || !workspaceStagePermissions.canManageStages) {
       event.preventDefault();
       return;
     }
@@ -13813,7 +13897,8 @@
       .map((row, index) => {
         const name = row.nome || row.name || "";
         const contact = row.contato || row.contact || "";
-        const owner = canAssignLeadOwner()
+        const workspaceLeadPermissions = getLeadPermissionCapabilities();
+        const owner = workspaceLeadPermissions.canAssignLeadOwner
           ? (row.responsavel || row.vendedor || row.owner || getCurrentLeadOwnerName())
           : getCurrentLeadOwnerName();
         const startDate = row.data_inicio || row.start_date || row.data || "";
@@ -14114,7 +14199,8 @@
   function assignFunnelToGroup(funnelId, groupId = null) {
     if (!state.funnelWorkspace || !funnelId) return;
     const funnel = getFunnelById(funnelId);
-    if (!funnel || !canManageStages(funnel)) return;
+    const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+    if (!funnel || !funnelPermissions.canManageStages) return;
 
     const targetGroup = groupId ? getGroupById(groupId) : null;
     updateFunnelLocally(funnelId, (item) => ({
@@ -14177,11 +14263,13 @@
       return;
     }
 
-    const renderFunnelButton = (funnel) => `
+    const renderFunnelButton = (funnel) => {
+      const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+      return `
       <div
         class="crm-funnel-item ${state.activeFunnelId === funnel.id ? "active" : ""}"
         data-funnel-open="${funnel.id}"
-        draggable="${canManageStages(funnel) ? "true" : "false"}"
+        draggable="${funnelPermissions.canManageStages ? "true" : "false"}"
         data-funnel-nav-item="${funnel.id}"
         role="button"
         tabindex="0"
@@ -14189,6 +14277,7 @@
         <span class="crm-funnel-item-label">${escapeHtml(funnel.name)}</span>
       </div>
     `;
+    };
 
     const renderGroup = (group) => {
       const visibleFunnels = getFunnelsForGroup(group.id).filter((funnel) => canViewFunnelItem(funnel));
@@ -14245,12 +14334,13 @@
     const detailActive = isFunnelDetailActive();
     const activeFunnel = getFunnelById(state.activeFunnelId);
     const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
+    const activeFunnelPermissions = activeFunnel ? getFunnelPermissionCapabilities(activeFunnel) : null;
     els.funnelHubPanel.classList.toggle("hidden", detailActive || !activeFunnel);
     els.funnelDetailPanel.classList.toggle("hidden", !detailActive);
     els.funnelBackBtn?.classList.toggle("hidden", !detailActive);
     els.pipelineScrollTop?.classList.toggle("hidden", !detailActive);
-    els.editCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive);
-    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive);
+    els.editCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive || !activeFunnelPermissions?.canManageStages);
+    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive || !activeFunnelPermissions?.canManageStages);
     if (detailActive && activeFunnel && activeSubfunnel) {
       renderFunnelDiagram(null);
       return;
@@ -14272,7 +14362,7 @@
           data-subfunnel-card="true"
           data-subfunnel-open="${subfunnel.id}"
           data-parent-funnel-id="${activeFunnel.id}"
-          draggable="${canManageStages(activeFunnel) ? "true" : "false"}"
+          draggable="${activeFunnelPermissions.canManageStages ? "true" : "false"}"
         >
           <div class="funnel-card-head">
             <div class="funnel-card-order-wrap">
@@ -14280,7 +14370,7 @@
               <span class="funnel-card-category">${escapeHtml(activeFunnel.category)}</span>
             </div>
             <div class="funnel-card-head-actions">
-              ${canManageStages(activeFunnel) ? `<button type="button" class="funnel-card-edit" data-subfunnel-edit="${subfunnel.id}" data-parent-funnel-id="${activeFunnel.id}" aria-label="Editar subfunil ${escapeHtml(subfunnel.name)}">✎</button>` : ""}
+              ${activeFunnelPermissions.canManageStages ? `<button type="button" class="funnel-card-edit" data-subfunnel-edit="${subfunnel.id}" data-parent-funnel-id="${activeFunnel.id}" aria-label="Editar subfunil ${escapeHtml(subfunnel.name)}">✎</button>` : ""}
             </div>
           </div>
           <div class="funnel-card-body">
@@ -14305,7 +14395,7 @@
       `;
     });
 
-    if (canManageStages(activeFunnel)) {
+    if (activeFunnelPermissions.canManageStages) {
       cards.push(`
         <button type="button" class="funnel-card funnel-card-create" data-subfunnel-create="${activeFunnel.id}" aria-label="Adicionar subfunil">
           <span class="funnel-card-plus">+</span>
@@ -14490,7 +14580,8 @@
     const subfieldsGroup = els.funnelSubfields?.closest(".form-group");
     const subfieldsLabel = subfieldsGroup?.querySelector("label");
 
-    if (!canManageStages()) {
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) {
       alert(`Somente administradores podem ${mode === "edit" ? "editar" : "criar"} funis.`);
       return;
     }
@@ -14872,7 +14963,8 @@
   }
 
   function openLeadModal(lead = null) {
-    if (!canEditLeads(lead)) {
+    const leadPermissions = getLeadPermissionCapabilities(lead);
+    if (!leadPermissions.canEditLeads) {
       alert("Seu perfil não tem permissão de edição neste funil.");
       return;
     }
@@ -14883,11 +14975,11 @@
     els.leadForm.reset();
     els.leadId.value = lead?.id || "";
     els.modalTitle.textContent = lead ? "Editar Lead" : "Novo Lead";
-    els.ownerGroup?.classList.toggle("hidden", !canAssignLeadOwner(lead));
+    els.ownerGroup?.classList.toggle("hidden", !leadPermissions.canAssignLeadOwner);
 
     els.name.value = lead?.name || "";
     els.contact.value = lead?.contact || "";
-    renderLeadOwnerOptions(canAssignLeadOwner(lead) ? (lead?.owner || getUserDisplayName()) : getUserDisplayName());
+    renderLeadOwnerOptions(leadPermissions.canAssignLeadOwner ? (lead?.owner || getUserDisplayName()) : getUserDisplayName());
     toggleLeadOwnerCreateBox(false);
     if (els.value) els.value.value = "";
     els.startDate.value = lead?.start_date || "";
@@ -15135,7 +15227,8 @@
   }
 
   function openStageDuplicateModal(stage) {
-    if (!stage || !canManageStages()) return;
+    const stagePermissions = getStagePermissionCapabilities(stage);
+    if (!stage || !stagePermissions.canDuplicateStage) return;
     const modalContext = getStageDuplicateModalContext(stage);
     closeAllModals();
     els.stageDuplicateForm?.reset();
@@ -15196,7 +15289,8 @@
   }
 
   function openStageDeleteModal(stage) {
-    if (!stage || !canManageStages()) return;
+    const stagePermissions = getStagePermissionCapabilities(stage);
+    if (!stage || !stagePermissions.canDeleteStage) return;
     closeAllModals();
     els.stageDeleteForm?.reset();
     if (els.stageDeleteSourceId) els.stageDeleteSourceId.value = stage.id || "";
@@ -16213,11 +16307,12 @@
     event.preventDefault();
 
     const existingLead = state.leads.find((lead) => lead.id === els.leadId.value) || null;
-    if (!canEditLeads(existingLead)) {
+    const leadPermissions = getLeadPermissionCapabilities(existingLead);
+    if (!leadPermissions.canEditLeads) {
       alert("Seu perfil não tem permissão de edição neste funil.");
       return;
     }
-    if (canAssignLeadOwner(existingLead) && String(els.owner?.value || "") === "__new__") {
+    if (leadPermissions.canAssignLeadOwner && String(els.owner?.value || "") === "__new__") {
       alert("Crie e selecione o novo responsável antes de salvar o lead.");
       return;
     }
@@ -16297,7 +16392,7 @@
       return alert("Seu perfil nao pode editar leads nesse funil.");
     }
     if (!payload.stage_id) return alert("Selecione uma etapa.");
-    const requiresOwner = canAssignLeadOwner(existingLead) || !existingLead;
+    const requiresOwner = leadPermissions.canAssignLeadOwner || !existingLead;
     if (!payload.name || !payload.contact || !payload.start_date || !payload.traffic_type || !payload.social_source || (requiresOwner && !payload.owner)) {
       return alert("Preencha os campos obrigatorios.");
     }
@@ -16636,7 +16731,8 @@
   async function submitStage(event) {
     event.preventDefault();
 
-    if (!canManageStages()) {
+    const stagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!stagePermissions.canManageStages) {
       alert("Somente administradores podem alterar pipelines.");
       return;
     }
@@ -16709,7 +16805,8 @@
   }
 
   function validateLeadNotificationContext(context = {}) {
-    if (!context.lead || !canEditLeads(context.lead)) {
+    const leadPermissions = getLeadPermissionCapabilities(context.lead);
+    if (!context.lead || !leadPermissions.canEditLeads) {
       alert("Seu perfil não tem permissão para alterar esta notificação.");
       return false;
     }
@@ -16805,7 +16902,8 @@
   }
 
   function validateStageNotificationContext(context = {}) {
-    if (!context.stage || !canManageStages()) {
+    const stagePermissions = getStagePermissionCapabilities(context.stage);
+    if (!context.stage || !stagePermissions.canManageStages) {
       alert("Somente administradores podem alterar esta notificação.");
       return false;
     }
@@ -16960,7 +17058,8 @@
 
   function validateLeadMoveContext(context = {}, stageId) {
     if (!context.lead || !context.stage || context.lead.stage_id === stageId) return false;
-    if (!canMoveLeads(context.lead)) {
+    const leadPermissions = getLeadPermissionCapabilities(context.lead);
+    if (!leadPermissions.canMoveLeads) {
       alert("Seu perfil não tem permissão de edição neste funil.");
       return false;
     }
@@ -17067,11 +17166,12 @@
   }
 
   async function editStage(id) {
-    if (!canManageStages()) {
+    const stage = state.stages.find((x) => x.id === id);
+    const stagePermissions = getStagePermissionCapabilities(stage);
+    if (!stagePermissions.canEditStage) {
       alert("Somente administradores podem editar pipelines.");
       return;
     }
-    const stage = state.stages.find((x) => x.id === id);
     if (!stage) return;
     openStageModal(stage);
   }
@@ -17091,8 +17191,9 @@
 
   function validateLegacyStageDeleteContext(context = {}) {
     if (!context.stage) return false;
+    const stagePermissions = getStagePermissionCapabilities(context.stage);
     if (!confirm(`Excluir a etapa "${context.stage.name}"?`)) return false;
-    if (!canManageStages()) {
+    if (!stagePermissions.canManageStages) {
       requestAdminAuthorization({
         requestType: "delete_stage",
         title: "Solicitar exclusao de pipeline",
@@ -17564,7 +17665,8 @@
 
   async function submitStageDuplicate(event) {
     event.preventDefault();
-    if (!canManageStages()) {
+    const workspaceStagePermissions = getStagePermissionCapabilities(resolveStageManagementFunnel());
+    if (!workspaceStagePermissions.canManageStages) {
       alert("Somente administradores podem duplicar pipelines.");
       return;
     }
@@ -17759,8 +17861,9 @@
   async function deleteStageWithStrategy(stageId, options = {}) {
     const context = getStageDeleteStrategyContext(stageId, options);
     if (!context.stage) return;
+    const stagePermissions = getStagePermissionCapabilities(context.stage);
 
-    if (!canManageStages()) {
+    if (!stagePermissions.canManageStages) {
       requestStageDeleteAuthorization(context);
       return;
     }
@@ -17928,6 +18031,7 @@
     const activeFunnel = getFunnelById(state.activeFunnelId);
     const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
     const activeFunnelGroup = activeFunnel?.group_id ? getGroupById(activeFunnel.group_id) : null;
+    const activeFunnelPermissions = activeFunnel ? getFunnelPermissionCapabilities(activeFunnel) : null;
     const titles = {
       funil: isFunnelDetailActive()
         ? [
@@ -17960,8 +18064,8 @@
     }
     els.topbar?.classList.toggle("hidden", shouldHideTopbar);
     document.querySelector(".topbar-actions")?.classList.toggle("hidden", !shouldShowTopbarControls);
-    els.editCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive());
-    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive());
+    els.editCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive() || !activeFunnelPermissions?.canManageStages);
+    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive() || !activeFunnelPermissions?.canManageStages);
     if (!shouldShowTopbarControls) {
       setDesktopFiltersOpen(false);
     }
@@ -17994,35 +18098,38 @@
   }
 
   function bindPipelineEvents() {
-    const canReorderPipelineLeads = canMoveLeads();
-    const canReorderPipelineStages = canManageStages();
+    const pipelinePermissions = getFunnelPermissionCapabilities(resolveStageManagementFunnel());
+    const canReorderPipelineLeads = pipelinePermissions.canMoveLeads;
+    const canReorderPipelineStages = pipelinePermissions.canManageStages;
     const buildLeadContextActions = (lead) => {
       if (!lead) return [];
+      const leadPermissions = getLeadPermissionCapabilities(lead);
       const actions = [];
-      if (canEditLeads(lead)) {
+      if (leadPermissions.canEditLeads) {
         actions.push({ id: `edit-lead-${lead.id}`, label: "Editar", handler: () => openLeadModal(lead) });
-        if (!leadHasStageNotification(lead)) {
+        if (leadPermissions.canOpenNotificationEditor && !leadHasStageNotification(lead)) {
           actions.push({ id: `notify-lead-${lead.id}`, label: "Notificação", handler: () => openLeadNotificationEditor(lead) });
         }
       }
-      if (canDeleteLeads(lead)) {
+      if (leadPermissions.canDeleteLeads) {
         actions.push({ id: `delete-lead-${lead.id}`, label: "Excluir", danger: true, handler: () => deleteLead(lead.id) });
       }
       return actions;
     };
     const openStageContextMenu = ({ stageId, x = 0, y = 0 } = {}) => {
       const stage = state.stages.find((item) => item.id === stageId);
-      if (!stage || !canManageStages()) return;
+      const stagePermissions = getStagePermissionCapabilities(stage);
+      if (!stage || !stagePermissions.canManageStages) return;
       openFunnelContextMenu({
         x,
         y,
         scope: "pipeline",
         actions: [
-          { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) },
-          { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) },
-          { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) },
-          { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => openStageDeleteModal(stage) }
-        ]
+          stagePermissions.canEditStage ? { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) } : null,
+          stagePermissions.canDuplicateStage ? { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) } : null,
+          stagePermissions.canNotifyStage ? { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) } : null,
+          stagePermissions.canDeleteStage ? { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => openStageDeleteModal(stage) } : null
+        ].filter(Boolean)
       });
     };
     const openLeadContextMenu = ({ lead, x = 0, y = 0 } = {}) => {
@@ -19148,7 +19255,8 @@
         event.preventDefault();
         const funnel = getFunnelById(funnelItem.dataset.funnelNavItem);
         if (!funnel) return;
-        const actions = canManageStages(funnel)
+        const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+        const actions = funnelPermissions.canManageStages
           ? [
               { id: `edit-funnel-${funnel.id}`, label: "Editar funil", handler: () => openFunnelModal({ mode: "edit", funnel }) },
               { id: `delete-funnel-${funnel.id}`, label: "Excluir funil", danger: true, handler: () => deleteFunnel(funnel.id) }
@@ -19178,7 +19286,8 @@
       const funnelItem = event.target.closest("[data-funnel-nav-item]");
       if (!funnelItem) return;
       const funnel = getFunnelById(funnelItem.dataset.funnelNavItem);
-      if (!funnel || !canManageStages(funnel)) {
+      const funnelPermissions = getFunnelPermissionCapabilities(funnel);
+      if (!funnel || !funnelPermissions.canManageStages) {
         event.preventDefault();
         return;
       }
