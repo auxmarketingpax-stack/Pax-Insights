@@ -384,6 +384,7 @@
     chevronRight: '<svg viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5"></path></svg>',
     chevronDown: '<svg viewBox="0 0 16 16" focusable="false" aria-hidden="true"><path d="M3.5 6 8 10.5 12.5 6"></path></svg>'
   };
+  const supabaseApi = window.PaxSupabaseApi || null;
 
   const state = {
     supabase: null,
@@ -1366,10 +1367,9 @@
       return;
     }
 
-    const { data, error } = await state.supabase
-      .from("departments")
-      .select("*")
-      .order("name", { ascending: true });
+    const { data, error } = await supabaseApi.selectRows(state.supabase, "departments", {
+      orderBy: { column: "name", options: { ascending: true } }
+    });
 
     if (error) {
       if (!isMissingRelationError(error)) {
@@ -2783,8 +2783,6 @@
 
   async function fetchAllLeads() {
     const pageSize = 1000;
-    const allRows = [];
-    let from = 0;
 
     const getLeadOrderTimestamp = (lead) => {
       const createdAt = Date.parse(String(lead?.created_at || ""));
@@ -2794,26 +2792,17 @@
       return 0;
     };
 
-    while (true) {
-      const { data, error } = await state.supabase
-        .from("leads")
-        .select("*")
-        .range(from, from + pageSize - 1);
-
-      if (error) {
-        return { data: [], error };
-      }
-
-      const rows = Array.isArray(data) ? data : [];
-      allRows.push(...rows);
-
-      if (rows.length < pageSize) {
-        allRows.sort((left, right) => getLeadOrderTimestamp(right) - getLeadOrderTimestamp(left));
-        return { data: allRows, error: null };
-      }
-
-      from += pageSize;
+    const result = await supabaseApi.fetchAllRowsInPages(state.supabase, "leads", {
+      select: "*",
+      pageSize
+    });
+    if (result.error) {
+      return { data: [], error: result.error };
     }
+
+    const rows = Array.isArray(result.data) ? result.data : [];
+    rows.sort((left, right) => getLeadOrderTimestamp(right) - getLeadOrderTimestamp(left));
+    return { data: rows, error: null };
   }
 
   function getRoleLabel(role = getUserRole(), email = "") {
@@ -3166,12 +3155,12 @@
       return setMessage(els.accountMessage, formatSupabaseError(authError), true);
     }
 
-    const { data: profile, error: profileError } = await state.supabase
-      .from("profiles")
-      .update({ full_name: fullName })
-      .eq("id", state.currentUser.id)
-      .select("*")
-      .maybeSingle();
+    const { data: profile, error: profileError } = await supabaseApi.updateProfileById(
+      state.supabase,
+      state.currentUser.id,
+      { full_name: fullName },
+      { select: "*", maybeSingle: true }
+    );
 
     if (profileError) {
       return setMessage(els.accountMessage, formatSupabaseError(profileError), true);
@@ -6451,28 +6440,19 @@
   async function loadSharedFunnelWorkspaceMetaFromSupabase() {
     if (!state.supabase) return null;
 
-    const [legacyRes, groupsRes, linksRes] = await Promise.all([
-      state.supabase
-        .from("change_history")
-        .select("payload, created_at")
-        .eq("entity_type", SHARED_FUNNEL_META_ENTITY_TYPE)
-        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
-        .order("created_at", { ascending: false })
-        .limit(1),
-      state.supabase
-        .from("change_history")
-        .select("payload, created_at")
-        .eq("entity_type", SHARED_FUNNEL_GROUPS_ENTITY_TYPE)
-        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
-        .order("created_at", { ascending: false })
-        .limit(1),
-      state.supabase
-        .from("change_history")
-        .select("payload, created_at")
-        .eq("entity_type", SHARED_FUNNEL_LINKS_ENTITY_TYPE)
-        .eq("entity_id", SHARED_FUNNEL_META_ENTITY_ID)
-        .order("created_at", { ascending: false })
-        .limit(1)
+    const [legacyRes, groupsRes, linksRes] = await supabaseApi.loadLatestChangeHistoryPayloads(state.supabase, [
+      {
+        entityType: SHARED_FUNNEL_META_ENTITY_TYPE,
+        entityId: SHARED_FUNNEL_META_ENTITY_ID
+      },
+      {
+        entityType: SHARED_FUNNEL_GROUPS_ENTITY_TYPE,
+        entityId: SHARED_FUNNEL_META_ENTITY_ID
+      },
+      {
+        entityType: SHARED_FUNNEL_LINKS_ENTITY_TYPE,
+        entityId: SHARED_FUNNEL_META_ENTITY_ID
+      }
     ]);
 
     const error = legacyRes?.error || groupsRes?.error || linksRes?.error || null;
@@ -6517,7 +6497,7 @@
       user_email: state.currentUser.email
     };
 
-    const { error } = await state.supabase.from("change_history").insert([row]);
+    const { error } = await supabaseApi.insertChangeHistoryEntry(state.supabase, row);
     if (error) throw error;
 
     state.lastSharedFunnelGroupsSignature = signature;
@@ -6542,7 +6522,7 @@
       user_email: state.currentUser.email
     };
 
-    const { error } = await state.supabase.from("change_history").insert([row]);
+    const { error } = await supabaseApi.insertChangeHistoryEntry(state.supabase, row);
     if (error) throw error;
 
     state.lastSharedFunnelLinksSignature = signature;
@@ -7094,15 +7074,10 @@
   }
 
   async function loadFunnelWorkspaceFromSupabase() {
-    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes, sharedMetaRes] = await Promise.all([
-      state.supabase.from("crm_funnels").select("*").is("archived_at", null).order("created_at", { ascending: true }),
-      state.supabase.from("crm_subfunnels").select("*").order("position", { ascending: true }),
-      state.supabase.from("crm_funnel_department_permissions").select("*"),
-      state.supabase.from("crm_stage_subfunnel_assignments").select("*"),
-      state.supabase.from("crm_lead_subfunnel_assignments").select("*"),
-      state.supabase.from("crm_stage_reminder_configs").select("*"),
-      loadSharedFunnelWorkspaceMetaFromSupabase()
-    ]);
+    const [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes, sharedMetaRes] = await supabaseApi.loadFunnelWorkspaceTables(
+      state.supabase,
+      loadSharedFunnelWorkspaceMetaFromSupabase
+    );
 
     const responses = [funnelsRes, subfunnelsRes, permissionsRes, stageAssignmentsRes, leadAssignmentsRes, stageRemindersRes];
     const blockingError = responses.find((response) => response?.error && !isMissingRelationError(response.error))?.error || null;
@@ -8075,10 +8050,10 @@
     const normalizedFunnelIds = normalizeIdList(funnelIds);
     if (!normalizedFunnelIds.length) return;
 
-    const existingPermissionsRes = await state.supabase
-      .from("crm_funnel_department_permissions")
-      .select("funnel_id, department_id, access_level")
-      .in("funnel_id", normalizedFunnelIds);
+    const existingPermissionsRes = await supabaseApi.selectRows(state.supabase, "crm_funnel_department_permissions", {
+      select: "funnel_id, department_id, access_level",
+      filters: [{ column: "funnel_id", op: "in", value: normalizedFunnelIds }]
+    });
     if (existingPermissionsRes.error) throw existingPermissionsRes.error;
 
     const existingPermissionsByFunnel = new Map();
@@ -8095,9 +8070,12 @@
     });
 
     if (permissionRows.length) {
-      const { error: permissionUpsertError } = await state.supabase
-        .from("crm_funnel_department_permissions")
-        .upsert(permissionRows, { onConflict: "funnel_id,department_id" });
+      const { error: permissionUpsertError } = await supabaseApi.upsertRows(
+        state.supabase,
+        "crm_funnel_department_permissions",
+        permissionRows,
+        { onConflict: "funnel_id,department_id" }
+      );
       if (permissionUpsertError) throw permissionUpsertError;
     }
 
@@ -8113,11 +8091,16 @@
         .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
 
       if (!removedDepartmentIds.length) continue;
-      const { error: deletePermissionError } = await state.supabase
-        .from("crm_funnel_department_permissions")
-        .delete()
-        .eq("funnel_id", funnelId)
-        .in("department_id", removedDepartmentIds);
+      const { error: deletePermissionError } = await supabaseApi.deleteRows(
+        state.supabase,
+        "crm_funnel_department_permissions",
+        {
+          filters: [
+            { column: "funnel_id", op: "eq", value: funnelId },
+            { column: "department_id", op: "in", value: removedDepartmentIds }
+          ]
+        }
+      );
       if (deletePermissionError) throw deletePermissionError;
     }
   }
@@ -8134,7 +8117,7 @@
       .map((funnel) => buildFunnelRowPayload(funnel))
       .filter(Boolean);
     if (funnelRows.length) {
-      const { error } = await state.supabase.from("crm_funnels").upsert(funnelRows, { onConflict: "id" });
+      const { error } = await supabaseApi.upsertRows(state.supabase, "crm_funnels", funnelRows, { onConflict: "id" });
       if (error) throw error;
     }
 
@@ -8143,10 +8126,10 @@
 
     if (includeSubfunnels) {
       const subfunnelRows = buildSubfunnelRowsForFunnels(normalizedFunnels);
-      const existingSubfunnelsRes = await state.supabase
-        .from("crm_subfunnels")
-        .select("id, funnel_id")
-        .in("funnel_id", funnelIds);
+      const existingSubfunnelsRes = await supabaseApi.selectRows(state.supabase, "crm_subfunnels", {
+        select: "id, funnel_id",
+        filters: [{ column: "funnel_id", op: "in", value: funnelIds }]
+      });
       if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
         throw existingSubfunnelsRes.error;
       }
@@ -8158,19 +8141,19 @@
         .filter((id) => id && !nextSubfunnelIds.has(id));
 
       if (removedSubfunnelIds.length) {
-        const { error } = await state.supabase.from("crm_subfunnels").delete().in("id", removedSubfunnelIds);
+        const { error } = await supabaseApi.deleteRows(state.supabase, "crm_subfunnels", {
+          filters: [{ column: "id", op: "in", value: removedSubfunnelIds }]
+        });
         if (error) throw error;
       }
 
       if (subfunnelRows.length) {
-        const tempSubfunnelRows = subfunnelRows.map((row, index) => ({
-          ...row,
-          position: 1000000 + index
-        }));
-        const tempResult = await state.supabase.from("crm_subfunnels").upsert(tempSubfunnelRows, { onConflict: "id" });
-        if (tempResult.error) throw tempResult.error;
-
-        const finalResult = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+        const finalResult = await supabaseApi.upsertRowsWithTransientPositions(
+          state.supabase,
+          "crm_subfunnels",
+          subfunnelRows,
+          { onConflict: "id" }
+        );
         if (finalResult.error) throw finalResult.error;
       }
     }
@@ -8186,10 +8169,9 @@
     if (!normalizedStageId || !state.supabase) return false;
 
     if (!nextReminder) {
-      const { error } = await state.supabase
-        .from("crm_stage_reminder_configs")
-        .delete()
-        .eq("stage_id", normalizedStageId);
+      const { error } = await supabaseApi.deleteRows(state.supabase, "crm_stage_reminder_configs", {
+        filters: [{ column: "stage_id", op: "eq", value: normalizedStageId }]
+      });
       if (error && !isMissingRelationError(error)) throw error;
       return !error || isMissingRelationError(error);
     }
@@ -8201,9 +8183,12 @@
       created_by: state.currentUser?.id || null
     };
 
-    const { error } = await state.supabase
-      .from("crm_stage_reminder_configs")
-      .upsert(payload, { onConflict: "stage_id" });
+    const { error } = await supabaseApi.upsertRows(
+      state.supabase,
+      "crm_stage_reminder_configs",
+      payload,
+      { onConflict: "stage_id" }
+    );
     if (error && !isMissingRelationError(error)) throw error;
     return !error || isMissingRelationError(error);
   }
@@ -8213,12 +8198,15 @@
     const normalizedSubfunnelId = String(subfunnelId || "").trim();
     if (!normalizedStageId || !normalizedSubfunnelId || !state.supabase) return;
 
-    const { error } = await state.supabase
-      .from("crm_stage_subfunnel_assignments")
-      .upsert({
+    const { error } = await supabaseApi.upsertRows(
+      state.supabase,
+      "crm_stage_subfunnel_assignments",
+      {
         stage_id: normalizedStageId,
         subfunnel_id: normalizedSubfunnelId
-      }, { onConflict: "stage_id" });
+      },
+      { onConflict: "stage_id" }
+    );
     if (error) throw error;
   }
 
@@ -8232,9 +8220,12 @@
       subfunnel_id: normalizedSubfunnelId
     }));
 
-    const { error } = await state.supabase
-      .from("crm_lead_subfunnel_assignments")
-      .upsert(rows, { onConflict: "lead_id" });
+    const { error } = await supabaseApi.upsertRows(
+      state.supabase,
+      "crm_lead_subfunnel_assignments",
+      rows,
+      { onConflict: "lead_id" }
+    );
     if (error) throw error;
   }
 
@@ -8253,14 +8244,12 @@
 
     if (!subfunnelRows.length) return;
 
-    const tempSubfunnelRows = subfunnelRows.map((row, index) => ({
-      ...row,
-      position: 1000000 + index
-    }));
-    const tempResult = await state.supabase.from("crm_subfunnels").upsert(tempSubfunnelRows, { onConflict: "id" });
-    if (tempResult.error) throw tempResult.error;
-
-    const finalResult = await state.supabase.from("crm_subfunnels").upsert(subfunnelRows, { onConflict: "id" });
+    const finalResult = await supabaseApi.upsertRowsWithTransientPositions(
+      state.supabase,
+      "crm_subfunnels",
+      subfunnelRows,
+      { onConflict: "id" }
+    );
     if (finalResult.error) throw finalResult.error;
   }
 
@@ -11252,11 +11241,13 @@
       email: state.currentUser.email
     };
 
-    const { data: existingProfile, error: profileFetchError } = await state.supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", state.currentUser.id)
-      .maybeSingle();
+    const { data: existingProfile, error: profileFetchError } = await supabaseApi.selectMaybeSingleRow(
+      state.supabase,
+      "profiles",
+      {
+        filters: [{ column: "id", op: "eq", value: state.currentUser.id }]
+      }
+    );
 
     if (profileFetchError && !isMissingRelationError(profileFetchError)) {
       console.error("Erro ao consultar profile:", profileFetchError);
@@ -11276,9 +11267,8 @@
         || String(existingProfile.email || "").trim() !== String(payload.email || "").trim();
 
       if (shouldRefreshProfile) {
-        void state.supabase
-          .from("profiles")
-          .upsert(payload, { onConflict: "id" })
+        void supabaseApi
+          .upsertSingleRow(state.supabase, "profiles", payload, { onConflict: "id", select: null, maybeSingle: false })
           .then(({ error }) => {
             if (error) {
               console.error("Erro ao atualizar profile em segundo plano:", error);
@@ -11288,11 +11278,12 @@
       return;
     }
 
-    const { data: profile, error: upsertError } = await state.supabase
-      .from("profiles")
-      .upsert(payload, { onConflict: "id" })
-      .select("*")
-      .maybeSingle();
+    const { data: profile, error: upsertError } = await supabaseApi.upsertSingleRow(
+      state.supabase,
+      "profiles",
+      payload,
+      { onConflict: "id" }
+    );
 
     if (upsertError) {
       console.error("Erro ao garantir profile:", upsertError);
@@ -11561,23 +11552,26 @@
     const silentRender = options.silentRender === true;
     const leadsPromise = fetchAllLeads();
     const funnelWorkspacePromise = loadFunnelWorkspaceFromSupabase();
-    const [stagesRes, leadsRes, profilesRes, stageTypesRes, leadSourcesRes, accessRequestsRes, adminRequestsRes, departmentsRes, remoteFunnelWorkspace] = await Promise.all([
-      state.supabase.from("stages").select("*").order("position", { ascending: true }),
+    const [bootstrapRes, leadsRes, remoteFunnelWorkspace] = await Promise.all([
+      supabaseApi.loadBootstrapTables(state.supabase, {
+        includeProfiles,
+        includeAdminData,
+        profilesFallback: state.profiles,
+        accessRequestsFallback: [],
+        adminRequestsFallback: []
+      }),
       leadsPromise,
-      includeProfiles
-        ? state.supabase.from("profiles").select("*").order("full_name", { ascending: true })
-        : Promise.resolve({ data: state.profiles, error: null }),
-      state.supabase.from("stage_type_catalog").select("name").order("name", { ascending: true }),
-      state.supabase.from("lead_source_catalog").select("*").order("name", { ascending: true }),
-      includeAdminData
-        ? state.supabase.from("access_requests").select("*").order("created_at", { ascending: false })
-        : Promise.resolve({ data: [], error: null }),
-      includeAdminData
-        ? state.supabase.from("admin_requests").select("*").order("created_at", { ascending: false })
-        : Promise.resolve({ data: [], error: null }),
-      state.supabase.from("departments").select("*").order("name", { ascending: true }),
       funnelWorkspacePromise
     ]);
+    const [
+      stagesRes,
+      profilesRes,
+      stageTypesRes,
+      leadSourcesRes,
+      accessRequestsRes,
+      adminRequestsRes,
+      departmentsRes
+    ] = bootstrapRes;
 
     if (stagesRes.error) console.error(stagesRes.error);
     if (leadsRes.error) console.error(leadsRes.error);
@@ -11655,10 +11649,9 @@
     const silent = options.silent === true;
     if (!force && state.profilesLoaded) return false;
 
-    const { data, error } = await state.supabase
-      .from("profiles")
-      .select("*")
-      .order("full_name", { ascending: true });
+    const { data, error } = await supabaseApi.selectRows(state.supabase, "profiles", {
+      orderBy: { column: "full_name", options: { ascending: true } }
+    });
 
     if (error) {
       console.error(error);
@@ -11687,10 +11680,7 @@
 
     if (!force && state.adminDataLoaded) return false;
 
-    const [accessRequestsRes, adminRequestsRes] = await Promise.all([
-      state.supabase.from("access_requests").select("*").order("created_at", { ascending: false }),
-      state.supabase.from("admin_requests").select("*").order("created_at", { ascending: false })
-    ]);
+    const [accessRequestsRes, adminRequestsRes] = await supabaseApi.loadAdminTables(state.supabase);
 
     if (accessRequestsRes.error && !isMissingRelationError(accessRequestsRes.error)) {
       console.error(accessRequestsRes.error);
@@ -11753,11 +11743,7 @@
 
     if (!force && state.historyLoaded) return;
 
-    const { data, error } = await state.supabase
-      .from("change_history")
-      .select("*")
-      .order("created_at", { ascending: false })
-      .limit(300);
+    const { data, error } = await supabaseApi.loadHistoryEntries(state.supabase, 300);
 
     if (error) {
       console.error(error);
@@ -11779,7 +11765,7 @@
       { name: "Cancelado", color: "#ef4444", stage_type: "cancelado", position: 4, created_by: state.currentUser.id }
     ];
 
-    const { error } = await state.supabase.from("stages").insert(defaults);
+    const { error } = await supabaseApi.insertRows(state.supabase, "stages", defaults);
     if (error) alert(error.message);
   }
 
@@ -12581,38 +12567,10 @@
       };
     }
 
-    const { data, error } = await state.supabase.rpc("delete_leads_by_ids", { target_ids: ids });
-    if (!error) {
-      onProgress?.(ids.length, ids.length);
-      return { data: Array.isArray(data) ? data : [], error: null };
-    }
-
-    if (String(error.code || "").trim() !== "PGRST202") {
-      return { data: [], error };
-    }
-
-    const deletedIds = [];
-    const batches = chunkArray(ids, 100);
-
-    for (const batch of batches) {
-      const { error: deleteError } = await state.supabase
-        .from("leads")
-        .delete()
-        .in("id", batch);
-
-      if (deleteError) {
-        return { data: deletedIds.map((deletedId) => ({ deleted_id: deletedId })), error: deleteError };
-      }
-
-      deletedIds.push(...batch);
-      onProgress?.(deletedIds.length, ids.length);
-      await waitForNextPaint();
-    }
-
-    return {
-      data: deletedIds.map((deletedId) => ({ deleted_id: deletedId })),
-      error: null
-    };
+    return supabaseApi.deleteLeadsByIds(state.supabase, ids, {
+      onProgress,
+      waitForNextPaint
+    });
   }
 
   function requestLeadDeleteAuthorization(lead) {
@@ -15241,7 +15199,7 @@
       requested_by_email: state.currentUser.email
     };
 
-    const { error } = await state.supabase.from("admin_requests").insert([payload]);
+    const { error } = await supabaseApi.insertAdminRequest(state.supabase, payload);
     if (error) {
       alert(`Erro ao registrar solicitacao: ${error.message}`);
       return;
@@ -15273,10 +15231,7 @@
     }
     const persistedRole = getPersistedRoleValue(role, profile.email || "");
 
-    const { error } = await state.supabase
-      .from("profiles")
-      .update({ role: persistedRole })
-      .eq("id", profileId);
+    const { error } = await supabaseApi.updateProfileById(state.supabase, profileId, { role: persistedRole });
 
     if (error) {
       alert(`Erro ao atualizar perfil: ${error.message}`);
@@ -15306,13 +15261,10 @@
       alert("Esse administrador só pode definir departamentos dentro do próprio escopo.");
       return;
     }
-    const { error } = await state.supabase
-      .from("profiles")
-      .update({
-        department_id: nextDepartmentId,
-        department_id_secondary: nextSecondaryDepartmentId
-      })
-      .eq("id", profileId);
+    const { error } = await supabaseApi.updateProfileById(state.supabase, profileId, {
+      department_id: nextDepartmentId,
+      department_id_secondary: nextSecondaryDepartmentId
+    });
 
     if (error) {
       alert(`Erro ao atualizar departamento: ${error.message}`);
@@ -15378,9 +15330,9 @@
     const context = collectDepartmentFormContext();
     if (!validateDepartmentFormContext(context)) return;
 
-    const { error } = await state.supabase
-      .from("departments")
-      .insert([{ name: context.name, is_system: false, created_by: state.currentUser?.id || null }]);
+    const { error } = await supabaseApi.insertRows(state.supabase, "departments", [
+      { name: context.name, is_system: false, created_by: state.currentUser?.id || null }
+    ]);
 
     if (error) {
       alert(`Erro ao adicionar departamento: ${error.message}`);
@@ -15409,10 +15361,7 @@
     const context = collectDepartmentDeleteContext(departmentId);
     if (!validateDepartmentDeleteContext(departmentId, context)) return;
 
-    const { error } = await state.supabase
-      .from("departments")
-      .delete()
-      .eq("id", departmentId);
+    const { error } = await supabaseApi.deleteRowById(state.supabase, "departments", departmentId);
 
     if (error) {
       alert(`Erro ao excluir departamento: ${error.message}`);
@@ -15426,8 +15375,8 @@
     const context = collectTeamMemberDeleteContext(profileId);
     if (!validateTeamMemberDeleteContext(profileId, context)) return;
 
-    const { data, error } = await state.supabase.functions.invoke("admin-delete-user", {
-      body: { profileId }
+    const { data, error } = await supabaseApi.invokeEdgeFunction(state.supabase, "admin-delete-user", {
+      profileId
     });
 
     const message = data?.error || error?.message;
@@ -15457,10 +15406,9 @@
     if (profile.email) filters.push({ column: "email", value: profile.email });
 
     for (const filter of filters) {
-      const { error } = await state.supabase
-        .from("access_requests")
-        .update(updatePayload)
-        .eq(filter.column, filter.value);
+      const { error } = await supabaseApi.updateRows(state.supabase, "access_requests", updatePayload, {
+        filters: [{ column: filter.column, op: "eq", value: filter.value }]
+      });
 
       if (error && !isMissingRelationError(error)) {
         console.error("Erro ao sincronizar access_requests:", error);
@@ -15518,14 +15466,15 @@
     }
     const persistedApprovedRole = getPersistedRoleValue(approvedRole, profile.email || "");
 
-    const { error: profileError } = await state.supabase
-      .from("profiles")
-      .update(buildApprovedProfilePayload(
+    const { error: profileError } = await supabaseApi.updateProfileById(
+      state.supabase,
+      profileId,
+      buildApprovedProfilePayload(
         persistedApprovedRole,
         approvedDepartmentId,
         approvedSecondaryDepartmentId
-      ))
-      .eq("id", profileId);
+      )
+    );
 
     if (profileError) {
       alert(`Erro ao aprovar acesso: ${profileError.message}`);
@@ -15561,24 +15510,24 @@
       approvedSecondaryDepartmentId
     );
 
-    const profileFilter = request.auth_user_id
-      ? state.supabase.from("profiles").update(approvedProfilePayload).eq("id", request.auth_user_id)
-      : state.supabase.from("profiles").update(approvedProfilePayload).eq("email", request.email);
-
-    const { error: profileError } = await profileFilter;
+    const { error: profileError } = request.auth_user_id
+      ? await supabaseApi.updateProfileById(state.supabase, request.auth_user_id, approvedProfilePayload)
+      : await supabaseApi.updateProfileByEmail(state.supabase, request.email, approvedProfilePayload);
     if (profileError) {
       alert(`Erro ao aprovar acesso: ${profileError.message}`);
       return;
     }
 
-    const { error } = await state.supabase
-      .from("access_requests")
-      .update(buildApprovedAccessRequestPayload(
+    const { error } = await supabaseApi.updateRowById(
+      state.supabase,
+      "access_requests",
+      requestId,
+      buildApprovedAccessRequestPayload(
         approvedRole,
         approvedDepartmentId,
         approvedSecondaryDepartmentId
-      ))
-      .eq("id", requestId);
+      )
+    );
 
     if (error) {
       alert(`Erro ao atualizar solicitacao: ${error.message}`);
@@ -15638,10 +15587,11 @@
       return;
     }
 
-    const { error: profileError } = await state.supabase
-      .from("profiles")
-      .update(buildRejectedProfilePayload())
-      .eq("id", profileId);
+    const { error: profileError } = await supabaseApi.updateProfileById(
+      state.supabase,
+      profileId,
+      buildRejectedProfilePayload()
+    );
 
     if (profileError) {
       alert(`Erro ao recusar acesso: ${profileError.message}`);
@@ -15664,20 +15614,20 @@
       access_status: ACCESS_STATUS.REJECTED,
       approved_by: state.currentUser.id
     };
-    const profileFilter = request.auth_user_id
-      ? state.supabase.from("profiles").update(rejectedProfilePayload).eq("id", request.auth_user_id)
-      : state.supabase.from("profiles").update(rejectedProfilePayload).eq("email", request.email);
-
-    const { error: profileError } = await profileFilter;
+    const { error: profileError } = request.auth_user_id
+      ? await supabaseApi.updateProfileById(state.supabase, request.auth_user_id, rejectedProfilePayload)
+      : await supabaseApi.updateProfileByEmail(state.supabase, request.email, rejectedProfilePayload);
     if (profileError) {
       alert(`Erro ao recusar acesso: ${profileError.message}`);
       return;
     }
 
-    const { error } = await state.supabase
-      .from("access_requests")
-      .update(buildRejectedAccessRequestPayload())
-      .eq("id", requestId);
+    const { error } = await supabaseApi.updateRowById(
+      state.supabase,
+      "access_requests",
+      requestId,
+      buildRejectedAccessRequestPayload()
+    );
 
     if (error) {
       alert(`Erro ao atualizar solicitacao: ${error.message}`);
@@ -15822,14 +15772,11 @@
 
   async function persistAdminRequestResolution(requestId, action) {
     const nextStatus = action === "approve" ? ACCESS_STATUS.APPROVED : ACCESS_STATUS.REJECTED;
-    const { error } = await state.supabase
-      .from("admin_requests")
-      .update({
-        status: nextStatus,
-        reviewed_at: new Date().toISOString(),
-        reviewed_by: state.currentUser.id
-      })
-      .eq("id", requestId);
+    const { error } = await supabaseApi.updateRowById(state.supabase, "admin_requests", requestId, {
+      status: nextStatus,
+      reviewed_at: new Date().toISOString(),
+      reviewed_by: state.currentUser.id
+    });
 
     if (error) {
       alert(`Erro ao atualizar solicitacao operacional: ${error.message}`);
@@ -15888,9 +15835,12 @@
     const context = collectLeadSourceFormContext();
     if (!validateLeadSourceFormContext(context)) return;
 
-    const { error } = await state.supabase
-      .from("lead_source_catalog")
-      .upsert({ name: context.name, created_by: state.currentUser?.id || null }, { onConflict: "name" });
+    const { error } = await supabaseApi.upsertRows(
+      state.supabase,
+      "lead_source_catalog",
+      { name: context.name, created_by: state.currentUser?.id || null },
+      { onConflict: "name" }
+    );
 
     if (error && !isMissingRelationError(error)) {
       alert(`Erro ao salvar origem: ${error.message}`);
@@ -15951,20 +15901,26 @@
     const context = collectLeadSourceEditContext(sourceName);
     if (!validateLeadSourceEditContext(context)) return;
 
-    const { error: leadError } = await state.supabase
-      .from("leads")
-      .update({ traffic_type: context.nextName })
-      .eq("traffic_type", context.currentName);
+    const { error: leadError } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "leads",
+      "traffic_type",
+      context.currentName,
+      { traffic_type: context.nextName }
+    );
 
     if (leadError) {
       alert(`Erro ao atualizar leads: ${leadError.message}`);
       return;
     }
 
-    const { error: updateError } = await state.supabase
-      .from("lead_source_catalog")
-      .update({ name: context.nextName })
-      .eq("name", context.currentName);
+    const { error: updateError } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "lead_source_catalog",
+      "name",
+      context.currentName,
+      { name: context.nextName }
+    );
 
     if (updateError && !isMissingRelationError(updateError)) {
       alert(`Erro ao atualizar origem: ${updateError.message}`);
@@ -16015,20 +15971,22 @@
     const context = collectLeadSourceDeleteContext(sourceName);
     if (!validateLeadSourceDeleteContext(context)) return;
 
-    const { error: leadError } = await state.supabase
-      .from("leads")
-      .update({ traffic_type: context.fallbackName })
-      .eq("traffic_type", context.currentName);
+    const { error: leadError } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "leads",
+      "traffic_type",
+      context.currentName,
+      { traffic_type: context.fallbackName }
+    );
 
     if (leadError) {
       alert(`Erro ao atualizar leads vinculados: ${leadError.message}`);
       return;
     }
 
-    const { error } = await state.supabase
-      .from("lead_source_catalog")
-      .delete()
-      .eq("name", context.currentName);
+    const { error } = await supabaseApi.deleteRows(state.supabase, "lead_source_catalog", {
+      filters: [{ column: "name", op: "eq", value: context.currentName }]
+    });
 
     if (error && !isMissingRelationError(error)) {
       alert(`Erro ao excluir origem: ${error.message}`);
@@ -16060,10 +16018,13 @@
     const context = collectSocialSourceEditContext(sourceName);
     if (!validateSocialSourceEditContext(context)) return;
 
-    const { error } = await state.supabase
-      .from("leads")
-      .update({ social_source: context.canonicalNextName })
-      .eq("social_source", context.currentName);
+    const { error } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "leads",
+      "social_source",
+      context.currentName,
+      { social_source: context.canonicalNextName }
+    );
 
     if (error) {
       alert(`Erro ao atualizar leads: ${error.message}`);
@@ -16116,10 +16077,13 @@
     const context = collectSocialSourceDeleteContext(sourceName);
     if (!validateSocialSourceDeleteContext(context)) return;
 
-    const { error } = await state.supabase
-      .from("leads")
-      .update({ social_source: context.fallbackName })
-      .eq("social_source", context.currentName);
+    const { error } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "leads",
+      "social_source",
+      context.currentName,
+      { social_source: context.fallbackName }
+    );
 
     if (error) {
       alert(`Erro ao atualizar leads vinculados: ${error.message}`);
@@ -16147,7 +16111,7 @@
       user_email: state.currentUser.email
     };
 
-    const { error } = await state.supabase.from("change_history").insert([row]);
+    const { error } = await supabaseApi.insertChangeHistoryEntry(state.supabase, row);
     if (error) console.error("Erro ao gravar histórico:", error);
     state.historyLoaded = false;
   }
@@ -16461,16 +16425,18 @@
   }
 
   async function persistStageRecordUpdate(updateContext = {}, context = {}) {
-    const { error } = await state.supabase
-      .from("stages")
-      .update({
+    const { error } = await supabaseApi.updateRowById(
+      state.supabase,
+      "stages",
+      updateContext.stageId,
+      {
         name: context.payload.name,
         color: context.payload.color,
         stage_type: context.payload.stage_type,
         custom_stage_type: context.payload.custom_stage_type,
         position: context.payload.position
-      })
-      .eq("id", updateContext.stageId);
+      }
+    );
     if (error) throw error;
   }
 
@@ -16546,7 +16512,7 @@
   }
 
   async function persistNewStage(context = {}) {
-    const { data, error } = await state.supabase.from("stages").insert([context.payload]).select().single();
+    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", context.payload);
     if (error) throw error;
 
     await logCreatedStageChange(context, data);
@@ -17051,10 +17017,13 @@
   async function moveLegacyStageLeadsToFallback(context = {}) {
     if (!context.affectedLeads?.length) return true;
 
-    const { error: leadError } = await state.supabase
-      .from("leads")
-      .update({ stage_id: context.fallback.id })
-      .eq("stage_id", context.stage.id);
+    const { error: leadError } = await supabaseApi.updateRowsByColumnValue(
+      state.supabase,
+      "leads",
+      "stage_id",
+      context.stage.id,
+      { stage_id: context.fallback.id }
+    );
 
     if (leadError) {
       alert(leadError.message);
@@ -17085,10 +17054,7 @@
     const leadsMoved = await moveLegacyStageLeadsToFallback(context);
     if (!leadsMoved) return;
 
-    const { error } = await state.supabase
-      .from("stages")
-      .delete()
-      .eq("id", id);
+    const { error } = await supabaseApi.deleteRowById(state.supabase, "stages", id);
 
     if (error) return alert(`Erro no Supabase: ${error.message}`);
     moveLeadsToStageLocally([id], context.fallback.id);
@@ -17110,7 +17076,7 @@
   }
 
   async function createStageForSubfunnel(payload, subfunnelId, options = {}) {
-    const { data, error } = await state.supabase.from("stages").insert([payload]).select().single();
+    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", payload);
     if (error) throw error;
     const normalizedStage = upsertStageLocally(data);
     if (data?.id) assignStageToSubfunnel(data.id, subfunnelId, { deferSync: options.deferSync === true });
@@ -17151,10 +17117,7 @@
     if (!normalizedStageIds.length) return 0;
 
     for (const stageId of normalizedStageIds) {
-      const { error } = await state.supabase
-        .from("stages")
-        .delete()
-        .eq("id", stageId);
+      const { error } = await supabaseApi.deleteRowById(state.supabase, "stages", stageId);
       if (error) throw error;
 
       await deleteStageAssignmentFromSupabase(stageId);
@@ -17214,10 +17177,9 @@
   async function deleteStageAssignmentFromSupabase(stageId) {
     const normalizedStageId = String(stageId || "").trim();
     if (!normalizedStageId || !state.supabase) return;
-    const { error } = await state.supabase
-      .from("crm_stage_subfunnel_assignments")
-      .delete()
-      .eq("stage_id", normalizedStageId);
+    const { error } = await supabaseApi.deleteRows(state.supabase, "crm_stage_subfunnel_assignments", {
+      filters: [{ column: "stage_id", op: "eq", value: normalizedStageId }]
+    });
     if (error && !isMissingRelationError(error)) throw error;
   }
 
@@ -17244,10 +17206,12 @@
     } : null;
 
     if (nextTargetPayload) {
-      const { error: updateTargetError } = await state.supabase
-        .from("stages")
-        .update(nextTargetPayload)
-        .eq("id", targetStage.id);
+      const { error: updateTargetError } = await supabaseApi.updateRowById(
+        state.supabase,
+        "stages",
+        targetStage.id,
+        nextTargetPayload
+      );
       if (updateTargetError) throw updateTargetError;
     }
 
@@ -17257,10 +17221,12 @@
       .filter(Boolean);
 
     for (const chunk of chunkArray(sourceLeadIds, 200)) {
-      const { error: moveLeadError } = await state.supabase
-        .from("leads")
-        .update({ stage_id: targetStage.id })
-        .in("id", chunk);
+      const { error: moveLeadError } = await supabaseApi.updateRowsByIds(
+        state.supabase,
+        "leads",
+        chunk,
+        { stage_id: targetStage.id }
+      );
       if (moveLeadError) throw moveLeadError;
     }
 
@@ -17275,10 +17241,11 @@
       await persistStageReminderConfigToSupabase(targetStage.id, sourceReminder);
     }
 
-    const { error: deleteStageError } = await state.supabase
-      .from("stages")
-      .delete()
-      .eq("id", sourceStage.id);
+    const { error: deleteStageError } = await supabaseApi.deleteRowById(
+      state.supabase,
+      "stages",
+      sourceStage.id
+    );
     if (deleteStageError) throw deleteStageError;
 
     await deleteStageAssignmentFromSupabase(sourceStage.id);
@@ -18267,9 +18234,11 @@
           requestPayload.auth_user_id = createdUser.id;
         }
 
-        const { error: requestError } = await state.supabase
-          .from("access_requests")
-          .insert([requestPayload]);
+        const { error: requestError } = await supabaseApi.insertRows(
+          state.supabase,
+          "access_requests",
+          [requestPayload]
+        );
 
         if (requestError && !isMissingRelationError(requestError)) {
           if (isDuplicateKeyError(requestError)) {
@@ -18280,8 +18249,9 @@
         }
 
         try {
-          await state.supabase.functions.invoke("notify-admin-access-request", {
-            body: { email, full_name }
+          await supabaseApi.invokeEdgeFunction(state.supabase, "notify-admin-access-request", {
+            email,
+            full_name
           });
         } catch (_error) {
           // Optional function: the request remains recorded even when notification is unavailable.
