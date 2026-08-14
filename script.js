@@ -3513,6 +3513,112 @@
     });
   }
 
+  function buildRefreshStageSignature(stages = []) {
+    return (Array.isArray(stages) ? stages : []).map((stage) => ([
+      String(stage?.id || "").trim(),
+      Number(stage?.position),
+      String(stage?.name || ""),
+      String(stage?.color || ""),
+      String(stage?.stage_type || ""),
+      String(stage?.custom_stage_type || "")
+    ].join(":"))).join("|");
+  }
+
+  function buildRefreshLeadSignature(leads = []) {
+    return (Array.isArray(leads) ? leads : []).map((lead) => ([
+      String(lead?.id || "").trim(),
+      String(lead?.stage_id || "").trim(),
+      String(lead?.name || ""),
+      String(lead?.owner || ""),
+      String(lead?.contact || ""),
+      String(lead?.start_date || ""),
+      String(lead?.traffic_type || ""),
+      String(lead?.social_source || ""),
+      Number(lead?.value || 0),
+      String(lead?.notes || "")
+    ].join(":"))).join("|");
+  }
+
+  function buildRefreshFunnelSignature(funnels = []) {
+    return (Array.isArray(funnels) ? funnels : []).map((funnel) => ([
+      String(funnel?.id || "").trim(),
+      String(funnel?.name || ""),
+      String(funnel?.category || ""),
+      String(funnel?.group_id || ""),
+      Array.isArray(funnel?.subfunnels) ? funnel.subfunnels.length : 0
+    ].join(":"))).join("|");
+  }
+
+  function buildRefreshSubfunnelSignature(subfunnels = [], stageCountBySubfunnel = new Map(), leadCountBySubfunnel = new Map()) {
+    return (Array.isArray(subfunnels) ? subfunnels : []).map((subfunnel) => ([
+      String(subfunnel?.id || "").trim(),
+      Number(subfunnel?.position),
+      String(subfunnel?.name || ""),
+      Number(stageCountBySubfunnel.get(subfunnel?.id) || 0),
+      Number(leadCountBySubfunnel.get(subfunnel?.id) || 0)
+    ].join(":"))).join("|");
+  }
+
+  function buildFunilViewRefreshSignature() {
+    const availableFunnels = getAvailableFunnels();
+    const activeFunnel = getFunnelById(state.activeFunnelId) || availableFunnels[0] || null;
+
+    const stageCountBySubfunnel = new Map();
+    Object.entries(state.funnelWorkspace?.stageAssignments || {}).forEach(([stageId, subfunnelId]) => {
+      if (!stageId || !subfunnelId) return;
+      stageCountBySubfunnel.set(subfunnelId, Number(stageCountBySubfunnel.get(subfunnelId) || 0) + 1);
+    });
+
+    const leadCountBySubfunnel = new Map();
+    state.leads.forEach((lead) => {
+      const subfunnelId = getLeadSubfunnelId(lead);
+      if (!subfunnelId) return;
+      leadCountBySubfunnel.set(subfunnelId, Number(leadCountBySubfunnel.get(subfunnelId) || 0) + 1);
+    });
+
+    if (isFunnelDetailActive()) {
+      return JSON.stringify({
+        mode: "detail",
+        activeFunnelId: state.activeFunnelId || "",
+        activeSubfunnelId: state.activeSubfunnelId || "",
+        stages: buildRefreshStageSignature(getScopedStages()),
+        leads: buildRefreshLeadSignature(getScopedLeads())
+      });
+    }
+
+    return JSON.stringify({
+      mode: "hub",
+      sidebarOpen: Boolean(state.funnelSidebarOpen),
+      activeFunnelId: activeFunnel?.id || "",
+      funnels: buildRefreshFunnelSignature(availableFunnels),
+      subfunnels: buildRefreshSubfunnelSignature(
+        activeFunnel ? getSubfunnelsForFunnel(activeFunnel.id) : [],
+        stageCountBySubfunnel,
+        leadCountBySubfunnel
+      )
+    });
+  }
+
+  function buildNotificationsRefreshSignature() {
+    return getActiveLeadNotifications().map((item) => ([
+      String(item?.dismissKey || ""),
+      String(item?.leadId || item?.lead?.id || ""),
+      String(item?.stage?.id || ""),
+      String(item?.dueLabel || ""),
+      String(item?.message || "")
+    ].join(":"))).join("|");
+  }
+
+  function buildActiveViewRefreshSignature() {
+    if (state.activeView === "funil") {
+      return `funil:${buildFunilViewRefreshSignature()}`;
+    }
+    if (state.activeView === "relatorios") {
+      return `relatorios:${state.reportStatsSignature || buildDashboardMetricsSignature(getDashboardMetrics())}`;
+    }
+    return "";
+  }
+
   async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist } = {}) {
     const snapshot = createFunnelWorkspaceMetaSnapshot();
     const protectedCooldownMs = 1800;
@@ -3539,6 +3645,9 @@
   }
 
   async function executeLiveDataRefresh(reason = "external-change") {
+    const previousViewSignature = buildActiveViewRefreshSignature();
+    const previousNotificationsSignature = buildNotificationsRefreshSignature();
+
     await loadAppData({
       includeProfiles: state.profilesLoaded,
       includeAdminData: state.adminDataLoaded,
@@ -3547,6 +3656,17 @@
       restoreUiState: false,
       silentRender: true
     });
+
+    const nextViewSignature = buildActiveViewRefreshSignature();
+    const nextNotificationsSignature = buildNotificationsRefreshSignature();
+
+    if (previousViewSignature === nextViewSignature) {
+      if (previousNotificationsSignature !== nextNotificationsSignature) {
+        renderNotifications();
+      }
+      return;
+    }
+
     renderAll();
   }
 
