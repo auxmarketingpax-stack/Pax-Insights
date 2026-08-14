@@ -6,6 +6,13 @@
     return client;
   }
 
+  function ensureAuthClient(client) {
+    if (!client || !client.auth) {
+      throw new Error("Supabase auth indisponivel.");
+    }
+    return client;
+  }
+
   function normalizeFilters(filters = []) {
     return Array.isArray(filters) ? filters.filter((item) => item && item.column && item.op) : [];
   }
@@ -139,6 +146,34 @@
       throw new Error("Supabase functions indisponiveis.");
     }
     return client.functions.invoke(functionName, { body });
+  }
+
+  async function getAuthSession(client) {
+    return ensureAuthClient(client).auth.getSession();
+  }
+
+  async function signOutAuth(client) {
+    return ensureAuthClient(client).auth.signOut();
+  }
+
+  async function updateAuthUser(client, payload = {}) {
+    return ensureAuthClient(client).auth.updateUser(payload);
+  }
+
+  async function resetPasswordForEmail(client, email, options = {}) {
+    return ensureAuthClient(client).auth.resetPasswordForEmail(email, options);
+  }
+
+  async function signInWithPassword(client, payload = {}) {
+    return ensureAuthClient(client).auth.signInWithPassword(payload);
+  }
+
+  async function signUpAuth(client, payload = {}) {
+    return ensureAuthClient(client).auth.signUp(payload);
+  }
+
+  function onAuthStateChange(client, callback) {
+    return ensureAuthClient(client).auth.onAuthStateChange(callback);
   }
 
   async function fetchAllRowsInPages(client, table, {
@@ -400,6 +435,13 @@
     deleteRowById,
     runRpc,
     invokeEdgeFunction,
+    getAuthSession,
+    signOutAuth,
+    updateAuthUser,
+    resetPasswordForEmail,
+    signInWithPassword,
+    signUpAuth,
+    onAuthStateChange,
     fetchAllRowsInPages,
     upsertRowsWithTransientPositions,
     loadFunnelWorkspaceTables,

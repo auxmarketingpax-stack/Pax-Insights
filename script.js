@@ -1645,15 +1645,36 @@
   function getDepartmentOptionsMarkup(selectedValue = "", includeBlank = true, blankLabel = "Selecione o departamento", includeAccessAll = false) {
     const options = [];
     if (includeAccessAll) {
-      options.push(`<option value="${DEPARTMENT_ACCESS_ALL_VALUE}" ${String(selectedValue || "") === DEPARTMENT_ACCESS_ALL_VALUE ? "selected" : ""}>Acesso total</option>`);
+      options.push({ value: DEPARTMENT_ACCESS_ALL_VALUE, label: "Acesso total" });
     }
     if (includeBlank) {
-      options.push(`<option value="">${escapeHtml(blankLabel)}</option>`);
+      options.push({ value: "", label: blankLabel });
     }
     state.departments.forEach((department) => {
-      options.push(`<option value="${escapeHtml(department.id)}" ${String(selectedValue || "") === String(department.id) ? "selected" : ""}>${escapeHtml(department.name)}</option>`);
+      options.push({
+        value: department.id,
+        label: department.name
+      });
     });
-    return options.join("");
+    return buildSelectOptionsMarkup(options, { selectedValue });
+  }
+
+  function buildSelectOptionsMarkup(options = [], { selectedValue = null } = {}) {
+    const normalizedSelectedValue = selectedValue == null ? null : String(selectedValue);
+    return (Array.isArray(options) ? options : []).map((option) => {
+      const value = String(option?.value ?? "");
+      const label = String(option?.label ?? value);
+      const isSelected = normalizedSelectedValue != null
+        ? value === normalizedSelectedValue
+        : option?.selected === true;
+      const isDisabled = option?.disabled === true;
+      return `<option value="${escapeHtml(value)}"${isSelected ? " selected" : ""}${isDisabled ? " disabled" : ""}>${escapeHtml(label)}</option>`;
+    }).join("");
+  }
+
+  function setSelectOptions(selectEl, options = [], config = {}) {
+    if (!selectEl) return;
+    selectEl.innerHTML = buildSelectOptionsMarkup(options, config);
   }
 
   function normalizeFunnelDepartmentPermissions(items = []) {
@@ -2506,11 +2527,11 @@
     const normalizedSelectedOwner = normalizeSpacing(selectedOwner);
     const owners = getLeadOwnerOptions(normalizedSelectedOwner);
 
-    els.owner.innerHTML = [
-      '<option value="">Selecione o responsável</option>',
-      ...owners.map((owner) => `<option value="${escapeHtml(owner)}">${escapeHtml(owner)}</option>`),
-      '<option value="__new__">+ Adicionar novo responsável</option>'
-    ].join("");
+    setSelectOptions(els.owner, [
+      { value: "", label: "Selecione o responsável" },
+      ...owners.map((owner) => ({ value: owner, label: owner })),
+      { value: "__new__", label: "+ Adicionar novo responsável" }
+    ]);
 
     els.owner.value = owners.includes(getCanonicalDisplayLabel(normalizedSelectedOwner, "owner"))
       ? getCanonicalDisplayLabel(normalizedSelectedOwner, "owner")
@@ -2543,11 +2564,11 @@
     const socialSources = getSocialSourceOptions(normalizedSelectedSource);
     const canonicalSelectedSource = getCanonicalDisplayLabel(normalizedSelectedSource, "social_source");
 
-    els.socialSource.innerHTML = [
-      '<option value="">Selecione o canal</option>',
-      ...socialSources.map((source) => `<option value="${escapeHtml(source)}">${escapeHtml(source)}</option>`),
-      '<option value="__new__">+ Adicionar novo canal</option>'
-    ].join("");
+    setSelectOptions(els.socialSource, [
+      { value: "", label: "Selecione o canal" },
+      ...socialSources.map((source) => ({ value: source, label: source })),
+      { value: "__new__", label: "+ Adicionar novo canal" }
+    ]);
 
     els.socialSource.value = socialSources.includes(canonicalSelectedSource) ? canonicalSelectedSource : "";
     syncBrandedSelects();
@@ -2571,17 +2592,32 @@
       || stageOptions[0]
       || null;
 
-    els.leadFunnelSelect.innerHTML = selectableFunnels.map((funnel) => `
-      <option value="${funnel.id}" ${resolvedFunnel?.id === funnel.id ? "selected" : ""}>${escapeHtml(funnel.name)} (${escapeHtml(funnel.category)})</option>
-    `).join("");
+    setSelectOptions(
+      els.leadFunnelSelect,
+      selectableFunnels.map((funnel) => ({
+        value: funnel.id,
+        label: `${funnel.name} (${funnel.category})`
+      })),
+      { selectedValue: resolvedFunnel?.id || "" }
+    );
 
-    els.leadSubfunnelSelect.innerHTML = subfunnels.map((subfunnel) => `
-      <option value="${subfunnel.id}" ${resolvedSubfunnel?.id === subfunnel.id ? "selected" : ""}>${escapeHtml(subfunnel.name)}</option>
-    `).join("");
+    setSelectOptions(
+      els.leadSubfunnelSelect,
+      subfunnels.map((subfunnel) => ({
+        value: subfunnel.id,
+        label: subfunnel.name
+      })),
+      { selectedValue: resolvedSubfunnel?.id || "" }
+    );
 
-    els.stage.innerHTML = stageOptions.map((stage) => `
-      <option value="${stage.id}" ${resolvedStage?.id === stage.id ? "selected" : ""}>${escapeHtml(stage.name)}</option>
-    `).join("");
+    setSelectOptions(
+      els.stage,
+      stageOptions.map((stage) => ({
+        value: stage.id,
+        label: stage.name
+      })),
+      { selectedValue: resolvedStage?.id || "" }
+    );
 
     els.leadSubfunnelSelect.disabled = !hasDetailedAccess;
     els.stage.disabled = !hasDetailedAccess;
@@ -2691,9 +2727,7 @@
           owner: item.next_owner
         }));
 
-        const { error } = await state.supabase
-          .from("leads")
-          .upsert(payload, { onConflict: "id" });
+        const { error } = await supabaseApi.upsertRows(state.supabase, "leads", payload, { onConflict: "id" });
 
         if (error) {
           console.error("Erro ao reconciliar responsáveis:", error);
@@ -3148,7 +3182,7 @@
       avatar_url: avatarUrl || null
     };
 
-    const { error: authError } = await state.supabase.auth.updateUser({
+    const { error: authError } = await supabaseApi.updateAuthUser(state.supabase, {
       data: nextUserMetadata
     });
     if (authError) {
@@ -3235,7 +3269,7 @@
 
   async function forceSignOutWithMessage(message) {
     resetAppState();
-    await state.supabase.auth.signOut();
+    await supabaseApi.signOutAuth(state.supabase);
     showScreen("authScreen");
     setMessage(els.authMessage, message, true);
   }
@@ -3478,6 +3512,25 @@
     } finally {
       endProtectedLiveSyncMutation(protectedCooldownMs);
     }
+  }
+
+  async function executeFinalizedCriticalMutation(options = {}) {
+    const finalizeOptions = options.finalize;
+    const afterPersist = options.afterPersist;
+    return executeCriticalMutation({
+      ...options,
+      afterPersist: async (result, snapshot) => {
+        if (typeof afterPersist === "function") {
+          await afterPersist(result, snapshot);
+        }
+        const resolvedFinalizeOptions = typeof finalizeOptions === "function"
+          ? finalizeOptions(result, snapshot)
+          : finalizeOptions;
+        if (resolvedFinalizeOptions !== false) {
+          finalizeLocalMutation(resolvedFinalizeOptions || {});
+        }
+      }
+    });
   }
 
   function createFunnelWorkspaceMetaSnapshot() {
@@ -4490,10 +4543,7 @@
     state.stageNameCleanupInFlight = true;
     try {
       for (const item of updates) {
-        const { error } = await state.supabase
-          .from("stages")
-          .update({ name: item.after })
-          .eq("id", item.id);
+        const { error } = await supabaseApi.updateRowById(state.supabase, "stages", item.id, { name: item.after });
         if (error) throw error;
       }
 
@@ -6040,10 +6090,12 @@
 
     try {
       for (const batch of chunkArray(editableIds, 200)) {
-        const { error } = await state.supabase
-          .from("leads")
-          .update({ social_source: DEFAULT_SOCIAL_SOURCE })
-          .in("id", batch);
+        const { error } = await supabaseApi.updateRowsByIds(
+          state.supabase,
+          "leads",
+          batch,
+          { social_source: DEFAULT_SOCIAL_SOURCE }
+        );
 
         if (error) throw error;
       }
@@ -6899,14 +6951,24 @@
     syncStructureSelection();
 
     const funnels = getAvailableFunnels();
-    els.structureFunnelSelect.innerHTML = funnels.map((funnel) => `
-      <option value="${funnel.id}" ${funnel.id === state.structureFunnelId ? "selected" : ""}>${escapeHtml(funnel.name)} (${escapeHtml(funnel.category)})</option>
-    `).join("");
+    setSelectOptions(
+      els.structureFunnelSelect,
+      funnels.map((funnel) => ({
+        value: funnel.id,
+        label: `${funnel.name} (${funnel.category})`
+      })),
+      { selectedValue: state.structureFunnelId || "" }
+    );
 
     const subfunnels = getSubfunnelsForFunnel(state.structureFunnelId);
-    els.structureSubfunnelSelect.innerHTML = subfunnels.map((subfunnel) => `
-      <option value="${subfunnel.id}" ${subfunnel.id === state.structureSubfunnelId ? "selected" : ""}>${escapeHtml(subfunnel.name)}</option>
-    `).join("");
+    setSelectOptions(
+      els.structureSubfunnelSelect,
+      subfunnels.map((subfunnel) => ({
+        value: subfunnel.id,
+        label: subfunnel.name
+      })),
+      { selectedValue: state.structureSubfunnelId || "" }
+    );
     syncBrandedSelects();
   }
 
@@ -6924,15 +6986,25 @@
     const fallbackFunnelId = fallbackSubfunnel?.funnel_id || state.activeFunnelId || state.structureFunnelId || getAvailableFunnels()[0]?.id || null;
 
     const funnels = getAvailableFunnels();
-    els.stageFunnelSelect.innerHTML = funnels.map((funnel) => `
-      <option value="${funnel.id}" ${funnel.id === fallbackFunnelId ? "selected" : ""}>${escapeHtml(funnel.name)} (${escapeHtml(funnel.category)})</option>
-    `).join("");
+    setSelectOptions(
+      els.stageFunnelSelect,
+      funnels.map((funnel) => ({
+        value: funnel.id,
+        label: `${funnel.name} (${funnel.category})`
+      })),
+      { selectedValue: fallbackFunnelId || "" }
+    );
 
     const subfunnels = getSubfunnelsForFunnel(fallbackFunnelId);
     const resolvedSubfunnelId = subfunnels.find((item) => item.id === fallbackSubfunnelId)?.id || subfunnels[0]?.id || "";
-    els.stageSubfunnelSelect.innerHTML = subfunnels.map((subfunnel) => `
-      <option value="${subfunnel.id}" ${subfunnel.id === resolvedSubfunnelId ? "selected" : ""}>${escapeHtml(subfunnel.name)}</option>
-    `).join("");
+    setSelectOptions(
+      els.stageSubfunnelSelect,
+      subfunnels.map((subfunnel) => ({
+        value: subfunnel.id,
+        label: subfunnel.name
+      })),
+      { selectedValue: resolvedSubfunnelId }
+    );
     syncBrandedSelects();
   }
 
@@ -7736,10 +7808,13 @@
         .filter(Boolean);
       if (!sourceLeadIds.length) return 0;
 
-      const { error } = await state.supabase
-        .from("leads")
-        .update({ stage_id: targetStageId })
-        .eq("stage_id", sourceStageId);
+      const { error } = await supabaseApi.updateRowsByColumnValue(
+        state.supabase,
+        "leads",
+        "stage_id",
+        sourceStageId,
+        { stage_id: targetStageId }
+      );
       if (error) throw error;
 
       await persistLeadAssignmentsToSupabase(sourceLeadIds, targetSubfunnelId);
@@ -7791,16 +7866,13 @@
       const nextType = nextStage.stage_type || "andamento";
       const nextCustomType = nextStage.custom_stage_type || null;
 
-      const { error: updateError } = await state.supabase
-        .from("stages")
-        .update({
-          name: nextName,
-          position: nextPosition,
-          color: nextColor,
-          stage_type: nextType,
-          custom_stage_type: nextCustomType
-        })
-        .eq("id", nextStage.id);
+      const { error: updateError } = await supabaseApi.updateRowById(state.supabase, "stages", nextStage.id, {
+        name: nextName,
+        position: nextPosition,
+        color: nextColor,
+        stage_type: nextType,
+        custom_stage_type: nextCustomType
+      });
       if (updateError) throw updateError;
 
       assignStageToSubfunnel(nextStage.id, captureSubfunnel.id, { deferSync: true });
@@ -11140,7 +11212,7 @@
     registerPendingStagePositionCommits(context.changedPositionRows);
 
     try {
-      await executeCriticalMutation({
+      await executeFinalizedCriticalMutation({
         snapshot: {
           stages: true
         },
@@ -11154,8 +11226,6 @@
         },
         afterPersist: async () => {
           scheduleAppDataCacheWrite(160);
-          notifyLiveSyncChange("stage-order");
-          queueLocalConsistencyRefresh("stage-order", 900);
           void logChange(
             "reorder",
             "stage",
@@ -11168,6 +11238,14 @@
               to_position: context.normalizedTargetIndex
             }
           ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
+        },
+        finalize: {
+          notifyScope: "stage-order",
+          refreshReason: "stage-order",
+          cooldownMs: 900,
+          syncSelectedLeadIds: false,
+          writeCache: false,
+          render: false
         }
       });
     } catch (error) {
@@ -11208,7 +11286,7 @@
       return;
     }
 
-    const { data, error } = await state.supabase.auth.getSession();
+    const { data, error } = await supabaseApi.getAuthSession(state.supabase);
     if (error) console.error(error);
 
     state.currentUser = data?.session?.user || null;
@@ -12630,7 +12708,7 @@
     if (!normalizedIds.length) return true;
 
     try {
-      await executeCriticalMutation({
+      await executeFinalizedCriticalMutation({
         snapshot: {
           leads: true,
           funnelWorkspace: true,
@@ -12647,11 +12725,11 @@
           if (typeof options.afterPersist === "function") {
             await options.afterPersist();
           }
-          finalizeLocalMutation({
-            notifyScope: "workspace",
-            refreshReason: options.refreshReason || "lead-delete",
-            cooldownMs: Number(options.cooldownMs || 1200)
-          });
+        },
+        finalize: {
+          notifyScope: "workspace",
+          refreshReason: options.refreshReason || "lead-delete",
+          cooldownMs: Number(options.cooldownMs || 1200)
         }
       });
     } catch (mutationError) {
@@ -13793,10 +13871,7 @@
     const importedRows = [];
 
     for (const batch of chunkArray(payload, 500)) {
-      const { data, error } = await state.supabase
-        .from("leads")
-        .insert(batch)
-        .select("id,name");
+      const { data, error } = await supabaseApi.insertRows(state.supabase, "leads", batch, { select: "id,name" });
 
       if (error) {
         alert(error.message);
@@ -16647,7 +16722,7 @@
   async function persistLeadNotificationChange(targetId, context = {}) {
     const nextNotes = buildLeadNotificationNotes(context);
 
-    await executeCriticalMutation({
+    await executeFinalizedCriticalMutation({
       snapshot: {
         leads: true
       },
@@ -16660,7 +16735,6 @@
       },
       afterPersist: async () => {
         renderNotifications();
-        notifyLiveSyncChange("workspace");
         await logChange(
           "update",
           "lead_notification",
@@ -16668,6 +16742,12 @@
           `Notificação do lead "${context.lead.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
           { before: context.existingMeta.reminder || null, after: context.nextReminder }
         );
+      },
+      finalize: {
+        notifyScope: "workspace",
+        refreshReason: "lead-notification",
+        cooldownMs: 900,
+        render: false
       }
     });
   }
@@ -16734,7 +16814,7 @@
   }
 
   async function persistStageNotificationChange(targetId, context = {}) {
-    await executeCriticalMutation({
+    await executeFinalizedCriticalMutation({
       snapshot: {
         leads: true,
         funnelWorkspace: true,
@@ -16752,7 +16832,6 @@
       },
       afterPersist: async () => {
         renderNotifications();
-        notifyLiveSyncChange("stage-reminder-config");
         await logChange(
           "update",
           "stage_notification",
@@ -16760,6 +16839,12 @@
           `Notificação da pipeline "${context.stage?.name || "sem nome"}" foi ${context.nextReminder ? "atualizada" : "removida"} por ${getUserDisplayName()}.`,
           { before: context.previousReminder, after: context.nextReminder }
         );
+      },
+      finalize: {
+        notifyScope: "stage-reminder-config",
+        refreshReason: "stage-reminder-config",
+        cooldownMs: 900,
+        render: false
       }
     });
   }
@@ -16863,12 +16948,6 @@
     }
   }
 
-  async function finalizeLeadMovePersistence(context = {}) {
-    if (context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase) {
-      notifyLiveSyncChange("funnel-workspace");
-    }
-  }
-
   function validateLeadMoveContext(context = {}, stageId) {
     if (!context.lead || !context.stage || context.lead.stage_id === stageId) return false;
     if (!canMoveLeads(context.lead)) {
@@ -16886,7 +16965,7 @@
     });
 
     try {
-      await executeCriticalMutation({
+      await executeFinalizedCriticalMutation({
         snapshot: {
           leads: true,
           funnelWorkspace: true,
@@ -16898,8 +16977,17 @@
         persist: async () => persistLeadMoveRecord(context, stageId),
         afterPersist: async () => {
           scheduleAppDataCacheWrite(160);
-          await finalizeLeadMovePersistence(context);
-        }
+        },
+        finalize: () => ({
+          notifyScope: context.shouldPersistLeadSubfunnelChange && state.funnelDataLoadedFromSupabase
+            ? "funnel-workspace"
+            : null,
+          refreshReason: "lead-move",
+          cooldownMs: 900,
+          syncSelectedLeadIds: false,
+          writeCache: false,
+          render: false
+        })
       });
     } catch (error) {
       clearPendingLeadMoveCommits([context.lead?.id]);
@@ -16932,8 +17020,6 @@
     } catch (error) {
       return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
     }
-
-    queueLocalConsistencyRefresh("lead-move", 900);
 
     void logLeadMoveChange(context).catch((historyError) => {
       console.error("Erro ao registrar movimentação de lead:", historyError);
@@ -17730,7 +17816,7 @@
       );
     }
 
-    const { error } = await state.supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    const { error } = await supabaseApi.resetPasswordForEmail(state.supabase, email, { redirectTo });
     if (error) return setMessage(els.authMessage, getAuthErrorMessage(error, "Nao foi possivel enviar o link de recuperacao."), true);
 
     setMessage(els.authMessage, "Enviamos o link de recuperação. Verifique seu e-mail.");
@@ -17740,14 +17826,14 @@
     const newPassword = $("newPassword").value.trim();
     if (!newPassword) return setMessage(els.authMessage, "Digite a nova senha.", true);
 
-    const { error } = await state.supabase.auth.updateUser({ password: newPassword });
+    const { error } = await supabaseApi.updateAuthUser(state.supabase, { password: newPassword });
     if (error) return setMessage(els.authMessage, getAuthErrorMessage(error, "Nao foi possivel atualizar a senha."), true);
 
     $("newPassword").value = "";
     clearAuthRedirectState();
     setPasswordRecoveryMode(false);
     setMessage(els.authMessage, "Senha atualizada com sucesso. Faca login.");
-    await state.supabase.auth.signOut();
+    await supabaseApi.signOutAuth(state.supabase);
     showScreen("authScreen");
   }
 
@@ -18173,7 +18259,7 @@
       e.preventDefault();
       setMessage(els.authMessage, "");
 
-      const { data, error } = await state.supabase.auth.signInWithPassword({
+      const { data, error } = await supabaseApi.signInWithPassword(state.supabase, {
         email: $("loginEmail").value.trim(),
         password: $("loginPassword").value.trim()
       });
@@ -18206,7 +18292,7 @@
       const full_name = $("registerName").value.trim();
       const emailRedirectTo = getAuthRedirectUrl();
 
-      const { data, error } = await state.supabase.auth.signUp({
+      const { data, error } = await supabaseApi.signUpAuth(state.supabase, {
         email,
         password,
         options: {
@@ -18260,7 +18346,7 @@
         }
 
         if (hasSession) {
-          await state.supabase.auth.signOut();
+          await supabaseApi.signOutAuth(state.supabase);
         }
       }
 
@@ -18282,7 +18368,7 @@
     els.updatePasswordBtn.addEventListener("click", updateRecoveredPassword);
 
     const signOutHandler = async () => {
-      await state.supabase.auth.signOut();
+      await supabaseApi.signOutAuth(state.supabase);
       resetAppState();
       showScreen("authScreen");
     };
@@ -19083,7 +19169,7 @@
       els.crmFunnelNav.querySelectorAll(".crm-funnel-group.is-drop-target, .crm-funnel-ungrouped.is-drop-target, .crm-funnel-item.is-dragging").forEach((item) => item.classList.remove("is-drop-target", "is-dragging"));
     });
 
-    state.supabase.auth.onAuthStateChange((event, session) => {
+    supabaseApi.onAuthStateChange(state.supabase, (event, session) => {
       window.setTimeout(() => {
         handleAuthStateChange(event, session).catch((error) => {
           console.error("Erro ao processar evento de autenticação:", error);
