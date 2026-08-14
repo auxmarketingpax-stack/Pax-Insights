@@ -3421,6 +3421,14 @@
     }
   }
 
+  function finalizeUiOnlyMutation(options = {}) {
+    finalizeLocalMutation({
+      notifyScope: null,
+      refresh: false,
+      ...options
+    });
+  }
+
   function cloneMutableState(value, fallback = null) {
     if (typeof structuredClone === "function") {
       try {
@@ -8986,9 +8994,7 @@
     const reordered = reorderSubfunnelsInFunnelLocally(funnelId, subfunnelId, targetIndex);
     if (!reordered) return;
     queueSubfunnelOrderSync(funnelId);
-    finalizeLocalMutation({
-      notifyScope: null,
-      refresh: false,
+    finalizeUiOnlyMutation({
       syncSelectedLeadIds: false,
       writeCache: false
     });
@@ -16873,15 +16879,6 @@
     return true;
   }
 
-  function finalizeNotificationMutation() {
-    closeNotificationModal();
-    finalizeLocalMutation({
-      notifyScope: null,
-      refreshReason: "notification-save",
-      cooldownMs: 1200
-    });
-  }
-
   async function submitNotification(event) {
     event.preventDefault();
 
@@ -16898,7 +16895,10 @@
       if (!savedStageNotification) return;
     }
 
-    finalizeNotificationMutation();
+    closeNotificationModal();
+    finalizeUiOnlyMutation({
+      cooldownMs: 1200
+    });
   }
 
   function collectLeadMoveContext(leadId, stageId) {
@@ -17150,28 +17150,46 @@
     const context = collectLegacyStageDeleteContext(id);
     if (!validateLegacyStageDeleteContext(context)) return;
 
-    const leadsMoved = await moveLegacyStageLeadsToFallback(context);
-    if (!leadsMoved) return;
+    try {
+      await executeFinalizedCriticalMutation({
+        snapshot: {
+          stages: true,
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        persist: async () => {
+          const leadsMoved = await moveLegacyStageLeadsToFallback(context);
+          if (!leadsMoved) {
+            const abortError = new Error("legacy-stage-delete-aborted");
+            abortError.silent = true;
+            throw abortError;
+          }
 
-    const { error } = await supabaseApi.deleteRowById(state.supabase, "stages", id);
-
-    if (error) return alert(`Erro no Supabase: ${error.message}`);
-    moveLeadsToStageLocally([id], context.fallback.id);
-    removeStagesLocally([id]);
-
-    await logChange(
-      "delete",
-      "stage",
-      context.stage.id,
-      `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
-      context.stage
-    );
-
-    finalizeLocalMutation({
-      notifyScope: "funnel-workspace",
-      refreshReason: "stage-delete-legacy",
-      cooldownMs: 1500
-    });
+          const { error } = await supabaseApi.deleteRowById(state.supabase, "stages", id);
+          if (error) throw error;
+        },
+        afterPersist: async () => {
+          moveLeadsToStageLocally([id], context.fallback.id);
+          removeStagesLocally([id]);
+          await logChange(
+            "delete",
+            "stage",
+            context.stage.id,
+            `Etapa "${context.stage.name}" foi excluída por ${getUserDisplayName()}.`,
+            context.stage
+          );
+        },
+        finalize: {
+          notifyScope: "funnel-workspace",
+          refreshReason: "stage-delete-legacy",
+          cooldownMs: 1500
+        }
+      });
+    } catch (error) {
+      if (error?.silent) return;
+      return alert(`Erro no Supabase: ${formatSupabaseError(error)}`);
+    }
   }
 
   async function createStageForSubfunnel(payload, subfunnelId, options = {}) {
