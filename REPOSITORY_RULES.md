@@ -1,39 +1,68 @@
-# Regras de Repositório
-
-## `View-Pax-Insights`
-
-Repositório do site público e da camada visual aberta.
-
-Entram aqui:
-- landing pages e páginas institucionais
-- navegação pública, textos comerciais e seções de apresentação
-- componentes visuais públicos
-- formulários públicos sem expor regras internas
-- integrações públicas controladas, sem credenciais sensíveis no frontend
+# Regras de Repositorio
 
 ## `Pax-Insights-`
 
-Repositório do CRM interno e da operação protegida.
+Repositorio do CRM interno e da operacao protegida.
 
-Entram lá:
-- autenticação, perfis, permissões e segurança
-- Supabase, migrations, scripts de banco e integrações internas
-- funil, subfunis, leads, relatórios e estrutura do CRM
-- automações operacionais e regras de negócio internas
-- qualquer código que use dados reais, credenciais ou lógica administrativa
+Entram aqui:
+- autenticacao, perfis, permissoes e seguranca
+- Supabase, migrations, scripts de banco e integracoes internas
+- funil, subfunis, leads, relatorios e estrutura do CRM
+- automacoes operacionais e regras de negocio internas
+- qualquer codigo que use dados reais, credenciais ou logica administrativa
 
-## Regra prática
+## `Pax-Insights`
 
-Se a demanda envolver segurança, operação interna, banco, login ou dados reais, usar `Pax-Insights-`.
+Repositorio do site publico e da camada visual aberta.
 
-Se a demanda envolver site público, marketing, conteúdo institucional ou interface aberta, usar `View-Pax-Insights`.
+Entram la:
+- landing pages e paginas institucionais
+- navegacao publica, textos comerciais e secoes de apresentacao
+- componentes visuais publicos
+- formularios publicos sem expor regras internas
+- integracoes publicas controladas, sem credenciais sensiveis no frontend
 
-## Regra de segurança
+## Fonte de verdade
 
-Este repositório público não deve receber:
+`Pax-Insights-` e a fonte de verdade do produto.
+
+Tudo que mexe com CRM, operacao, Supabase, migrations, login, permissoes, relatorios internos e dados reais deve nascer aqui primeiro.
+
+`Pax-Insights` recebe apenas o espelho controlado do que fizer sentido expor ou publicar.
+
+Nao assumir sincronizacao automatica entre os repositorios.
+Quando um arquivo precisar existir nos dois, a copia para o publico deve ser intencional e revisada.
+
+## Regra pratica
+
+Se a demanda envolver seguranca, operacao interna, banco, login ou dados reais, usar `Pax-Insights-`.
+
+Se a demanda envolver site publico, marketing, conteudo institucional ou interface aberta, usar `Pax-Insights`.
+
+## Regra de seguranca
+
+O repositorio `Pax-Insights` nao deve receber:
 - chaves, tokens ou credenciais
-- lógica administrativa do CRM
-- consultas internas diretas do Supabase com acesso sensível
-- logs, scripts operacionais ou código de auditoria
+- logica administrativa do CRM
+- consultas internas diretas do Supabase com acesso sensivel
+- logs, scripts operacionais ou codigo de auditoria
 
-Quando algo público precisar de dados do CRM, a exposição deve ser controlada e separada da lógica interna.
+Quando algo publico precisar de dados do CRM, a exposicao deve ser controlada e separada da logica interna.
+
+## Espelhamento para o publico
+
+So espelhar para `Pax-Insights`:
+- interface e comportamento que realmente precisem existir no site publicado
+- arquivos visuais e scripts sem credenciais
+- logica que nao aumente o risco de expor fluxo administrativo interno
+
+Nao espelhar por padrao:
+- migrations
+- arquivos de operacao interna
+- scripts de banco
+- documentacao de seguranca
+- qualquer detalhe que facilite engenharia reversa da camada administrativa
+
+## Qualidade de codigo
+
+Para regras de arquitetura, persistencia, seguranca, autorizacao e padrao de implementacao do projeto, consultar tambem [ENGINEERING_GUIDELINES.md](/C:/GitHub/Pax-Insights-/ENGINEERING_GUIDELINES.md).
