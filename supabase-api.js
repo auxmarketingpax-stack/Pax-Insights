@@ -22,6 +22,73 @@
     return Array.isArray(orderBy) ? orderBy.filter((item) => item && item.column) : [orderBy].filter(Boolean);
   }
 
+  function wait(delayMs = 0) {
+    return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, Number(delayMs) || 0)));
+  }
+
+  function chunkArray(items = [], chunkSize = 100) {
+    const source = Array.isArray(items) ? items : [];
+    const size = Math.max(1, Number(chunkSize) || 100);
+    const chunks = [];
+    for (let index = 0; index < source.length; index += size) {
+      chunks.push(source.slice(index, index + size));
+    }
+    return chunks;
+  }
+
+  function isRetryableSupabaseError(error) {
+    const code = String(error?.code || "").trim();
+    const message = String(error?.message || "").trim().toLowerCase();
+    const details = String(error?.details || "").trim().toLowerCase();
+    const fullText = `${message} ${details}`;
+
+    if (!code && !fullText) return false;
+
+    return (
+      code === "57014"
+      || code === "40001"
+      || /statement timeout/.test(fullText)
+      || /schema cache/.test(fullText)
+      || /retrying/.test(fullText)
+      || /timeout/.test(fullText)
+      || /connection/i.test(fullText)
+    );
+  }
+
+  async function executeSupabaseOperation(operation, {
+    retries = 2,
+    baseDelayMs = 180
+  } = {}) {
+    const totalRetries = Math.max(0, Number(retries) || 0);
+    let attempt = 0;
+    let lastResult = null;
+
+    while (attempt <= totalRetries) {
+      try {
+        const result = await operation();
+        if (!result?.error) {
+          return result;
+        }
+
+        lastResult = result;
+        if (attempt >= totalRetries || !isRetryableSupabaseError(result.error)) {
+          return result;
+        }
+      } catch (error) {
+        const wrappedResult = { data: null, error };
+        lastResult = wrappedResult;
+        if (attempt >= totalRetries || !isRetryableSupabaseError(error)) {
+          return wrappedResult;
+        }
+      }
+
+      await wait(baseDelayMs * Math.pow(2, attempt));
+      attempt += 1;
+    }
+
+    return lastResult || { data: null, error: null };
+  }
+
   function applyFilter(query, filter) {
     const { column, op } = filter || {};
     if (!column || !op || typeof query?.[op] !== "function") return query;
@@ -61,28 +128,30 @@
   }
 
   async function selectRows(client, table, options = {}) {
-    return buildSelectQuery(client, table, options);
+    return executeSupabaseOperation(() => buildSelectQuery(client, table, options));
   }
 
   async function selectMaybeSingleRow(client, table, options = {}) {
-    return buildSelectQuery(client, table, options).maybeSingle();
+    return executeSupabaseOperation(() => buildSelectQuery(client, table, options).maybeSingle());
   }
 
   async function insertRows(client, table, rows, options = {}) {
     const payload = Array.isArray(rows) ? rows : [rows];
-    let query = ensureClient(client).from(table).insert(payload);
-    if (options.select) {
-      query = query.select(options.select === true ? "*" : options.select);
-    }
-    if (options.single) {
-      query = query.single();
-    }
-    return query;
+    return executeSupabaseOperation(() => {
+      let query = ensureClient(client).from(table).insert(payload);
+      if (options.select) {
+        query = query.select(options.select === true ? "*" : options.select);
+      }
+      if (options.single) {
+        query = query.single();
+      }
+      return query;
+    });
   }
 
   async function upsertRows(client, table, rows, options = {}) {
     const payload = Array.isArray(rows) ? rows : [rows];
-    return ensureClient(client).from(table).upsert(payload, options);
+    return executeSupabaseOperation(() => ensureClient(client).from(table).upsert(payload, options));
   }
 
   async function upsertSingleRow(client, table, payload, {
@@ -90,19 +159,21 @@
     select = "*",
     maybeSingle = true
   } = {}) {
-    let query = ensureClient(client)
-      .from(table)
-      .upsert(payload, { onConflict });
+    return executeSupabaseOperation(() => {
+      let query = ensureClient(client)
+        .from(table)
+        .upsert(payload, { onConflict });
 
-    if (select) {
-      query = query.select(select === true ? "*" : select);
-    }
+      if (select) {
+        query = query.select(select === true ? "*" : select);
+      }
 
-    if (maybeSingle) {
-      query = query.maybeSingle();
-    }
+      if (maybeSingle) {
+        query = query.maybeSingle();
+      }
 
-    return query;
+      return query;
+    });
   }
 
   async function updateRows(client, table, values, {
@@ -111,34 +182,38 @@
     single = false,
     maybeSingle = false
   } = {}) {
-    let query = ensureClient(client).from(table).update(values);
-    normalizeFilters(filters).forEach((filter) => {
-      query = applyFilter(query, filter);
+    return executeSupabaseOperation(() => {
+      let query = ensureClient(client).from(table).update(values);
+      normalizeFilters(filters).forEach((filter) => {
+        query = applyFilter(query, filter);
+      });
+
+      if (select) {
+        query = query.select(select === true ? "*" : select);
+      }
+
+      if (single) {
+        query = query.single();
+      } else if (maybeSingle) {
+        query = query.maybeSingle();
+      }
+
+      return query;
     });
-
-    if (select) {
-      query = query.select(select === true ? "*" : select);
-    }
-
-    if (single) {
-      query = query.single();
-    } else if (maybeSingle) {
-      query = query.maybeSingle();
-    }
-
-    return query;
   }
 
   async function deleteRows(client, table, { filters = [] } = {}) {
-    let query = ensureClient(client).from(table).delete();
-    normalizeFilters(filters).forEach((filter) => {
-      query = applyFilter(query, filter);
+    return executeSupabaseOperation(() => {
+      let query = ensureClient(client).from(table).delete();
+      normalizeFilters(filters).forEach((filter) => {
+        query = applyFilter(query, filter);
+      });
+      return query;
     });
-    return query;
   }
 
   async function runRpc(client, functionName, params = {}) {
-    return ensureClient(client).rpc(functionName, params);
+    return executeSupabaseOperation(() => ensureClient(client).rpc(functionName, params));
   }
 
   async function invokeEdgeFunction(client, functionName, body = {}) {
@@ -185,15 +260,18 @@
     let from = 0;
 
     while (true) {
-      let query = ensureClient(client).from(table).select(select).range(from, from + pageSize - 1);
-      normalizeOrderBy(orderBy).forEach((orderRule) => {
-        query = applyFilter(query, {
-          column: orderRule.column,
-          op: "order",
-          options: orderRule.options || { ascending: true }
+      const pageResult = await executeSupabaseOperation(() => {
+        let query = ensureClient(client).from(table).select(select).range(from, from + pageSize - 1);
+        normalizeOrderBy(orderBy).forEach((orderRule) => {
+          query = applyFilter(query, {
+            column: orderRule.column,
+            op: "order",
+            options: orderRule.options || { ascending: true }
+          });
         });
+        return query;
       });
-      const { data, error } = await query;
+      const { data, error } = pageResult;
       if (error) {
         return { data: [], error };
       }
@@ -210,11 +288,13 @@
   }
 
   async function insertSingleRow(client, table, payload, select = "*") {
-    return ensureClient(client)
-      .from(table)
-      .insert([payload])
-      .select(select)
-      .single();
+    return executeSupabaseOperation(() =>
+      ensureClient(client)
+        .from(table)
+        .insert([payload])
+        .select(select)
+        .single()
+    );
   }
 
   async function updateRowById(client, table, id, values, idColumn = "id", options = {}) {
@@ -242,10 +322,66 @@
     });
   }
 
+  async function upsertRowsInChunks(client, table, rows, {
+    chunkSize = 100,
+    ...options
+  } = {}) {
+    const payload = Array.isArray(rows) ? rows : [rows];
+    if (!payload.length) {
+      return { data: [], error: null };
+    }
+
+    const chunks = chunkArray(payload, chunkSize);
+    const collectedData = [];
+
+    for (const chunk of chunks) {
+      const result = await upsertRows(client, table, chunk, options);
+      if (result?.error) {
+        return {
+          data: collectedData,
+          error: result.error
+        };
+      }
+
+      if (Array.isArray(result?.data)) {
+        collectedData.push(...result.data);
+      } else if (result?.data != null) {
+        collectedData.push(result.data);
+      }
+    }
+
+    return { data: collectedData, error: null };
+  }
+
+  async function deleteRowsByColumnValuesInChunks(client, table, column, values = [], {
+    chunkSize = 100,
+    extraFilters = []
+  } = {}) {
+    const normalizedValues = Array.isArray(values) ? values.filter((value) => value !== undefined && value !== null && value !== "") : [];
+    if (!normalizedValues.length) {
+      return { data: [], error: null };
+    }
+
+    for (const chunk of chunkArray(normalizedValues, chunkSize)) {
+      const result = await deleteRows(client, table, {
+        filters: [
+          ...normalizeFilters(extraFilters),
+          { column, op: "in", value: chunk }
+        ]
+      });
+      if (result?.error) {
+        return result;
+      }
+    }
+
+    return { data: [], error: null };
+  }
+
   async function upsertRowsWithTransientPositions(client, table, rows, {
     onConflict = "id",
     positionField = "position",
-    transientBase = 1000000
+    transientBase = 1000000,
+    chunkSize = 100
   } = {}) {
     const normalizedRows = Array.isArray(rows) ? rows : [];
     if (!normalizedRows.length) {
@@ -257,12 +393,12 @@
       [positionField]: transientBase + index
     }));
 
-    const transientResult = await upsertRows(client, table, transientRows, { onConflict });
+    const transientResult = await upsertRowsInChunks(client, table, transientRows, { onConflict, chunkSize });
     if (transientResult?.error) {
       return transientResult;
     }
 
-    return upsertRows(client, table, normalizedRows, { onConflict });
+    return upsertRowsInChunks(client, table, normalizedRows, { onConflict, chunkSize });
   }
 
   async function loadFunnelWorkspaceTables(client, loadSharedMeta) {
@@ -431,6 +567,8 @@
     updateRowById,
     updateRowsByIds,
     updateRowsByColumnValue,
+    upsertRowsInChunks,
+    deleteRowsByColumnValuesInChunks,
     deleteRows,
     deleteRowById,
     runRpc,

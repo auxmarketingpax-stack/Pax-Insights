@@ -506,9 +506,11 @@
     funnelNavDrag: null,
     touchContextTap: null,
     notificationPanelOpen: false,
-    highlightedLeadId: null
-    ,
+    highlightedLeadId: null,
+    pendingSubfunnelPositionCommits: new Map(),
     pendingStagePositionCommits: new Map(),
+    pendingStageAssignmentCommits: new Map(),
+    pendingLeadAssignmentCommits: new Map(),
     pendingLeadMoveCommits: new Map()
   };
 
@@ -7124,7 +7126,9 @@
 
   function buildRemoteFunnelWorkspace(rows = {}) {
     const funnelRows = Array.isArray(rows.funnels) ? rows.funnels : [];
-    const subfunnelRows = stabilizeTransientSubfunnelRows(Array.isArray(rows.subfunnels) ? rows.subfunnels : []);
+    const subfunnelRows = reconcileSubfunnelRowsWithPendingCommits(
+      stabilizeTransientSubfunnelRows(Array.isArray(rows.subfunnels) ? rows.subfunnels : [])
+    );
     const permissionRows = Array.isArray(rows.permissions) ? rows.permissions : [];
     const stageAssignmentRows = Array.isArray(rows.stageAssignments) ? rows.stageAssignments : [];
     const leadAssignmentRows = Array.isArray(rows.leadAssignments) ? rows.leadAssignments : [];
@@ -7995,11 +7999,11 @@
 
     if (!workspaceStagePermissions.canManageStages) {
       if (!leadRows.length) return;
-      const { error } = await supabaseApi.upsertRows(
+      const { error } = await supabaseApi.upsertRowsInChunks(
         state.supabase,
         "crm_lead_subfunnel_assignments",
         leadRows,
-        { onConflict: "lead_id" }
+        { onConflict: "lead_id", chunkSize: 120 }
       );
       if (error) throw error;
       return;
@@ -8076,13 +8080,16 @@
     const removedStageReminderIds = [...existingStageReminderIds].filter((id) => !nextStageReminderIds.has(id));
 
     if (funnelRows.length) {
-      const { error } = await supabaseApi.upsertRows(state.supabase, "crm_funnels", funnelRows, { onConflict: "id" });
+      const { error } = await supabaseApi.upsertRowsInChunks(state.supabase, "crm_funnels", funnelRows, {
+        onConflict: "id",
+        chunkSize: 40
+      });
       if (error) throw error;
     }
 
     if (removedSubfunnelIds.length) {
-      const { error } = await supabaseApi.deleteRows(state.supabase, "crm_subfunnels", {
-        filters: [{ column: "id", op: "in", value: removedSubfunnelIds }]
+      const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_subfunnels", "id", removedSubfunnelIds, {
+        chunkSize: 80
       });
       if (error) throw error;
     }
@@ -8094,7 +8101,7 @@
         state.supabase,
         "crm_subfunnels",
         subfunnelRows,
-        { onConflict: "id", positionField: "position" }
+        { onConflict: "id", positionField: "position", chunkSize: 80 }
       );
       if (result.error) throw result.error;
     }
@@ -8121,11 +8128,11 @@
       });
 
       if (permissionRows.length) {
-        const { error: permissionUpsertError } = await supabaseApi.upsertRows(
+        const { error: permissionUpsertError } = await supabaseApi.upsertRowsInChunks(
           state.supabase,
           "crm_funnel_department_permissions",
           permissionRows,
-          { onConflict: "funnel_id,department_id" }
+          { onConflict: "funnel_id,department_id", chunkSize: 80 }
         );
         if (permissionUpsertError) throw permissionUpsertError;
       }
@@ -8142,14 +8149,14 @@
           .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
 
         if (!removedDepartmentIds.length) continue;
-        const { error: deletePermissionError } = await supabaseApi.deleteRows(
+        const { error: deletePermissionError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
           state.supabase,
           "crm_funnel_department_permissions",
+          "department_id",
+          removedDepartmentIds,
           {
-            filters: [
-              { column: "funnel_id", op: "eq", value: funnelId },
-              { column: "department_id", op: "in", value: removedDepartmentIds }
-            ]
+            chunkSize: 80,
+            extraFilters: [{ column: "funnel_id", op: "eq", value: funnelId }]
           }
         );
         if (deletePermissionError) throw deletePermissionError;
@@ -8157,46 +8164,46 @@
     }
 
     if (stageRows.length) {
-      const { error } = await supabaseApi.upsertRows(
+      const { error } = await supabaseApi.upsertRowsInChunks(
         state.supabase,
         "crm_stage_subfunnel_assignments",
         stageRows,
-        { onConflict: "stage_id" }
+        { onConflict: "stage_id", chunkSize: 120 }
       );
       if (error) throw error;
     }
 
     if (leadRows.length) {
-      const { error } = await supabaseApi.upsertRows(
+      const { error } = await supabaseApi.upsertRowsInChunks(
         state.supabase,
         "crm_lead_subfunnel_assignments",
         leadRows,
-        { onConflict: "lead_id" }
+        { onConflict: "lead_id", chunkSize: 120 }
       );
       if (error) throw error;
     }
 
     if (stageReminderTableAvailable) {
       if (removedStageReminderIds.length) {
-        const { error } = await supabaseApi.deleteRows(state.supabase, "crm_stage_reminder_configs", {
-          filters: [{ column: "stage_id", op: "in", value: removedStageReminderIds }]
+        const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_stage_reminder_configs", "stage_id", removedStageReminderIds, {
+          chunkSize: 80
         });
         if (error) throw error;
       }
       if (stageReminderRows.length) {
-        const { error } = await supabaseApi.upsertRows(
+        const { error } = await supabaseApi.upsertRowsInChunks(
           state.supabase,
           "crm_stage_reminder_configs",
           stageReminderRows,
-          { onConflict: "stage_id" }
+          { onConflict: "stage_id", chunkSize: 80 }
         );
         if (error) throw error;
       }
     }
 
     if (removedFunnelIds.length) {
-      const { error } = await supabaseApi.deleteRows(state.supabase, "crm_funnels", {
-        filters: [{ column: "id", op: "in", value: removedFunnelIds }]
+      const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_funnels", "id", removedFunnelIds, {
+        chunkSize: 80
       });
       if (error) throw error;
     }
@@ -8262,11 +8269,11 @@
     });
 
     if (permissionRows.length) {
-      const { error: permissionUpsertError } = await supabaseApi.upsertRows(
+      const { error: permissionUpsertError } = await supabaseApi.upsertRowsInChunks(
         state.supabase,
         "crm_funnel_department_permissions",
         permissionRows,
-        { onConflict: "funnel_id,department_id" }
+        { onConflict: "funnel_id,department_id", chunkSize: 80 }
       );
       if (permissionUpsertError) throw permissionUpsertError;
     }
@@ -8283,14 +8290,14 @@
         .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
 
       if (!removedDepartmentIds.length) continue;
-      const { error: deletePermissionError } = await supabaseApi.deleteRows(
+      const { error: deletePermissionError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
         state.supabase,
         "crm_funnel_department_permissions",
+        "department_id",
+        removedDepartmentIds,
         {
-          filters: [
-            { column: "funnel_id", op: "eq", value: funnelId },
-            { column: "department_id", op: "in", value: removedDepartmentIds }
-          ]
+          chunkSize: 80,
+          extraFilters: [{ column: "funnel_id", op: "eq", value: funnelId }]
         }
       );
       if (deletePermissionError) throw deletePermissionError;
@@ -8309,7 +8316,10 @@
       .map((funnel) => buildFunnelRowPayload(funnel))
       .filter(Boolean);
     if (funnelRows.length) {
-      const { error } = await supabaseApi.upsertRows(state.supabase, "crm_funnels", funnelRows, { onConflict: "id" });
+      const { error } = await supabaseApi.upsertRowsInChunks(state.supabase, "crm_funnels", funnelRows, {
+        onConflict: "id",
+        chunkSize: 40
+      });
       if (error) throw error;
     }
 
@@ -8333,8 +8343,8 @@
         .filter((id) => id && !nextSubfunnelIds.has(id));
 
       if (removedSubfunnelIds.length) {
-        const { error } = await supabaseApi.deleteRows(state.supabase, "crm_subfunnels", {
-          filters: [{ column: "id", op: "in", value: removedSubfunnelIds }]
+        const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_subfunnels", "id", removedSubfunnelIds, {
+          chunkSize: 80
         });
         if (error) throw error;
       }
@@ -8344,7 +8354,7 @@
           state.supabase,
           "crm_subfunnels",
           subfunnelRows,
-          { onConflict: "id" }
+          { onConflict: "id", chunkSize: 80 }
         );
         if (finalResult.error) throw finalResult.error;
       }
@@ -8412,11 +8422,11 @@
       subfunnel_id: normalizedSubfunnelId
     }));
 
-    const { error } = await supabaseApi.upsertRows(
+    const { error } = await supabaseApi.upsertRowsInChunks(
       state.supabase,
       "crm_lead_subfunnel_assignments",
       rows,
-      { onConflict: "lead_id" }
+      { onConflict: "lead_id", chunkSize: 120 }
     );
     if (error) throw error;
   }
@@ -8441,7 +8451,7 @@
       state.supabase,
       "crm_subfunnels",
       subfunnelRows,
-      { onConflict: "id" }
+      { onConflict: "id", chunkSize: 80 }
     );
     if (finalResult.error) throw finalResult.error;
   }
@@ -8850,6 +8860,9 @@
 
     if (!state.funnelDataLoadedFromSupabase) return true;
 
+    registerPendingStageAssignmentCommits(normalizedStageIds, normalizedSubfunnelId);
+    registerPendingLeadAssignmentCommits(normalizedLeadIds, normalizedSubfunnelId);
+
     try {
       for (const stageId of normalizedStageIds) {
         await persistStageAssignmentToSupabase(stageId, normalizedSubfunnelId);
@@ -8862,6 +8875,8 @@
       }
       return true;
     } catch (error) {
+      clearPendingStageAssignmentCommits(normalizedStageIds);
+      clearPendingLeadAssignmentCommits(normalizedLeadIds);
       restoreStageAssignmentsLocally(previousStageAssignments);
       restoreLeadAssignmentsLocally(previousLeadAssignments);
       throw error;
@@ -9072,6 +9087,13 @@
     if (!funnel || !funnelPermissions.canManageStages) return;
     const reordered = reorderSubfunnelsInFunnelLocally(funnelId, subfunnelId, targetIndex);
     if (!reordered) return;
+    registerPendingSubfunnelPositionCommits(
+      (getFunnelById(funnelId)?.subfunnels || []).map((item, index) => ({
+        id: item.id,
+        funnel_id: funnelId,
+        position: index
+      }))
+    );
     queueSubfunnelOrderSync(funnelId);
     finalizeUiOnlyMutation({
       syncSelectedLeadIds: false,
@@ -10972,6 +10994,158 @@
     return nextRows;
   }
 
+  function pruneExpiredPendingSubfunnelPositionCommits() {
+    const now = Date.now();
+    for (const [key, commit] of state.pendingSubfunnelPositionCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingSubfunnelPositionCommits.delete(key);
+      }
+    }
+  }
+
+  function registerPendingSubfunnelPositionCommits(positionRows = [], ttlMs = 10000) {
+    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    (Array.isArray(positionRows) ? positionRows : []).forEach((row) => {
+      const subfunnelId = String(row?.id || "").trim();
+      const funnelId = String(row?.funnel_id || "").trim();
+      const position = Number(row?.position);
+      if (!subfunnelId || !funnelId || !Number.isFinite(position)) return;
+      state.pendingSubfunnelPositionCommits.set(`${funnelId}:${subfunnelId}`, {
+        funnelId,
+        subfunnelId,
+        position,
+        expiresAt
+      });
+    });
+  }
+
+  function clearPendingSubfunnelPositionCommits(positionRows = []) {
+    (Array.isArray(positionRows) ? positionRows : []).forEach((row) => {
+      const subfunnelId = String(row?.id || "").trim();
+      const funnelId = String(row?.funnel_id || "").trim();
+      if (!subfunnelId || !funnelId) return;
+      state.pendingSubfunnelPositionCommits.delete(`${funnelId}:${subfunnelId}`);
+    });
+  }
+
+  function reconcileSubfunnelRowsWithPendingCommits(subfunnelRows = []) {
+    pruneExpiredPendingSubfunnelPositionCommits();
+    if (!state.pendingSubfunnelPositionCommits.size) {
+      return Array.isArray(subfunnelRows) ? subfunnelRows : [];
+    }
+
+    const unresolvedSubfunnelKeys = [];
+    const nextRows = (Array.isArray(subfunnelRows) ? subfunnelRows : []).map((row) => {
+      const subfunnelId = String(row?.id || "").trim();
+      const funnelId = String(row?.funnel_id || "").trim();
+      const pendingKey = `${funnelId}:${subfunnelId}`;
+      const pendingCommit = state.pendingSubfunnelPositionCommits.get(pendingKey);
+      if (!pendingCommit) return row;
+
+      const remotePosition = Number(row?.position);
+      if (Number.isFinite(remotePosition) && remotePosition === Number(pendingCommit.position)) {
+        state.pendingSubfunnelPositionCommits.delete(pendingKey);
+        return row;
+      }
+
+      unresolvedSubfunnelKeys.push(pendingKey);
+      return {
+        ...row,
+        position: pendingCommit.position
+      };
+    });
+
+    if (unresolvedSubfunnelKeys.length) {
+      console.warn("Snapshot remoto de subfunis estabilizado com posições locais pendentes.", unresolvedSubfunnelKeys);
+    }
+
+    return nextRows;
+  }
+
+  function pruneExpiredPendingStageAssignmentCommits() {
+    const now = Date.now();
+    for (const [stageId, commit] of state.pendingStageAssignmentCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingStageAssignmentCommits.delete(stageId);
+      }
+    }
+  }
+
+  function registerPendingStageAssignmentCommits(stageIds = [], subfunnelId, ttlMs = 10000) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    if (!normalizedSubfunnelId) return;
+    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    normalizeIdList(stageIds).forEach((stageId) => {
+      state.pendingStageAssignmentCommits.set(stageId, {
+        subfunnelId: normalizedSubfunnelId,
+        expiresAt
+      });
+    });
+  }
+
+  function clearPendingStageAssignmentCommits(stageIds = []) {
+    normalizeIdList(stageIds).forEach((stageId) => {
+      state.pendingStageAssignmentCommits.delete(stageId);
+    });
+  }
+
+  function reconcileWorkspaceStageAssignmentsWithPendingCommits(workspace = null) {
+    pruneExpiredPendingStageAssignmentCommits();
+    if (!workspace || !state.pendingStageAssignmentCommits.size) return workspace;
+
+    const nextStageAssignments = {
+      ...(workspace.stageAssignments || {})
+    };
+    let changed = false;
+
+    for (const [stageId, commit] of state.pendingStageAssignmentCommits.entries()) {
+      const expectedSubfunnelId = String(commit?.subfunnelId || "").trim();
+      if (!expectedSubfunnelId) continue;
+
+      const remoteSubfunnelId = String(nextStageAssignments[stageId] || "").trim();
+      if (remoteSubfunnelId === expectedSubfunnelId) {
+        state.pendingStageAssignmentCommits.delete(stageId);
+        continue;
+      }
+
+      nextStageAssignments[stageId] = expectedSubfunnelId;
+      changed = true;
+    }
+
+    if (!changed) return workspace;
+    return {
+      ...workspace,
+      stageAssignments: nextStageAssignments
+    };
+  }
+
+  function pruneExpiredPendingLeadAssignmentCommits() {
+    const now = Date.now();
+    for (const [leadId, commit] of state.pendingLeadAssignmentCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingLeadAssignmentCommits.delete(leadId);
+      }
+    }
+  }
+
+  function registerPendingLeadAssignmentCommits(leadIds = [], subfunnelId, ttlMs = 10000) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    if (!normalizedSubfunnelId) return;
+    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    normalizeIdList(leadIds).forEach((leadId) => {
+      state.pendingLeadAssignmentCommits.set(leadId, {
+        subfunnelId: normalizedSubfunnelId,
+        expiresAt
+      });
+    });
+  }
+
+  function clearPendingLeadAssignmentCommits(leadIds = []) {
+    normalizeIdList(leadIds).forEach((leadId) => {
+      state.pendingLeadAssignmentCommits.delete(leadId);
+    });
+  }
+
   function pruneExpiredPendingLeadMoveCommits() {
     const now = Date.now();
     for (const [leadId, commit] of state.pendingLeadMoveCommits.entries()) {
@@ -11037,13 +11211,26 @@
   }
 
   function reconcileWorkspaceLeadAssignmentsWithPendingCommits(workspace = null) {
+    pruneExpiredPendingLeadAssignmentCommits();
     pruneExpiredPendingLeadMoveCommits();
-    if (!workspace || !state.pendingLeadMoveCommits.size) return workspace;
+    if (!workspace || (!state.pendingLeadMoveCommits.size && !state.pendingLeadAssignmentCommits.size)) return workspace;
 
     const nextLeadAssignments = {
       ...(workspace.leadAssignments || {})
     };
     let changed = false;
+
+    for (const [leadId, commit] of state.pendingLeadAssignmentCommits.entries()) {
+      const expectedSubfunnelId = String(commit?.subfunnelId || "").trim();
+      if (!expectedSubfunnelId) continue;
+      const remoteSubfunnelId = String(nextLeadAssignments[leadId] || "").trim();
+      if (remoteSubfunnelId === expectedSubfunnelId) {
+        state.pendingLeadAssignmentCommits.delete(leadId);
+        continue;
+      }
+      nextLeadAssignments[leadId] = expectedSubfunnelId;
+      changed = true;
+    }
 
     for (const [leadId, commit] of state.pendingLeadMoveCommits.entries()) {
       if (!commit?.subfunnelId) continue;
@@ -11650,7 +11837,11 @@
     }
 
     renderDepartmentSelects();
-    syncFunnelWorkspaceWithData(reconcileWorkspaceLeadAssignmentsWithPendingCommits(remoteFunnelWorkspace));
+    syncFunnelWorkspaceWithData(
+      reconcileWorkspaceLeadAssignmentsWithPendingCommits(
+        reconcileWorkspaceStageAssignmentsWithPendingCommits(remoteFunnelWorkspace)
+      )
+    );
     if (silentRender) {
       scheduleAppDataCacheWrite(220);
     } else {
