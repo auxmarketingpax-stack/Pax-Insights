@@ -505,6 +505,9 @@
     touchContextTap: null,
     notificationPanelOpen: false,
     highlightedLeadId: null
+    ,
+    pendingStagePositionCommits: new Map(),
+    pendingLeadMoveCommits: new Map()
   };
 
   const PRESET_STAGE_TYPES = [
@@ -10587,6 +10590,151 @@
     return Number.isFinite(Number(value)) && Number(value) >= TRANSIENT_POSITION_BASE;
   }
 
+  function pruneExpiredPendingStagePositionCommits() {
+    const now = Date.now();
+    for (const [stageId, commit] of state.pendingStagePositionCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingStagePositionCommits.delete(stageId);
+      }
+    }
+  }
+
+  function registerPendingStagePositionCommits(positionRows = [], ttlMs = 10000) {
+    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    (Array.isArray(positionRows) ? positionRows : []).forEach((row) => {
+      const stageId = String(row?.id || "").trim();
+      const position = Number(row?.position);
+      if (!stageId || !Number.isFinite(position)) return;
+      state.pendingStagePositionCommits.set(stageId, { position, expiresAt });
+    });
+  }
+
+  function clearPendingStagePositionCommits(stageIds = []) {
+    normalizeIdList(stageIds).forEach((stageId) => {
+      state.pendingStagePositionCommits.delete(stageId);
+    });
+  }
+
+  function reconcileStageRowsWithPendingCommits(stageRows = []) {
+    pruneExpiredPendingStagePositionCommits();
+    if (!state.pendingStagePositionCommits.size) {
+      return Array.isArray(stageRows) ? stageRows : [];
+    }
+
+    const unresolvedStageIds = [];
+    const nextRows = (Array.isArray(stageRows) ? stageRows : []).map((row) => {
+      const stageId = String(row?.id || "").trim();
+      const pendingCommit = state.pendingStagePositionCommits.get(stageId);
+      if (!pendingCommit) return row;
+      const remotePosition = Number(row?.position);
+      if (Number.isFinite(remotePosition) && remotePosition === Number(pendingCommit.position)) {
+        state.pendingStagePositionCommits.delete(stageId);
+        return row;
+      }
+      unresolvedStageIds.push(stageId);
+      return {
+        ...row,
+        position: pendingCommit.position
+      };
+    });
+
+    if (unresolvedStageIds.length) {
+      console.warn("Snapshot remoto de pipelines estabilizado com posições locais pendentes.", unresolvedStageIds);
+    }
+
+    return nextRows;
+  }
+
+  function pruneExpiredPendingLeadMoveCommits() {
+    const now = Date.now();
+    for (const [leadId, commit] of state.pendingLeadMoveCommits.entries()) {
+      if (!commit || Number(commit.expiresAt || 0) <= now) {
+        state.pendingLeadMoveCommits.delete(leadId);
+      }
+    }
+  }
+
+  function registerPendingLeadMoveCommit(leadId, payload = {}, ttlMs = 10000) {
+    const normalizedLeadId = String(leadId || "").trim();
+    const stageId = String(payload.stageId || "").trim();
+    if (!normalizedLeadId || !stageId) return;
+    state.pendingLeadMoveCommits.set(normalizedLeadId, {
+      stageId,
+      subfunnelId: String(payload.subfunnelId || "").trim() || null,
+      notes: String(payload.notes || ""),
+      expiresAt: Date.now() + Math.max(2000, Number(ttlMs) || 10000)
+    });
+  }
+
+  function clearPendingLeadMoveCommits(leadIds = []) {
+    normalizeIdList(leadIds).forEach((leadId) => {
+      state.pendingLeadMoveCommits.delete(leadId);
+    });
+  }
+
+  function reconcileLeadRowsWithPendingCommits(leadRows = []) {
+    pruneExpiredPendingLeadMoveCommits();
+    if (!state.pendingLeadMoveCommits.size) {
+      return Array.isArray(leadRows) ? leadRows : [];
+    }
+
+    const unresolvedLeadIds = [];
+    const nextRows = (Array.isArray(leadRows) ? leadRows : []).map((row) => {
+      const leadId = String(row?.id || "").trim();
+      const pendingCommit = state.pendingLeadMoveCommits.get(leadId);
+      if (!pendingCommit) return row;
+
+      const remoteStageId = String(row?.stage_id || "").trim();
+      const remoteNotes = String(row?.notes || "");
+      const stageMatches = remoteStageId === pendingCommit.stageId;
+      const notesMatch = !pendingCommit.notes || remoteNotes === pendingCommit.notes;
+
+      if (stageMatches && notesMatch) {
+        state.pendingLeadMoveCommits.delete(leadId);
+        return row;
+      }
+
+      unresolvedLeadIds.push(leadId);
+      return {
+        ...row,
+        stage_id: pendingCommit.stageId,
+        notes: pendingCommit.notes || row?.notes || ""
+      };
+    });
+
+    if (unresolvedLeadIds.length) {
+      console.warn("Snapshot remoto de leads estabilizado com movimentações locais pendentes.", unresolvedLeadIds);
+    }
+
+    return nextRows;
+  }
+
+  function reconcileWorkspaceLeadAssignmentsWithPendingCommits(workspace = null) {
+    pruneExpiredPendingLeadMoveCommits();
+    if (!workspace || !state.pendingLeadMoveCommits.size) return workspace;
+
+    const nextLeadAssignments = {
+      ...(workspace.leadAssignments || {})
+    };
+    let changed = false;
+
+    for (const [leadId, commit] of state.pendingLeadMoveCommits.entries()) {
+      if (!commit?.subfunnelId) continue;
+      const remoteSubfunnelId = String(nextLeadAssignments[leadId] || "").trim();
+      if (remoteSubfunnelId === String(commit.subfunnelId || "").trim()) {
+        continue;
+      }
+      nextLeadAssignments[leadId] = commit.subfunnelId;
+      changed = true;
+    }
+
+    if (!changed) return workspace;
+    return {
+      ...workspace,
+      leadAssignments: nextLeadAssignments
+    };
+  }
+
   function buildStagePositionFallbackMap(stageItems = []) {
     const map = new Map();
     sortStagesByStablePosition(stageItems).forEach((stage, index) => {
@@ -10844,33 +10992,40 @@
   }
 
   async function persistStageMoveMutation(context = {}) {
-    await executeCriticalMutation({
-      snapshot: {
-        stages: true
-      },
-      applyOptimistic: () => {
-        state.stages = context.optimisticStages;
-      },
-      persist: async () => {
-        await persistStagePositions(context.changedPositionRows);
-      },
-      afterPersist: async () => {
-        notifyLiveSyncChange("stage-order");
-        queueLocalConsistencyRefresh("stage-order", 900);
-        void logChange(
-          "reorder",
-          "stage",
-          context.stageId,
-          `A ordem do funil foi alterada por ${getUserDisplayName()}.`,
-          {
-            stage_id: context.stageId,
-            stage_name: context.movedStage?.name || "",
-            from_position: context.currentIndex,
-            to_position: context.normalizedTargetIndex
-          }
-        ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
-      }
-    });
+    registerPendingStagePositionCommits(context.changedPositionRows);
+
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          stages: true
+        },
+        applyOptimistic: () => {
+          state.stages = context.optimisticStages;
+        },
+        persist: async () => {
+          await persistStagePositions(context.changedPositionRows);
+        },
+        afterPersist: async () => {
+          notifyLiveSyncChange("stage-order");
+          queueLocalConsistencyRefresh("stage-order", 900);
+          void logChange(
+            "reorder",
+            "stage",
+            context.stageId,
+            `A ordem do funil foi alterada por ${getUserDisplayName()}.`,
+            {
+              stage_id: context.stageId,
+              stage_name: context.movedStage?.name || "",
+              from_position: context.currentIndex,
+              to_position: context.normalizedTargetIndex
+            }
+          ).catch((error) => console.error("Erro ao registrar reordenação da pipeline:", error));
+        }
+      });
+    } catch (error) {
+      clearPendingStagePositionCommits((context.changedPositionRows || []).map((row) => row?.id));
+      throw error;
+    }
   }
 
   async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
@@ -11125,10 +11280,12 @@
     includeAdminData = false,
     silentRender = false
   } = {}) {
-    const stabilizedStageRows = stabilizeTransientStageRows(stageRows);
+    const stabilizedStageRows = reconcileStageRowsWithPendingCommits(
+      stabilizeTransientStageRows(stageRows)
+    );
     state.stages = stabilizedStageRows.map(normalizeStage);
 
-    const rawLeads = Array.isArray(leadRows) ? leadRows : [];
+    const rawLeads = reconcileLeadRowsWithPendingCommits(Array.isArray(leadRows) ? leadRows : []);
     const missingSocialSourceLeadIds = rawLeads
       .filter((lead) => !normalizeSpacing(lead?.social_source || ""))
       .map((lead) => lead.id);
@@ -11166,7 +11323,7 @@
     }
 
     renderDepartmentSelects();
-    syncFunnelWorkspaceWithData(remoteFunnelWorkspace);
+    syncFunnelWorkspaceWithData(reconcileWorkspaceLeadAssignmentsWithPendingCommits(remoteFunnelWorkspace));
     writeStoredAppDataCache();
     void ensureStageNamesWithoutTrailingPeriods({ silent: silentRender });
     void ensureDefaultSocialSourceForMissingLeads(missingSocialSourceLeadIds, { silent: silentRender });
@@ -16581,16 +16738,27 @@
   }
 
   async function persistLeadMove(context = {}, stageId) {
-    await executeCriticalMutation({
-      snapshot: {
-        leads: true,
-        funnelWorkspace: true,
-        selectedLeadIds: true
-      },
-      applyOptimistic: () => applyLeadMoveOptimistic(context, stageId),
-      persist: async () => persistLeadMoveRecord(context, stageId),
-      afterPersist: async () => finalizeLeadMovePersistence(context)
+    registerPendingLeadMoveCommit(context.lead?.id, {
+      stageId,
+      subfunnelId: context.targetSubfunnelId,
+      notes: context.nextNotes
     });
+
+    try {
+      await executeCriticalMutation({
+        snapshot: {
+          leads: true,
+          funnelWorkspace: true,
+          selectedLeadIds: true
+        },
+        applyOptimistic: () => applyLeadMoveOptimistic(context, stageId),
+        persist: async () => persistLeadMoveRecord(context, stageId),
+        afterPersist: async () => finalizeLeadMovePersistence(context)
+      });
+    } catch (error) {
+      clearPendingLeadMoveCommits([context.lead?.id]);
+      throw error;
+    }
   }
 
   async function logLeadMoveChange(context = {}) {
