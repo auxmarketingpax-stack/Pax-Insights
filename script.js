@@ -8114,6 +8114,7 @@
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
     state.funnelRouteMigrationInFlight = true;
     try {
+      return await executeSerializedFunnelWorkspaceMaintenance(async () => {
       const routeLeadExists = state.leads.some((lead) => (
         isIndicacaoRouteLead(lead)
         || isB2BExternalEventLead(lead)
@@ -8253,6 +8254,9 @@
       }
 
       return true;
+      }, {
+        protectedCooldownMs: 2400
+      });
     } finally {
       state.funnelRouteMigrationInFlight = false;
     }
@@ -8343,6 +8347,7 @@
 
     state.b2cExternalCaptureNormalizationInFlight = true;
     try {
+      return await executeSerializedFunnelWorkspaceMaintenance(async () => {
       const getLeadCountByStageId = () => {
         const counts = new Map();
         state.leads.forEach((lead) => {
@@ -8510,6 +8515,9 @@
       writeStoredB2CExternalCaptureNormalizationDone(true);
       notifyLiveSyncChange("funnel-workspace");
       return true;
+      }, {
+        protectedCooldownMs: 2400
+      });
     } finally {
       state.b2cExternalCaptureNormalizationInFlight = false;
     }
@@ -9096,6 +9104,15 @@
       afterPersist: async () => {
         notifyLiveSyncChange("funnel-workspace");
       }
+    });
+  }
+
+  async function executeSerializedFunnelWorkspaceMaintenance(task, options = {}) {
+    if (typeof task !== "function") return null;
+    return executeCriticalMutation({
+      serializeKey: "funnel-workspace-meta",
+      protectedCooldownMs: Math.max(1800, Number(options.protectedCooldownMs || 2200)),
+      persist: async () => task()
     });
   }
 
