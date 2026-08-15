@@ -478,6 +478,7 @@
     liveSyncPollTimer: null,
     liveSyncLocalMutationUntil: 0,
     liveSyncLocalMutationTimer: null,
+    liveSyncPendingBroadcastScope: null,
     appDataCacheWriteTimer: null,
     liveSyncProtectedMutationCount: 0,
     lastSharedFunnelMetaSignature: "",
@@ -3475,12 +3476,21 @@
   }
 
   function notifyLiveSyncChange(scope = "workspace") {
+    const normalizedScope = typeof scope === "string" && scope.trim() ? scope.trim() : "workspace";
+    if (Number(state.liveSyncProtectedMutationCount || 0) > 0) {
+      state.liveSyncPendingBroadcastScope = normalizedScope === "workspace"
+        ? "workspace"
+        : state.liveSyncPendingBroadcastScope === "workspace"
+          ? "workspace"
+          : normalizedScope;
+      return;
+    }
     if (!state.liveSyncChannel?.send) return;
     void state.liveSyncChannel.send({
       type: "broadcast",
       event: "crm-sync",
       payload: {
-        scope,
+        scope: normalizedScope,
         at: new Date().toISOString(),
         userId: state.currentUser?.id || null
       }
@@ -3517,6 +3527,21 @@
   function endProtectedLiveSyncMutation(delayMs = 1200) {
     state.liveSyncProtectedMutationCount = Math.max(0, Number(state.liveSyncProtectedMutationCount || 0) - 1);
     markLocalMutationCooldown(delayMs);
+    if (Number(state.liveSyncProtectedMutationCount || 0) > 0) return;
+    const pendingScope = state.liveSyncPendingBroadcastScope;
+    state.liveSyncPendingBroadcastScope = null;
+    if (!pendingScope) return;
+    window.setTimeout(() => {
+      if (Number(state.liveSyncProtectedMutationCount || 0) > 0) {
+        state.liveSyncPendingBroadcastScope = pendingScope === "workspace"
+          ? "workspace"
+          : state.liveSyncPendingBroadcastScope === "workspace"
+            ? "workspace"
+            : pendingScope;
+        return;
+      }
+      notifyLiveSyncChange(pendingScope);
+    }, 0);
   }
 
   function queueLocalConsistencyRefresh(reason = "local-mutation", delayMs = 1200) {
