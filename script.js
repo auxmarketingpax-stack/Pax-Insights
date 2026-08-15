@@ -13616,6 +13616,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "lead-workspace-content",
         snapshot: {
           leads: true,
           funnelWorkspace: true,
@@ -17343,6 +17344,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "lead-workspace-content",
         snapshot: {
           leads: true,
           funnelWorkspace: true,
@@ -17748,6 +17750,7 @@
     const nextNotes = buildLeadNotificationNotes(context);
 
     await executeFinalizedCriticalMutation({
+      serializeKey: "lead-workspace-content",
       snapshot: {
         leads: true
       },
@@ -18027,6 +18030,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "lead-workspace-content",
         snapshot: {
           leads: true,
           funnelWorkspace: true,
