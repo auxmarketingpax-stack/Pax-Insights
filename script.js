@@ -2828,7 +2828,11 @@
 
       state.ownerReconciliationDone = true;
       writeStoredOwnerReconciliationDone(true);
-      await loadAppData({ includeProfiles: state.profilesLoaded });
+      await refreshFullAppDataSilently({
+        includeProfiles: state.profilesLoaded,
+        includeAdminData: state.adminDataLoaded,
+        forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+      });
       return true;
     } finally {
       state.ownerReconciliationInProgress = false;
@@ -3952,6 +3956,93 @@
     };
   }
 
+  function captureAppShellRefreshSignatures() {
+    return {
+      previousViewSignature: buildActiveViewRefreshSignature(),
+      previousNotificationsSignature: buildNotificationsRefreshSignature(),
+      previousFunnelNavSignature: buildFunnelNavRefreshSignature()
+    };
+  }
+
+  async function refreshAdministrativeShellData({
+    profiles = false,
+    adminData = false,
+    departments = false,
+    forceProfiles = true,
+    forceAdminData = true,
+    forceActiveViewRender = false,
+    forceNotificationsRender = false,
+    highlightLead = true
+  } = {}) {
+    const shouldLoadProfiles = profiles === true;
+    const shouldLoadAdminData = adminData === true;
+    const shouldLoadDepartments = departments === true;
+    if (!shouldLoadProfiles && !shouldLoadAdminData && !shouldLoadDepartments) {
+      return false;
+    }
+
+    const refreshContext = captureAppShellRefreshSignatures();
+    const tasks = [];
+
+    if (shouldLoadProfiles) {
+      tasks.push(loadProfilesIfNeeded(forceProfiles, { silent: true }));
+    }
+    if (shouldLoadAdminData) {
+      tasks.push(loadAdminDataIfNeeded(forceAdminData, { silent: true }));
+    }
+    if (shouldLoadDepartments) {
+      tasks.push(loadDepartments(true).then(() => true));
+    }
+
+    const results = await Promise.allSettled(tasks);
+    const hasSuccessfulRefresh = results.some((result) => result.status === "fulfilled" && result.value !== false);
+    if (!hasSuccessfulRefresh) {
+      return false;
+    }
+
+    refreshAppShellAfterSilentDataChange({
+      ...refreshContext,
+      forceActiveViewRender,
+      forceNotificationsRender,
+      highlightLead
+    });
+    if (!els.historyModalOverlay?.classList.contains("hidden")) {
+      renderHistoryText();
+    }
+    return true;
+  }
+
+  async function refreshFullAppDataSilently({
+    includeProfiles = state.profilesLoaded,
+    includeAdminData = state.adminDataLoaded,
+    runRouteMigration = false,
+    runFollowUps = false,
+    restoreUiState = false,
+    forceActiveViewRender = false,
+    forceNotificationsRender = false,
+    highlightLead = true
+  } = {}) {
+    const refreshContext = captureAppShellRefreshSignatures();
+    await loadAppData({
+      includeProfiles,
+      includeAdminData,
+      runRouteMigration,
+      runFollowUps,
+      restoreUiState,
+      silentRender: true
+    });
+    refreshAppShellAfterSilentDataChange({
+      ...refreshContext,
+      forceActiveViewRender,
+      forceNotificationsRender,
+      highlightLead
+    });
+    if (!els.historyModalOverlay?.classList.contains("hidden")) {
+      renderHistoryText();
+    }
+    return true;
+  }
+
   async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist, finalize } = {}) {
     const snapshot = createFunnelWorkspaceMetaSnapshot();
     const protectedCooldownMs = 1800;
@@ -3984,22 +4075,12 @@
   }
 
   async function executeLiveDataRefresh(reason = "external-change") {
-    const previousViewSignature = buildActiveViewRefreshSignature();
-    const previousNotificationsSignature = buildNotificationsRefreshSignature();
-    const previousFunnelNavSignature = buildFunnelNavRefreshSignature();
-
-    await loadAppData({
+    await refreshFullAppDataSilently({
       includeProfiles: state.profilesLoaded,
       includeAdminData: state.adminDataLoaded,
       runRouteMigration: false,
       runFollowUps: false,
       restoreUiState: false,
-      silentRender: true
-    });
-    refreshAppShellAfterSilentDataChange({
-      previousViewSignature,
-      previousNotificationsSignature,
-      previousFunnelNavSignature,
       highlightLead: true
     });
   }
@@ -4834,10 +4915,16 @@
 
     state.stageNameCleanupInFlight = true;
     try {
-      for (const item of updates) {
-        const { error } = await supabaseApi.updateRowById(state.supabase, "stages", item.id, { name: item.after });
-        if (error) throw error;
-      }
+      const { error } = await supabaseApi.upsertRowsInChunks(
+        state.supabase,
+        "stages",
+        updates.map((item) => ({
+          id: item.id,
+          name: item.after
+        })),
+        { onConflict: "id", chunkSize: 120 }
+      );
+      if (error) throw error;
 
       applyStageNameUpdatesLocally(updates);
       writeStoredAppDataCache();
@@ -7819,25 +7906,26 @@
     const insertedStages = [];
     const basePosition = state.stages.length;
 
-    for (let index = 0; index < sourceStages.length; index += 1) {
-      const sourceStage = sourceStages[index];
-      const payload = {
-        name: sourceStage.name,
-        color: sanitizeHexColor(sourceStage.color),
-        stage_type: sourceStage.stage_type || "andamento",
-        custom_stage_type: sourceStage.custom_stage_type || null,
-        position: basePosition + index,
-        created_by: state.currentUser?.id || sourceStage.created_by || null
-      };
+    const payloadRows = sourceStages.map((sourceStage, index) => ({
+      name: sourceStage.name,
+      color: sanitizeHexColor(sourceStage.color),
+      stage_type: sourceStage.stage_type || "andamento",
+      custom_stage_type: sourceStage.custom_stage_type || null,
+      position: basePosition + index,
+      created_by: state.currentUser?.id || sourceStage.created_by || null
+    }));
 
-      const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", payload);
+    for (const chunk of chunkArray(payloadRows, 80)) {
+      const { data, error } = await supabaseApi.insertRows(state.supabase, "stages", chunk, { select: true });
       if (error) {
-        throw new Error(`Erro ao replicar pipeline "${sourceStage.name}": ${error.message}`);
+        throw new Error(`Erro ao replicar pipelines do subfunil: ${error.message}`);
       }
 
-      const normalizedStage = upsertStageLocally(data);
-      insertedStages.push(normalizedStage);
-      state.funnelWorkspace.stageAssignments[normalizedStage.id] = targetSubfunnelId;
+      (Array.isArray(data) ? data : []).forEach((row) => {
+        const normalizedStage = upsertStageLocally(row);
+        insertedStages.push(normalizedStage);
+        state.funnelWorkspace.stageAssignments[normalizedStage.id] = targetSubfunnelId;
+      });
     }
 
     return insertedStages;
@@ -7850,6 +7938,7 @@
       targetStages.map((stage) => [normalizeComparisonText(stage.name || ""), stage])
     );
     const stageBuckets = new Map();
+    const pendingLeadStageUpdates = [];
 
     leads.forEach((lead) => {
       const currentStage = state.stages.find((stage) => stage.id === lead.stage_id) || null;
@@ -7858,14 +7947,29 @@
 
       if (!stageBuckets.has(targetStage.id)) stageBuckets.set(targetStage.id, []);
       stageBuckets.get(targetStage.id).push(lead.id);
+      pendingLeadStageUpdates.push({
+        id: lead.id,
+        payload: { stage_id: targetStage.id }
+      });
       state.funnelWorkspace.leadAssignments[lead.id] = targetSubfunnelId;
     });
+
+    const totalLeadIds = normalizeIdList(pendingLeadStageUpdates.map((item) => item.id));
+    registerPendingLeadRowsFromUpdates(
+      pendingLeadStageUpdates,
+      getChunkAwarePendingCommitTtl(totalLeadIds.length, {
+        baseMs: PENDING_LEAD_ROW_COMMIT_TTL_MS,
+        chunkSize: 200,
+        perChunkMs: 3000
+      })
+    );
 
     for (const [stageId, leadIds] of stageBuckets.entries()) {
       for (const chunk of chunkArray(leadIds, 200)) {
         const { error } = await supabaseApi.updateRowsByIds(state.supabase, "leads", chunk, { stage_id: stageId });
 
         if (error) {
+          clearPendingLeadRowCommits(totalLeadIds);
           throw new Error(`Erro ao mover leads para a pipeline destino: ${error.message}`);
         }
       }
@@ -8402,98 +8506,60 @@
     }
 
     const funnelIds = funnelRows.map((item) => item.id);
+    const persistenceTasks = [];
+
     if (funnelIds.length) {
-      const existingPermissionsRes = await supabaseApi.selectRows(state.supabase, "crm_funnel_department_permissions", {
-        select: "funnel_id, department_id, access_level",
-        filters: [{ column: "funnel_id", op: "in", value: funnelIds }]
-      });
-      if (existingPermissionsRes.error) throw existingPermissionsRes.error;
-
-      const existingPermissionsByFunnel = new Map();
-      (existingPermissionsRes.data || []).forEach((row) => {
-        const funnelId = String(row?.funnel_id || "").trim();
-        const departmentId = String(row?.department_id || "").trim();
-        if (!funnelId || !departmentId) return;
-        if (!existingPermissionsByFunnel.has(funnelId)) existingPermissionsByFunnel.set(funnelId, []);
-        existingPermissionsByFunnel.get(funnelId).push({
-          funnel_id: funnelId,
-          department_id: departmentId,
-          access_level: String(row?.access_level || FUNNEL_ACCESS_LEVEL.VIEW).trim().toLowerCase()
-        });
-      });
-
-      if (permissionRows.length) {
-        const { error: permissionUpsertError } = await supabaseApi.upsertRowsInChunks(
-          state.supabase,
-          "crm_funnel_department_permissions",
-          permissionRows,
-          { onConflict: "funnel_id,department_id", chunkSize: 80 }
-        );
-        if (permissionUpsertError) throw permissionUpsertError;
-      }
-
-      for (const funnelId of funnelIds) {
-        const nextDepartmentIds = new Set(
-          permissionRows
-            .filter((item) => String(item?.funnel_id || "").trim() === String(funnelId))
-            .map((item) => String(item?.department_id || "").trim())
-            .filter(Boolean)
-        );
-        const removedDepartmentIds = (existingPermissionsByFunnel.get(String(funnelId)) || [])
-          .map((item) => String(item.department_id || "").trim())
-          .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
-
-        if (!removedDepartmentIds.length) continue;
-        const { error: deletePermissionError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
-          state.supabase,
-          "crm_funnel_department_permissions",
-          "department_id",
-          removedDepartmentIds,
-          {
-            chunkSize: 80,
-            extraFilters: [{ column: "funnel_id", op: "eq", value: funnelId }]
-          }
-        );
-        if (deletePermissionError) throw deletePermissionError;
-      }
+      persistenceTasks.push(
+        persistFunnelPermissionRowsToSupabase(funnelIds, permissionRows)
+      );
     }
 
     if (stageRows.length) {
-      const { error } = await supabaseApi.upsertRowsInChunks(
-        state.supabase,
-        "crm_stage_subfunnel_assignments",
-        stageRows,
-        { onConflict: "stage_id", chunkSize: 120 }
-      );
-      if (error) throw error;
+      persistenceTasks.push((async () => {
+        const { error } = await supabaseApi.upsertRowsInChunks(
+          state.supabase,
+          "crm_stage_subfunnel_assignments",
+          stageRows,
+          { onConflict: "stage_id", chunkSize: 120 }
+        );
+        if (error) throw error;
+      })());
     }
 
     if (leadRows.length) {
-      const { error } = await supabaseApi.upsertRowsInChunks(
-        state.supabase,
-        "crm_lead_subfunnel_assignments",
-        leadRows,
-        { onConflict: "lead_id", chunkSize: 120 }
-      );
-      if (error) throw error;
+      persistenceTasks.push((async () => {
+        const { error } = await supabaseApi.upsertRowsInChunks(
+          state.supabase,
+          "crm_lead_subfunnel_assignments",
+          leadRows,
+          { onConflict: "lead_id", chunkSize: 120 }
+        );
+        if (error) throw error;
+      })());
     }
 
     if (stageReminderTableAvailable) {
-      if (removedStageReminderIds.length) {
-        const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_stage_reminder_configs", "stage_id", removedStageReminderIds, {
-          chunkSize: 80
-        });
-        if (error) throw error;
-      }
-      if (stageReminderRows.length) {
-        const { error } = await supabaseApi.upsertRowsInChunks(
-          state.supabase,
-          "crm_stage_reminder_configs",
-          stageReminderRows,
-          { onConflict: "stage_id", chunkSize: 80 }
-        );
-        if (error) throw error;
-      }
+      persistenceTasks.push((async () => {
+        if (removedStageReminderIds.length) {
+          const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_stage_reminder_configs", "stage_id", removedStageReminderIds, {
+            chunkSize: 80
+          });
+          if (error) throw error;
+        }
+        if (stageReminderRows.length) {
+          const { error } = await supabaseApi.upsertRowsInChunks(
+            state.supabase,
+            "crm_stage_reminder_configs",
+            stageReminderRows,
+            { onConflict: "stage_id", chunkSize: 80 }
+          );
+          if (error) throw error;
+        }
+      })());
+    }
+
+    if (persistenceTasks.length) {
+      await Promise.all(persistenceTasks);
     }
 
     if (removedFunnelIds.length) {
@@ -8833,9 +8899,9 @@
       state.subfunnelOrderSyncQueue = [];
 
       try {
-        for (const pendingFunnelId of pendingFunnelIds) {
-          await persistSubfunnelOrderToSupabase(pendingFunnelId);
-        }
+        await Promise.all(
+          pendingFunnelIds.map((pendingFunnelId) => persistSubfunnelOrderToSupabase(pendingFunnelId))
+        );
         notifyLiveSyncChange("funnel-workspace");
       } catch (error) {
         console.error("Erro ao sincronizar ordem dos subfunis com Supabase:", error);
@@ -10276,7 +10342,11 @@
     els.stageType.value = getSelectableStageTypeOptions(true).find((item) => item.value !== selected)?.value || "personalizado";
     if (els.customStageType) els.customStageType.value = "";
     toggleCustomStageTypeField();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   function getPlanCatalogWithDefault() {
@@ -12043,7 +12113,12 @@
     if (els.appScreen.classList.contains("hidden")) {
       await enterApp();
     } else {
-      await loadAppData({ includeProfiles: state.profilesLoaded });
+      await refreshFullAppDataSilently({
+        includeProfiles: state.profilesLoaded,
+        includeAdminData: state.adminDataLoaded,
+        forceActiveViewRender: true,
+        forceNotificationsRender: true
+      });
     }
   }
 
@@ -12187,20 +12262,11 @@
   async function hydrateEnterAppFromCache() {
     restoreStoredFunnelUiState();
     finalizePrimaryAppRender();
-    const previousViewSignature = buildActiveViewRefreshSignature();
-    const previousNotificationsSignature = buildNotificationsRefreshSignature();
-    const previousFunnelNavSignature = buildFunnelNavRefreshSignature();
-    await loadAppData({
+    await refreshFullAppDataSilently({
       includeProfiles: false,
       includeAdminData: false,
       runRouteMigration: false,
       restoreUiState: false,
-      silentRender: true
-    });
-    refreshAppShellAfterSilentDataChange({
-      previousViewSignature,
-      previousNotificationsSignature,
-      previousFunnelNavSignature,
       highlightLead: true
     });
     runEnterAppSecondaryLoads();
@@ -14690,7 +14756,12 @@
 
     alert(`${payload.length} lead(s) importado(s) com sucesso.`);
     els.csvFileInput.value = "";
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: true,
+      highlightLead: isFunnelDetailActive()
+    });
   }
 
   function closeFunnelContextMenu() {
@@ -16086,7 +16157,10 @@
 
     closePermissionRequestModal();
     alert("Solicitacao enviada para a aba Solicitacoes.");
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshAdministrativeShellData({
+      adminData: state.adminDataLoaded,
+      forceNotificationsRender: true
+    });
   }
 
   function resolveManageableProfile(profileId, options = {}) {
@@ -16122,7 +16196,10 @@
       applyRoleBasedUi();
     }
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      forceActiveViewRender: state.activeView === "equipe"
+    });
   }
 
   async function updateProfileDepartment(profileId, departmentId, secondaryDepartmentId = null) {
@@ -16158,7 +16235,10 @@
       };
     }
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      forceActiveViewRender: state.activeView === "equipe"
+    });
   }
 
   function collectTeamMemberDeleteContext(profileId) {
@@ -16219,7 +16299,11 @@
     }
 
     if (els.departmentName) els.departmentName.value = "";
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      departments: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes"
+    });
   }
 
   function collectDepartmentDeleteContext(departmentId) {
@@ -16247,7 +16331,11 @@
       return;
     }
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      departments: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes"
+    });
   }
 
   async function deleteTeamMember(profileId) {
@@ -16272,7 +16360,11 @@
       { email: context.profile.email || null, role: context.profile.role || null }
     );
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      departments: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes"
+    });
     alert("Usuario excluido com sucesso.");
   }
 
@@ -16366,7 +16458,12 @@
       approvedSecondaryDepartmentId
     ));
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      adminData: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes",
+      forceNotificationsRender: true
+    });
   }
 
   async function approvePendingAccessRequest(requestId, role, approvedDepartmentId, approvedSecondaryDepartmentId) {
@@ -16413,7 +16510,12 @@
       return;
     }
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      adminData: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes",
+      forceNotificationsRender: true
+    });
   }
 
   async function approveAccessRequest(requestId, role, departmentId = null, secondaryDepartmentId = null) {
@@ -16478,7 +16580,12 @@
     }
 
     await updateSyntheticAccessRequest(profile, buildRejectedAccessRequestPayload());
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      adminData: true,
+      forceActiveViewRender: state.activeView === "equipe" || state.activeView === "configuracoes",
+      forceNotificationsRender: true
+    });
   }
 
   async function rejectPendingAccessRequest(requestId) {
@@ -16513,7 +16620,12 @@
       return;
     }
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      adminData: true,
+      forceActiveViewRender: state.activeView === "configuracoes",
+      forceNotificationsRender: true
+    });
   }
 
   async function rejectAccessRequest(requestId) {
@@ -16696,7 +16808,12 @@
     const resolved = await persistAdminRequestResolution(requestId, action);
     if (!resolved) return;
 
-    await loadAppData({ includeProfiles: true });
+    await refreshAdministrativeShellData({
+      profiles: true,
+      adminData: true,
+      forceActiveViewRender: state.activeView === "configuracoes",
+      forceNotificationsRender: true
+    });
   }
 
   function collectDepartmentFormContext() {
@@ -16744,7 +16861,11 @@
     }
 
     if (els.leadSourceName) els.leadSourceName.value = "";
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   function collectSocialSourceFormContext() {
@@ -16823,7 +16944,11 @@
       return;
     }
 
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   function collectLeadSourceDeleteContext(sourceName) {
@@ -16889,7 +17014,11 @@
       return;
     }
 
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   function collectSocialSourceEditContext(sourceName) {
@@ -16932,7 +17061,11 @@
         .map((item) => (item.name === context.currentName ? context.canonicalNextName : item.name))
     );
     writeStoredSocialSources();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   function collectSocialSourceDeleteContext(sourceName) {
@@ -16990,7 +17123,11 @@
       getSocialSourceItems().filter((item) => item.name !== context.currentName).map((item) => item.name)
     );
     writeStoredSocialSources();
-    await loadAppData({ includeProfiles: state.profilesLoaded });
+    await refreshFullAppDataSilently({
+      includeProfiles: state.profilesLoaded,
+      includeAdminData: state.adminDataLoaded,
+      forceActiveViewRender: state.activeView === "estrutura" || state.activeView === "leads" || state.activeView === "relatorios"
+    });
   }
 
   async function logChange(action, entityType, entityId, description, payload = null) {
@@ -17629,20 +17766,50 @@
   }
 
   async function persistConflictingLeadReminderCleanup(conflictingLeads = []) {
-    for (const lead of conflictingLeads) {
-      const meta = getLeadMeta(lead.notes || "", lead.value || 0);
-      const nextNotes = serializeLeadMeta({
-        ...meta,
-        reminder: null
-      });
-      registerPendingLeadRowCommit(lead.id, { notes: nextNotes });
-      const { error } = await supabaseApi.updateRowById(state.supabase, "leads", lead.id, {
-        notes: nextNotes
-      });
-      if (error) {
-        clearPendingLeadRowCommits([lead.id]);
-        throw error;
-      }
+    const updates = (Array.isArray(conflictingLeads) ? conflictingLeads : [])
+      .map((lead) => {
+        const leadId = String(lead?.id || "").trim();
+        if (!leadId) return null;
+        const meta = getLeadMeta(lead.notes || "", lead.value || 0);
+        return {
+          id: leadId,
+          notes: serializeLeadMeta({
+            ...meta,
+            reminder: null
+          })
+        };
+      })
+      .filter(Boolean);
+
+    if (!updates.length) return;
+
+    const ttlMs = getChunkAwarePendingCommitTtl(updates.length, {
+      baseMs: PENDING_LEAD_ROW_COMMIT_TTL_MS,
+      chunkSize: 120,
+      perChunkMs: 4000
+    });
+
+    registerPendingLeadRowsFromUpdates(
+      updates.map((item) => ({
+        id: item.id,
+        payload: { notes: item.notes }
+      })),
+      ttlMs
+    );
+
+    const { error } = await supabaseApi.upsertRowsInChunks(
+      state.supabase,
+      "leads",
+      updates.map((item) => ({
+        id: item.id,
+        notes: item.notes
+      })),
+      { onConflict: "id", chunkSize: 120 }
+    );
+
+    if (error) {
+      clearPendingLeadRowCommits(updates.map((item) => item.id));
+      throw error;
     }
   }
 
@@ -18053,13 +18220,36 @@
       .filter(Boolean))];
     if (!normalizedStageIds.length) return 0;
 
-    for (const stageId of normalizedStageIds) {
-      const { error } = await supabaseApi.deleteRowById(state.supabase, "stages", stageId);
-      if (error) throw error;
-
-      await deleteStageAssignmentFromSupabase(stageId);
-      await persistStageReminderConfigToSupabase(stageId, null);
+    const { error: assignmentDeleteError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "crm_stage_subfunnel_assignments",
+      "stage_id",
+      normalizedStageIds,
+      { chunkSize: 120 }
+    );
+    if (assignmentDeleteError && !isMissingRelationError(assignmentDeleteError)) {
+      throw assignmentDeleteError;
     }
+
+    const { error: reminderDeleteError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "crm_stage_reminder_configs",
+      "stage_id",
+      normalizedStageIds,
+      { chunkSize: 120 }
+    );
+    if (reminderDeleteError && !isMissingRelationError(reminderDeleteError)) {
+      throw reminderDeleteError;
+    }
+
+    const { error: stageDeleteError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "stages",
+      "id",
+      normalizedStageIds,
+      { chunkSize: 120 }
+    );
+    if (stageDeleteError) throw stageDeleteError;
 
     return removeStagesLocally(normalizedStageIds);
   }
@@ -18162,7 +18352,11 @@
         id: leadId,
         payload: { stage_id: targetStage.id }
       })),
-      12000
+      getChunkAwarePendingCommitTtl(sourceLeadIds.length, {
+        baseMs: PENDING_LEAD_ROW_COMMIT_TTL_MS,
+        chunkSize: 200,
+        perChunkMs: 3000
+      })
     );
 
     for (const chunk of chunkArray(sourceLeadIds, 200)) {
@@ -18307,7 +18501,7 @@
     });
 
     const insertedIds = [];
-    for (const chunk of chunkArray(insertRows, 50)) {
+    for (const chunk of chunkArray(insertRows, 100)) {
       const { data, error } = await supabaseApi.insertRows(state.supabase, "leads", chunk, { select: true });
 
       if (error) throw error;
@@ -18518,41 +18712,42 @@
   }
 
   async function moveStageLeadsToDeleteTargetAndLog(context = {}, targetStage = null) {
-    for (const sourceStageId of context.stageIdsToDelete) {
-      const stageLeadIds = context.affectedLeads
-        .filter((lead) => String(lead.stage_id || "").trim() === sourceStageId)
-        .map((lead) => String(lead.id || "").trim())
-        .filter(Boolean);
-      if (!stageLeadIds.length) continue;
+    const affectedLeadIds = normalizeIdList(
+      (context.affectedLeads || []).map((lead) => String(lead?.id || "").trim())
+    );
+    if (!affectedLeadIds.length || !targetStage?.id) return true;
 
-      registerPendingLeadRowsFromUpdates(
-        context.affectedLeads
-          .filter((lead) => stageLeadIds.includes(String(lead.id || "").trim()))
-          .map((lead) => ({
-            id: lead.id,
-            payload: { stage_id: targetStage.id }
-          })),
-        12000
-      );
+    registerPendingLeadRowsFromUpdates(
+      affectedLeadIds.map((leadId) => ({
+        id: leadId,
+        payload: { stage_id: targetStage.id }
+      })),
+      getChunkAwarePendingCommitTtl(affectedLeadIds.length, {
+        baseMs: PENDING_LEAD_ROW_COMMIT_TTL_MS,
+        chunkSize: 200,
+        perChunkMs: 3000
+      })
+    );
 
+    for (const chunk of chunkArray(affectedLeadIds, 200)) {
       const { error: moveError } = await supabaseApi.updateRowsByIds(
         state.supabase,
         "leads",
-        stageLeadIds,
+        chunk,
         { stage_id: targetStage.id }
       );
 
       if (moveError) {
-        clearPendingLeadRowCommits(stageLeadIds);
+        clearPendingLeadRowCommits(affectedLeadIds);
         alert(`Erro ao mover leads da pipeline: ${formatSupabaseError(moveError)}`);
         return false;
       }
-
-      updateLeadsLocallyByIds(stageLeadIds, (lead) => ({
-        ...lead,
-        stage_id: targetStage.id
-      }));
     }
+
+    updateLeadsLocallyByIds(affectedLeadIds, (lead) => ({
+      ...lead,
+      stage_id: targetStage.id
+    }));
 
     await logChange(
       "bulk_move_stage",
