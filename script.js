@@ -3629,8 +3629,7 @@
     }
     if (snapshot.funnelWorkspace) {
       state.funnelWorkspace = cloneMutableState(snapshot.funnelWorkspace, getDefaultFunnelWorkspace()) || getDefaultFunnelWorkspace();
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
     }
     if (snapshot.selectedLeadIds) {
       state.selectedLeadIds = new Set(snapshot.selectedLeadIds);
@@ -3750,8 +3749,7 @@
     state.funnelWorkspace = cloneMutableState(snapshot.funnelWorkspace, getDefaultFunnelWorkspace()) || getDefaultFunnelWorkspace();
     state.activeFunnelId = snapshot.activeFunnelId || null;
     state.activeSubfunnelId = snapshot.activeSubfunnelId || null;
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
     finalizeLocalMutation({
       notifyScope: null,
       refresh: false,
@@ -4113,8 +4111,7 @@
       try {
         if (typeof applyLocal === "function") {
           await applyLocal(snapshot);
-          state.suppressFunnelSync = true;
-          writeStoredFunnelWorkspace();
+          writeStoredFunnelWorkspaceLocallyOnly();
         }
         if (typeof persist === "function") {
           await persist(snapshot);
@@ -5392,8 +5389,7 @@
       delete state.funnelWorkspace.stageReminderConfigs[normalizedStageId];
     }
 
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   function getLeadMonthKey(lead) {
@@ -5517,8 +5513,7 @@
     if (!Number.isFinite(normalizedTargetIndex) || normalizedTargetIndex === currentIndex) return false;
 
     funnel.subfunnels = reorderListByIndex(currentSubfunnels, currentIndex, normalizedTargetIndex);
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
     return true;
   }
 
@@ -6010,8 +6005,7 @@
       ids.forEach((leadId) => {
         delete state.funnelWorkspace.leadAssignments[leadId];
       });
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
     }
     state.selectedLeadIds = new Set([...state.selectedLeadIds].filter((leadId) => !ids.has(leadId)));
     return previousCount - state.leads.length;
@@ -6036,10 +6030,7 @@
       });
     }
 
-    if (state.funnelWorkspace) {
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
-    }
+    if (state.funnelWorkspace) writeStoredFunnelWorkspaceLocallyOnly();
 
     return previousCount - state.stages.length;
   }
@@ -6555,6 +6546,11 @@
       markLocalMutationCooldown(1800);
       queueFunnelWorkspaceSync();
     }
+  }
+
+  function writeStoredFunnelWorkspaceLocallyOnly() {
+    state.suppressFunnelSync = true;
+    writeStoredFunnelWorkspace();
   }
 
   function readStoredAppDataCache() {
@@ -8206,8 +8202,7 @@
         return false;
       }
 
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
       try {
         const normalizedAffectedFunnelIds = [...affectedFunnelIds].filter(Boolean);
         if (normalizedAffectedFunnelIds.length) {
@@ -8295,9 +8290,7 @@
       }
 
       // A consolidação já acontece no workspace local durante a normalização.
-      // Não forçamos persistência aqui para evitar timeouts em workspaces grandes.
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      // Aqui só marcamos a rotina como concluída para evitar reprocessamento.
       writeStoredExternalActionsFunnelMergeDone(true);
 
       return true;
@@ -8509,8 +8502,7 @@
         await removeStagesByIds(stagesToDelete);
       }
 
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
       writeStoredAppDataCache();
       writeStoredB2CExternalCaptureNormalizationDone(true);
       notifyLiveSyncChange("funnel-workspace");
@@ -9449,8 +9441,7 @@
       previousAssignments.set(stageId, String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim() || null);
       assignStageToSubfunnel(stageId, normalizedSubfunnelId, { deferSync: true });
     });
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
     return previousAssignments;
   }
 
@@ -9468,8 +9459,7 @@
       }
     });
 
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   function applyLeadAssignmentsLocally(leadIds = [], subfunnelId) {
@@ -9482,8 +9472,7 @@
       previousAssignments.set(leadId, String(state.funnelWorkspace?.leadAssignments?.[leadId] || "").trim() || null);
       assignLeadToSubfunnel(leadId, normalizedSubfunnelId, { deferSync: true });
     });
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
     return previousAssignments;
   }
 
@@ -9501,8 +9490,7 @@
       }
     });
 
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   async function persistWorkspaceAssignmentsSafely({
@@ -18259,8 +18247,7 @@
     }));
     if (context.shouldPersistLeadSubfunnelChange) {
       assignLeadToSubfunnel(context.lead.id, context.targetSubfunnelId, { deferSync: true });
-      state.suppressFunnelSync = true;
-      writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
     }
   }
 
@@ -18758,8 +18745,7 @@
     await cleanupDuplicateStagesInSubfunnel(normalizedTargetSubfunnelId, nextTargetPayload?.name || targetStage.name || sourceStage.name || "", {
       keepStageId: targetStage.id
     });
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+      writeStoredFunnelWorkspaceLocallyOnly();
 
     await logChange(
       "merge",
@@ -19126,8 +19112,7 @@
 
   async function persistStageDeleteStages(context = {}) {
     await removeStagesByIds(context.stageIdsToDelete);
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   function buildStageDeleteHistoryPayload(context = {}, targetStage = null) {
