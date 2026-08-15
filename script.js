@@ -8840,6 +8840,109 @@
     }
   }
 
+  function buildStageAssignmentRowsByIds(stageIds = []) {
+    const normalizedStageIds = normalizeIdList(stageIds);
+    return normalizedStageIds
+      .map((stageId) => {
+        const subfunnelId = String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim();
+        if (!subfunnelId) return null;
+        return {
+          stage_id: stageId,
+          subfunnel_id: subfunnelId
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function buildLeadAssignmentRowsByIds(leadIds = []) {
+    const normalizedLeadIds = normalizeIdList(leadIds);
+    return normalizedLeadIds
+      .map((leadId) => {
+        const subfunnelId = String(state.funnelWorkspace?.leadAssignments?.[leadId] || "").trim();
+        if (!subfunnelId) return null;
+        return {
+          lead_id: leadId,
+          subfunnel_id: subfunnelId
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function persistWorkspaceAssignmentsSubsetToSupabase({ stageIds = [], leadIds = [] } = {}) {
+    if (!state.funnelDataLoadedFromSupabase || !state.supabase) return;
+
+    const stageRows = buildStageAssignmentRowsByIds(stageIds);
+    const leadRows = buildLeadAssignmentRowsByIds(leadIds);
+    const persistenceTasks = [];
+
+    if (stageRows.length) {
+      persistenceTasks.push((async () => {
+        const { error } = await supabaseApi.upsertRowsInChunks(
+          state.supabase,
+          "crm_stage_subfunnel_assignments",
+          stageRows,
+          { onConflict: "stage_id", chunkSize: 120 }
+        );
+        if (error) throw error;
+      })());
+    }
+
+    if (leadRows.length) {
+      persistenceTasks.push((async () => {
+        const { error } = await supabaseApi.upsertRowsInChunks(
+          state.supabase,
+          "crm_lead_subfunnel_assignments",
+          leadRows,
+          { onConflict: "lead_id", chunkSize: 120 }
+        );
+        if (error) throw error;
+      })());
+    }
+
+    if (persistenceTasks.length) {
+      await Promise.all(persistenceTasks);
+    }
+  }
+
+  async function deleteFunnelPermissionsByFunnelIds(funnelIds = []) {
+    const normalizedFunnelIds = normalizeIdList(funnelIds);
+    if (!normalizedFunnelIds.length || !state.supabase) return;
+    const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "crm_funnel_department_permissions",
+      "funnel_id",
+      normalizedFunnelIds,
+      { chunkSize: 80 }
+    );
+    if (error && !isMissingRelationError(error)) throw error;
+  }
+
+  async function deleteSubfunnelsByIdsFromSupabase(subfunnelIds = []) {
+    const normalizedSubfunnelIds = normalizeIdList(subfunnelIds);
+    if (!normalizedSubfunnelIds.length || !state.supabase) return;
+    const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "crm_subfunnels",
+      "id",
+      normalizedSubfunnelIds,
+      { chunkSize: 80 }
+    );
+    if (error) throw error;
+  }
+
+  async function deleteFunnelsByIdsFromSupabase(funnelIds = []) {
+    const normalizedFunnelIds = normalizeIdList(funnelIds);
+    if (!normalizedFunnelIds.length || !state.supabase) return;
+    const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+      state.supabase,
+      "crm_funnels",
+      "id",
+      normalizedFunnelIds,
+      { chunkSize: 80 }
+    );
+    if (error) throw error;
+  }
+
   async function persistStageReminderConfigToSupabase(stageId, nextReminder) {
     const normalizedStageId = String(stageId || "").trim();
     if (!normalizedStageId || !state.supabase) return false;
@@ -9444,6 +9547,10 @@
     }
     const fallbackSubfunnel = currentSubfunnels.find((item) => item.id !== subfunnelId) || null;
     const previousStructureSubfunnelId = state.structureSubfunnelId;
+    const affectedStageIds = Object.keys(state.funnelWorkspace?.stageAssignments || {})
+      .filter((stageId) => String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim() === String(subfunnelId || "").trim());
+    const affectedLeadIds = Object.keys(state.funnelWorkspace?.leadAssignments || {})
+      .filter((leadId) => String(state.funnelWorkspace?.leadAssignments?.[leadId] || "").trim() === String(subfunnelId || "").trim());
 
     await executeFunnelWorkspaceMetaMutation({
       applyLocal: () => {
@@ -9474,7 +9581,17 @@
       },
       persist: async () => {
         if (state.funnelDataLoadedFromSupabase) {
-          await persistFunnelWorkspaceToSupabase();
+          await persistSingleFunnelSubsetByIdOrThrow(funnelId, {
+            includeSubfunnels: true,
+            includePermissions: false
+          });
+          await persistWorkspaceAssignmentsSubsetToSupabase({
+            stageIds: affectedStageIds,
+            leadIds: affectedLeadIds
+          });
+          forgetDeletedFunnelWorkspaceIds({
+            subfunnels: [subfunnelId]
+          });
         }
       },
       afterPersist: async () => {
@@ -9498,6 +9615,10 @@
     const fallbackSubfunnelId = fallbackFunnel?.subfunnels?.[0]?.id || null;
     const removedSubfunnelIds = new Set((funnel.subfunnels || []).map((item) => item.id));
     const previousStructureFunnelId = state.structureFunnelId;
+    const affectedStageIds = Object.keys(state.funnelWorkspace?.stageAssignments || {})
+      .filter((stageId) => removedSubfunnelIds.has(String(state.funnelWorkspace?.stageAssignments?.[stageId] || "").trim()));
+    const affectedLeadIds = Object.keys(state.funnelWorkspace?.leadAssignments || {})
+      .filter((leadId) => removedSubfunnelIds.has(String(state.funnelWorkspace?.leadAssignments?.[leadId] || "").trim()));
 
     await executeFunnelWorkspaceMetaMutation({
       applyLocal: () => {
@@ -9535,7 +9656,18 @@
       },
       persist: async () => {
         if (state.funnelDataLoadedFromSupabase) {
-          await persistFunnelWorkspaceToSupabase();
+          await persistWorkspaceAssignmentsSubsetToSupabase({
+            stageIds: affectedStageIds,
+            leadIds: affectedLeadIds
+          });
+          await deleteSubfunnelsByIdsFromSupabase([...removedSubfunnelIds]);
+          await deleteFunnelPermissionsByFunnelIds([funnelId]);
+          await deleteFunnelsByIdsFromSupabase([funnelId]);
+          await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
+          forgetDeletedFunnelWorkspaceIds({
+            funnels: [funnelId],
+            subfunnels: [...removedSubfunnelIds]
+          });
         }
       },
       afterPersist: async () => {
@@ -15081,7 +15213,10 @@
       },
       persist: async () => {
         if (state.funnelDataLoadedFromSupabase) {
-          await persistFunnelWorkspaceToSupabase();
+          await persistSharedFunnelWorkspaceMetaToSupabase(state.funnelWorkspace);
+          forgetDeletedFunnelWorkspaceIds({
+            groups: [groupId]
+          });
         }
       },
       afterPersist: async () => {
