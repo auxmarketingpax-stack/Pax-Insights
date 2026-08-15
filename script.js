@@ -8027,6 +8027,13 @@
       });
     }
 
+    if (insertedStages.length) {
+      await persistStageAssignmentsToSupabase(
+        insertedStages.map((stage) => stage.id),
+        targetSubfunnelId
+      );
+    }
+
     return insertedStages;
   }
 
@@ -8157,6 +8164,7 @@
 
       let workspaceChanged = false;
       let movedLeadCount = 0;
+      const affectedFunnelIds = new Set();
 
       for (const target of targets) {
         const funnelExistedBefore = Boolean(findWorkspaceFunnel(target.category, target.groupName, target.funnelName));
@@ -8167,11 +8175,15 @@
 
         if (!funnelExistedBefore || !subfunnelExistedBefore) {
           workspaceChanged = true;
+          affectedFunnelIds.add(String(targetFunnel.id || "").trim());
         }
 
         if (!stagesExistedBefore) {
           const clonedStages = await cloneStagesIntoSubfunnel(sourceTemplate.subfunnel.id, targetSubfunnel.id);
-          if (clonedStages.length) workspaceChanged = true;
+          if (clonedStages.length) {
+            workspaceChanged = true;
+            affectedFunnelIds.add(String(targetFunnel.id || "").trim());
+          }
         }
 
         const targetStageIds = new Set(getStagesForSubfunnel(targetSubfunnel.id).map((stage) => stage.id));
@@ -8196,7 +8208,17 @@
       state.suppressFunnelSync = true;
       writeStoredFunnelWorkspace();
       try {
-        await persistFunnelWorkspaceToSupabase();
+        const normalizedAffectedFunnelIds = [...affectedFunnelIds].filter(Boolean);
+        if (normalizedAffectedFunnelIds.length) {
+          await Promise.all(
+            normalizedAffectedFunnelIds.map((funnelId) => persistSingleFunnelSubsetByIdOrThrow(funnelId, {
+              includeSubfunnels: true,
+              includePermissions: true
+            }))
+          );
+        }
+        await persistSharedFunnelGroupsMetaToSupabase(state.funnelWorkspace);
+        await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
       } catch (error) {
         if (/row-level security policy/i.test(String(error?.message || ""))) {
           console.warn("Sincronização remota do workspace bloqueada por RLS. Mantendo ajuste apenas no workspace local.");
@@ -8423,6 +8445,7 @@
 
       const captureExtraStages = captureStagePool.filter((stage) => !usedCaptureStageIds.has(stage.id));
       const stagesToDelete = [];
+      const selectedCaptureStageIds = [];
 
       for (const stage of captureExtraStages) {
         const stageKey = compareKey(stage.name || "");
@@ -8465,11 +8488,16 @@
         if (updateError) throw updateError;
 
         assignStageToSubfunnel(nextStage.id, captureSubfunnel.id, { deferSync: true });
+        selectedCaptureStageIds.push(nextStage.id);
         const localStage = state.stages.find((stage) => stage.id === nextStage.id);
         if (localStage) {
           localStage.name = nextName;
           localStage.position = nextPosition;
         }
+      }
+
+      if (selectedCaptureStageIds.length) {
+        await persistStageAssignmentsToSupabase(selectedCaptureStageIds, captureSubfunnel.id);
       }
 
       if (stagesToDelete.length) {
@@ -9059,6 +9087,18 @@
     if (finalResult.error) throw finalResult.error;
   }
 
+  async function executeQueuedFunnelWorkspaceSync(persist) {
+    if (typeof persist !== "function") return;
+    await executeCriticalMutation({
+      serializeKey: "funnel-workspace-meta",
+      protectedCooldownMs: 1800,
+      persist,
+      afterPersist: async () => {
+        notifyLiveSyncChange("funnel-workspace");
+      }
+    });
+  }
+
   function queueFunnelWorkspaceSync() {
     if (!state.funnelDataLoadedFromSupabase) return;
     if (state.funnelSyncInFlight) {
@@ -9069,8 +9109,9 @@
     state.funnelSyncInFlight = true;
     window.setTimeout(async () => {
       try {
-        await persistFunnelWorkspaceToSupabase();
-        notifyLiveSyncChange("funnel-workspace");
+        await executeQueuedFunnelWorkspaceSync(async () => {
+          await persistFunnelWorkspaceToSupabase();
+        });
       } catch (error) {
         console.error("Erro ao sincronizar funis com Supabase:", error);
         if (/row-level security policy/i.test(String(error?.message || ""))) {
@@ -9101,10 +9142,11 @@
       state.subfunnelOrderSyncQueue = [];
 
       try {
-        await Promise.all(
-          pendingFunnelIds.map((pendingFunnelId) => persistSubfunnelOrderToSupabase(pendingFunnelId))
-        );
-        notifyLiveSyncChange("funnel-workspace");
+        await executeQueuedFunnelWorkspaceSync(async () => {
+          await Promise.all(
+            pendingFunnelIds.map((pendingFunnelId) => persistSubfunnelOrderToSupabase(pendingFunnelId))
+          );
+        });
       } catch (error) {
         console.error("Erro ao sincronizar ordem dos subfunis com Supabase:", error);
         if (/row-level security policy/i.test(String(error?.message || ""))) {
