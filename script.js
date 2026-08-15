@@ -3739,6 +3739,82 @@
     ].join(":"))).join("|");
   }
 
+  function buildLeadsViewRefreshSignature() {
+    return buildRefreshLeadSignature(getFilteredLeads());
+  }
+
+  function buildTeamViewRefreshSignature() {
+    return JSON.stringify({
+      profiles: (state.profiles || []).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.full_name || ""),
+        String(item?.role || ""),
+        String(item?.access_status || ""),
+        String(item?.approved_department_id || ""),
+        String(item?.approved_department_id_secondary || "")
+      ])),
+      accessRequests: (state.accessRequests || []).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.status || ""),
+        String(item?.email || ""),
+        String(item?.requested_role || "")
+      ])),
+      adminRequests: (state.adminRequests || []).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.status || ""),
+        String(item?.request_type || ""),
+        String(item?.entity_type || "")
+      ]))
+    });
+  }
+
+  function buildStructureViewRefreshSignature() {
+    return JSON.stringify({
+      stages: buildRefreshStageSignature(state.stages || []),
+      departments: (state.departments || []).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.name || "")
+      ])),
+      leadSources: (state.leadSources || []).map((item) => String(item?.name || item || "")),
+      socialSources: (state.socialSources || []).map((item) => String(item?.name || item || ""))
+    });
+  }
+
+  function buildConfigViewRefreshSignature() {
+    return JSON.stringify({
+      total: Array.isArray(state.history) ? state.history.length : 0,
+      latest: (state.history || []).slice(0, 20).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.created_at || ""),
+        String(item?.action || ""),
+        String(item?.entity_type || "")
+      ]))
+    });
+  }
+
+  function buildFunnelNavRefreshSignature() {
+    if (!(state.activeView === "funil" || state.funnelSidebarOpen)) return "";
+
+    return JSON.stringify({
+      sidebarOpen: Boolean(state.funnelSidebarOpen),
+      activeFunnelId: String(state.activeFunnelId || ""),
+      activeSubfunnelId: String(state.activeSubfunnelId || ""),
+      groups: (state.funnelWorkspace?.groups || []).map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.name || ""),
+        String(item?.category || ""),
+        Boolean(item?.collapsed)
+      ])),
+      funnels: getAvailableFunnels().map((item) => ([
+        String(item?.id || "").trim(),
+        String(item?.name || ""),
+        String(item?.category || ""),
+        String(item?.group_id || ""),
+        Array.isArray(item?.subfunnels) ? item.subfunnels.length : 0
+      ]))
+    });
+  }
+
   function buildActiveViewRefreshSignature() {
     if (state.activeView === "funil") {
       return `funil:${buildFunilViewRefreshSignature()}`;
@@ -3746,7 +3822,84 @@
     if (state.activeView === "relatorios") {
       return `relatorios:${state.reportStatsSignature || buildDashboardMetricsSignature(getDashboardMetrics())}`;
     }
+    if (state.activeView === "leads") {
+      return `leads:${buildLeadsViewRefreshSignature()}`;
+    }
+    if (state.activeView === "equipe") {
+      return `equipe:${buildTeamViewRefreshSignature()}`;
+    }
+    if (state.activeView === "estrutura") {
+      return `estrutura:${buildStructureViewRefreshSignature()}`;
+    }
+    if (state.activeView === "configuracoes") {
+      return `configuracoes:${buildConfigViewRefreshSignature()}`;
+    }
     return "";
+  }
+
+  function refreshAppShellAfterSilentDataChange({
+    previousViewSignature = "",
+    previousNotificationsSignature = "",
+    previousFunnelNavSignature = "",
+    forceActiveViewRender = false,
+    forceNotificationsRender = false,
+    highlightLead = false
+  } = {}) {
+    resetRenderComputationCache();
+    syncSelectedLeadIds();
+    applyRoleBasedUi();
+    syncResponsiveHeaderState();
+
+    let activeViewRebound = false;
+    if (!isViewAllowed(state.activeView)) {
+      bindView(getDefaultAllowedView(), { resetFunnelDetail: false });
+      activeViewRebound = true;
+    }
+
+    populateFilters();
+    renderDesktopFilterSummary();
+    renderStats();
+
+    const nextViewSignature = buildActiveViewRefreshSignature();
+    const nextNotificationsSignature = buildNotificationsRefreshSignature();
+    const nextFunnelNavSignature = buildFunnelNavRefreshSignature();
+    const activeViewChanged = forceActiveViewRender
+      || activeViewRebound
+      || previousViewSignature !== nextViewSignature;
+    const notificationsChanged = forceNotificationsRender
+      || activeViewChanged
+      || previousNotificationsSignature !== nextNotificationsSignature;
+    const funnelNavChanged = activeViewChanged || previousFunnelNavSignature !== nextFunnelNavSignature;
+
+    if (funnelNavChanged && (state.activeView === "funil" || state.funnelSidebarOpen)) {
+      renderFunnelNav();
+    }
+
+    if (activeViewChanged) {
+      renderActiveViewContent();
+    }
+
+    if (notificationsChanged) {
+      renderNotifications();
+    }
+
+    if (state.activeView === "relatorios") {
+      renderReportChartsIfNeeded();
+    }
+
+    bindGeneralActionEvents();
+    runPostRenderLayoutEffects({
+      highlightLead: Boolean(highlightLead) && state.activeView === "funil"
+    });
+
+    return {
+      activeViewChanged,
+      notificationsChanged,
+      funnelNavChanged,
+      nextViewSignature,
+      nextNotificationsSignature,
+      nextFunnelNavSignature
+    };
   }
 
   async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist, finalize } = {}) {
@@ -3783,6 +3936,7 @@
   async function executeLiveDataRefresh(reason = "external-change") {
     const previousViewSignature = buildActiveViewRefreshSignature();
     const previousNotificationsSignature = buildNotificationsRefreshSignature();
+    const previousFunnelNavSignature = buildFunnelNavRefreshSignature();
 
     await loadAppData({
       includeProfiles: state.profilesLoaded,
@@ -3792,18 +3946,12 @@
       restoreUiState: false,
       silentRender: true
     });
-
-    const nextViewSignature = buildActiveViewRefreshSignature();
-    const nextNotificationsSignature = buildNotificationsRefreshSignature();
-
-    if (previousViewSignature === nextViewSignature) {
-      if (previousNotificationsSignature !== nextNotificationsSignature) {
-        renderNotifications();
-      }
-      return;
-    }
-
-    renderAll();
+    refreshAppShellAfterSilentDataChange({
+      previousViewSignature,
+      previousNotificationsSignature,
+      previousFunnelNavSignature,
+      highlightLead: true
+    });
   }
 
   function scheduleLiveDataRefresh(reason = "external-change", options = {}) {
@@ -11883,6 +12031,9 @@
     void (async () => {
       await waitForNextPaint();
       try {
+        const previousViewSignature = buildActiveViewRefreshSignature();
+        const previousNotificationsSignature = buildNotificationsRefreshSignature();
+        const previousFunnelNavSignature = buildFunnelNavRefreshSignature();
         const results = await Promise.allSettled([
           loadProfilesIfNeeded(false, { silent: true }),
           loadAdminDataIfNeeded(false, { silent: true }),
@@ -11890,7 +12041,12 @@
         ]);
         const shouldRerender = results.some((result) => result.status === "fulfilled" && result.value === true);
         if (shouldRerender) {
-          renderAll();
+          refreshAppShellAfterSilentDataChange({
+            previousViewSignature,
+            previousNotificationsSignature,
+            previousFunnelNavSignature,
+            highlightLead: true
+          });
         }
       } catch (error) {
         console.error("Erro ao finalizar o carregamento secundário:", error);
@@ -11901,6 +12057,9 @@
   async function hydrateEnterAppFromCache() {
     restoreStoredFunnelUiState();
     finalizePrimaryAppRender();
+    const previousViewSignature = buildActiveViewRefreshSignature();
+    const previousNotificationsSignature = buildNotificationsRefreshSignature();
+    const previousFunnelNavSignature = buildFunnelNavRefreshSignature();
     await loadAppData({
       includeProfiles: false,
       includeAdminData: false,
@@ -11908,7 +12067,12 @@
       restoreUiState: false,
       silentRender: true
     });
-    finalizePrimaryAppRender({ rebindView: false, revealScreen: false });
+    refreshAppShellAfterSilentDataChange({
+      previousViewSignature,
+      previousNotificationsSignature,
+      previousFunnelNavSignature,
+      highlightLead: true
+    });
     runEnterAppSecondaryLoads();
   }
 
@@ -12194,6 +12358,9 @@
   async function loadProfilesIfNeeded(force = false, options = {}) {
     const silent = options.silent === true;
     if (!force && state.profilesLoaded) return false;
+    const previousViewSignature = silent ? "" : buildActiveViewRefreshSignature();
+    const previousNotificationsSignature = silent ? "" : buildNotificationsRefreshSignature();
+    const previousFunnelNavSignature = silent ? "" : buildFunnelNavRefreshSignature();
 
     const { data, error } = await supabaseApi.selectRows(state.supabase, "profiles", {
       orderBy: { column: "full_name", options: { ascending: true } }
@@ -12209,7 +12376,12 @@
     state.ownerCanonicalMap = buildOwnerCanonicalMap(state.leads.map((lead) => lead?.owner), state.profiles);
     normalizeAllLeadsLocally();
     if (!silent) {
-      renderAll();
+      refreshAppShellAfterSilentDataChange({
+        previousViewSignature,
+        previousNotificationsSignature,
+        previousFunnelNavSignature,
+        highlightLead: true
+      });
       if (!els.historyModalOverlay.classList.contains("hidden")) renderHistoryText();
     }
     return true;
@@ -12217,10 +12389,21 @@
 
   async function loadAdminDataIfNeeded(force = false, options = {}) {
     const silent = options.silent === true;
+    const previousViewSignature = silent ? "" : buildActiveViewRefreshSignature();
+    const previousNotificationsSignature = silent ? "" : buildNotificationsRefreshSignature();
+    const previousFunnelNavSignature = silent ? "" : buildFunnelNavRefreshSignature();
     if (!canManageAdminAreas()) {
       state.accessRequests = [];
       state.adminRequests = [];
       state.adminDataLoaded = true;
+      if (!silent) {
+        refreshAppShellAfterSilentDataChange({
+          previousViewSignature,
+          previousNotificationsSignature,
+          previousFunnelNavSignature,
+          highlightLead: true
+        });
+      }
       return true;
     }
 
@@ -12242,8 +12425,13 @@
     state.adminRequests = adminRequestsRes.data || [];
     state.adminDataLoaded = true;
 
-    if (!silent && state.activeView === "equipe") {
-      renderTeam();
+    if (!silent) {
+      refreshAppShellAfterSilentDataChange({
+        previousViewSignature,
+        previousNotificationsSignature,
+        previousFunnelNavSignature,
+        highlightLead: true
+      });
     }
     return true;
   }
@@ -12253,6 +12441,9 @@
     if (readStoredFunnelRouteMigrationDone()) return false;
     const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) return false;
+    const previousViewSignature = silent ? "" : buildActiveViewRefreshSignature();
+    const previousNotificationsSignature = silent ? "" : buildNotificationsRefreshSignature();
+    const previousFunnelNavSignature = silent ? "" : buildFunnelNavRefreshSignature();
 
     try {
       const migratedRoutes = await ensureFunnelRouteMigration();
@@ -12271,7 +12462,13 @@
           keepFunnelSidebarOpen: state.funnelSidebarOpen,
           preserveFunnelSidebarState: true
         });
-        renderAll();
+        refreshAppShellAfterSilentDataChange({
+          previousViewSignature,
+          previousNotificationsSignature,
+          previousFunnelNavSignature,
+          forceActiveViewRender: true,
+          highlightLead: true
+        });
       }
       return true;
     } catch (error) {
