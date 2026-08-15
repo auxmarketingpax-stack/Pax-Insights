@@ -512,7 +512,10 @@
     pendingStageAssignmentCommits: new Map(),
     pendingLeadAssignmentCommits: new Map(),
     pendingLeadRowCommits: new Map(),
-    pendingLeadMoveCommits: new Map()
+    pendingLeadMoveCommits: new Map(),
+    funnelRouteMigrationInFlight: false,
+    externalActionsFunnelMergeInFlight: false,
+    b2cExternalCaptureNormalizationInFlight: false
   };
 
   const PRESET_STAGE_TYPES = [
@@ -7849,123 +7852,138 @@
   }
 
   async function ensureFunnelRouteMigration() {
+    if (state.funnelRouteMigrationInFlight) return false;
     if (readStoredFunnelRouteMigrationDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
-
-    const sourceTemplate = findSourceFunnelRouteTemplate();
-    if (!sourceTemplate?.funnel || !sourceTemplate?.subfunnel) {
-      console.warn("Migração de funis ignorada: origem Vendas > Redes Sociais > Apresentação não encontrada.");
-      return false;
-    }
-
-    const sourceSubfunnelName = String(sourceTemplate.subfunnel.name || "").trim() || "Apresentação";
-    const targets = [
-      {
-        category: "B2C",
-        groupName: "Vendas",
-        funnelName: "Indicação",
-        subfunnelName: sourceSubfunnelName,
-        leads: state.leads.filter((lead) => isIndicacaoRouteLead(lead))
-      },
-      {
-        category: "B2B",
-        groupName: "Vendas",
-        funnelName: "Ações Externas",
-        subfunnelName: sourceSubfunnelName,
-        leads: state.leads.filter((lead) => isB2BExternalEventLead(lead))
-      },
-      {
-        category: "B2B",
-        groupName: "Vendas",
-        funnelName: "Redes Sociais",
-        subfunnelName: sourceSubfunnelName,
-        leads: []
-      },
-      {
-        category: "B2C",
-        groupName: "Vendas",
-        funnelName: "Ações Externas",
-        subfunnelName: sourceSubfunnelName,
-        leads: state.leads.filter((lead) => isB2CExternalEventLead(lead))
-      }
-    ];
-
-    let workspaceChanged = false;
-    let movedLeadCount = 0;
-
-    for (const target of targets) {
-      const funnelExistedBefore = Boolean(findWorkspaceFunnel(target.category, target.groupName, target.funnelName));
-      const targetFunnel = ensureWorkspaceFunnel(target.category, target.groupName, target.funnelName, sourceTemplate);
-      const subfunnelExistedBefore = Boolean(findSubfunnelInFunnelByName(targetFunnel, target.subfunnelName));
-      const targetSubfunnel = ensureWorkspaceSubfunnel(targetFunnel, target.subfunnelName);
-      const stagesExistedBefore = getStagesForSubfunnel(targetSubfunnel.id).length > 0;
-
-      if (!funnelExistedBefore || !subfunnelExistedBefore) {
-        workspaceChanged = true;
-      }
-
-      if (!stagesExistedBefore) {
-        const clonedStages = await cloneStagesIntoSubfunnel(sourceTemplate.subfunnel.id, targetSubfunnel.id);
-        if (clonedStages.length) workspaceChanged = true;
-      }
-
-      const targetStageIds = new Set(getStagesForSubfunnel(targetSubfunnel.id).map((stage) => stage.id));
-      const leadsNeedingMove = target.leads.filter((lead) => {
-        const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id]
-          || state.funnelWorkspace?.stageAssignments?.[lead.stage_id]
-          || null;
-        return assignedSubfunnelId !== targetSubfunnel.id || !targetStageIds.has(lead.stage_id);
-      });
-
-      if (leadsNeedingMove.length) {
-        movedLeadCount += await moveLeadsToTargetSubfunnel(leadsNeedingMove, targetSubfunnel.id, getStagesForSubfunnel(targetSubfunnel.id));
-        workspaceChanged = true;
-      }
-    }
-
-    if (!workspaceChanged) {
-      writeStoredFunnelRouteMigrationDone(true);
-      return false;
-    }
-
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
+    state.funnelRouteMigrationInFlight = true;
     try {
-      await persistFunnelWorkspaceToSupabase();
-    } catch (error) {
-      if (/row-level security policy/i.test(String(error?.message || ""))) {
-        console.warn("Sincronização remota do workspace bloqueada por RLS. Mantendo ajuste apenas no workspace local.");
-        state.funnelDataLoadedFromSupabase = false;
-      } else {
-        throw error;
+      const routeLeadExists = state.leads.some((lead) => (
+        isIndicacaoRouteLead(lead)
+        || isB2BExternalEventLead(lead)
+        || isB2CExternalEventLead(lead)
+      ));
+      if (!routeLeadExists) {
+        writeStoredFunnelRouteMigrationDone(true);
+        return false;
       }
-    }
-    writeStoredFunnelRouteMigrationDone(true);
 
-    try {
-      await logChange(
-        "migrate_funnel_routes",
-        "funnel_workspace",
-        null,
-        `Leads de origem "Indicação", "Evento Externo" e "Ação Externa" foram consolidados automaticamente por ${getUserDisplayName()}.`,
+      const sourceTemplate = findSourceFunnelRouteTemplate();
+      if (!sourceTemplate?.funnel || !sourceTemplate?.subfunnel) {
+        console.warn("Migração de funis ignorada: origem Vendas > Redes Sociais > Apresentação não encontrada.");
+        return false;
+      }
+
+      const sourceSubfunnelName = String(sourceTemplate.subfunnel.name || "").trim() || "Apresentação";
+      const targets = [
         {
-          source_funnel: sourceTemplate.funnel.name,
-          source_subfunnel: sourceTemplate.subfunnel.name,
-          moved_leads: movedLeadCount,
-          targets: targets.map((item) => ({
-            category: item.category,
-            group: item.groupName,
-            funnel: item.funnelName,
-            subfunnel: item.subfunnelName,
-            matched_leads: item.leads.length
-          }))
+          category: "B2C",
+          groupName: "Vendas",
+          funnelName: "Indicação",
+          subfunnelName: sourceSubfunnelName,
+          leads: state.leads.filter((lead) => isIndicacaoRouteLead(lead))
+        },
+        {
+          category: "B2B",
+          groupName: "Vendas",
+          funnelName: "Ações Externas",
+          subfunnelName: sourceSubfunnelName,
+          leads: state.leads.filter((lead) => isB2BExternalEventLead(lead))
+        },
+        {
+          category: "B2B",
+          groupName: "Vendas",
+          funnelName: "Redes Sociais",
+          subfunnelName: sourceSubfunnelName,
+          leads: []
+        },
+        {
+          category: "B2C",
+          groupName: "Vendas",
+          funnelName: "Ações Externas",
+          subfunnelName: sourceSubfunnelName,
+          leads: state.leads.filter((lead) => isB2CExternalEventLead(lead))
         }
-      );
-    } catch (error) {
-      console.warn("Não foi possível registrar a migração no histórico:", error);
-    }
+      ];
 
-    return true;
+      let workspaceChanged = false;
+      let movedLeadCount = 0;
+
+      for (const target of targets) {
+        const funnelExistedBefore = Boolean(findWorkspaceFunnel(target.category, target.groupName, target.funnelName));
+        const targetFunnel = ensureWorkspaceFunnel(target.category, target.groupName, target.funnelName, sourceTemplate);
+        const subfunnelExistedBefore = Boolean(findSubfunnelInFunnelByName(targetFunnel, target.subfunnelName));
+        const targetSubfunnel = ensureWorkspaceSubfunnel(targetFunnel, target.subfunnelName);
+        const stagesExistedBefore = getStagesForSubfunnel(targetSubfunnel.id).length > 0;
+
+        if (!funnelExistedBefore || !subfunnelExistedBefore) {
+          workspaceChanged = true;
+        }
+
+        if (!stagesExistedBefore) {
+          const clonedStages = await cloneStagesIntoSubfunnel(sourceTemplate.subfunnel.id, targetSubfunnel.id);
+          if (clonedStages.length) workspaceChanged = true;
+        }
+
+        const targetStageIds = new Set(getStagesForSubfunnel(targetSubfunnel.id).map((stage) => stage.id));
+        const leadsNeedingMove = target.leads.filter((lead) => {
+          const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id]
+            || state.funnelWorkspace?.stageAssignments?.[lead.stage_id]
+            || null;
+          return assignedSubfunnelId !== targetSubfunnel.id || !targetStageIds.has(lead.stage_id);
+        });
+
+        if (leadsNeedingMove.length) {
+          movedLeadCount += await moveLeadsToTargetSubfunnel(leadsNeedingMove, targetSubfunnel.id, getStagesForSubfunnel(targetSubfunnel.id));
+          workspaceChanged = true;
+        }
+      }
+
+      if (!workspaceChanged) {
+        writeStoredFunnelRouteMigrationDone(true);
+        return false;
+      }
+
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+      try {
+        await persistFunnelWorkspaceToSupabase();
+      } catch (error) {
+        if (/row-level security policy/i.test(String(error?.message || ""))) {
+          console.warn("Sincronização remota do workspace bloqueada por RLS. Mantendo ajuste apenas no workspace local.");
+          state.funnelDataLoadedFromSupabase = false;
+        } else {
+          throw error;
+        }
+      }
+      writeStoredFunnelRouteMigrationDone(true);
+
+      try {
+        await logChange(
+          "migrate_funnel_routes",
+          "funnel_workspace",
+          null,
+          `Leads de origem "Indicação", "Evento Externo" e "Ação Externa" foram consolidados automaticamente por ${getUserDisplayName()}.`,
+          {
+            source_funnel: sourceTemplate.funnel.name,
+            source_subfunnel: sourceTemplate.subfunnel.name,
+            moved_leads: movedLeadCount,
+            targets: targets.map((item) => ({
+              category: item.category,
+              group: item.groupName,
+              funnel: item.funnelName,
+              subfunnel: item.subfunnelName,
+              matched_leads: item.leads.length
+            }))
+          }
+        );
+      } catch (error) {
+        console.warn("Não foi possível registrar a migração no histórico:", error);
+      }
+
+      return true;
+    } finally {
+      state.funnelRouteMigrationInFlight = false;
+    }
   }
 
   function hasExternalActionsFunnelMergeCandidate() {
@@ -7975,26 +7993,45 @@
     ));
   }
 
+  function isB2CExternalCaptureNormalized(funnel, expectedStages = []) {
+    if (!funnel || !expectedStages.length) return false;
+    const compareKey = (value) => getCanonicalValueKey(value);
+    const captureSubfunnel = (funnel.subfunnels || []).find((item) => compareKey(item?.name || "") === compareKey("Captura na ação")) || null;
+    if (!captureSubfunnel) return false;
+    const captureStages = getStagesForSubfunnel(captureSubfunnel.id)
+      .slice()
+      .sort((a, b) => Number(a?.position || 0) - Number(b?.position || 0));
+    if (captureStages.length !== expectedStages.length) return false;
+    return expectedStages.every((name, index) => compareKey(captureStages[index]?.name || "") === compareKey(name));
+  }
+
   async function ensureExternalActionsFunnelMerge() {
+    if (state.externalActionsFunnelMergeInFlight) return false;
     if (readStoredExternalActionsFunnelMergeDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
     const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!workspaceStagePermissions.canManageStages) return false;
-    if (!hasExternalActionsFunnelMergeCandidate()) {
+    state.externalActionsFunnelMergeInFlight = true;
+    try {
+      if (!hasExternalActionsFunnelMergeCandidate()) {
+        writeStoredExternalActionsFunnelMergeDone(true);
+        return false;
+      }
+
+      // A consolidação já acontece no workspace local durante a normalização.
+      // Não forçamos persistência aqui para evitar timeouts em workspaces grandes.
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
       writeStoredExternalActionsFunnelMergeDone(true);
-      return false;
+
+      return true;
+    } finally {
+      state.externalActionsFunnelMergeInFlight = false;
     }
-
-    // A consolidação já acontece no workspace local durante a normalização.
-    // Não forçamos persistência aqui para evitar timeouts em workspaces grandes.
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
-    writeStoredExternalActionsFunnelMergeDone(true);
-
-    return true;
   }
 
   async function ensureB2CExternalCaptureNormalization() {
+    if (state.b2cExternalCaptureNormalizationInFlight) return false;
     if (readStoredB2CExternalCaptureNormalizationDone()) return false;
     if (!state.supabase || !state.funnelWorkspace?.funnels?.length) return false;
     const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
@@ -8022,172 +8059,182 @@
       return false;
     }
 
+    if (isB2CExternalCaptureNormalized(funnel, expectedStages)) {
+      writeStoredB2CExternalCaptureNormalizationDone(true);
+      return false;
+    }
+
     const findSubfunnel = (name) => (funnel.subfunnels || []).find((item) => compareKey(item?.name || "") === compareKey(name)) || null;
     const captureSubfunnel = findSubfunnel("Captura na ação");
     const recycleSubfunnel = findSubfunnel("Reciclagem e encerramento");
     if (!captureSubfunnel || !recycleSubfunnel) return false;
 
-    const getLeadCountByStageId = () => {
-      const counts = new Map();
-      state.leads.forEach((lead) => {
-        const stageId = String(lead?.stage_id || "").trim();
-        counts.set(stageId, (counts.get(stageId) || 0) + 1);
-      });
-      return counts;
-    };
-    const leadCountByStageId = getLeadCountByStageId();
-    const getStageLeadCount = (stageId) => leadCountByStageId.get(String(stageId || "").trim()) || 0;
-    const captureStages = getStagesForSubfunnel(captureSubfunnel.id);
-    if (!captureStages.length) {
+    state.b2cExternalCaptureNormalizationInFlight = true;
+    try {
+      const getLeadCountByStageId = () => {
+        const counts = new Map();
+        state.leads.forEach((lead) => {
+          const stageId = String(lead?.stage_id || "").trim();
+          counts.set(stageId, (counts.get(stageId) || 0) + 1);
+        });
+        return counts;
+      };
+      const leadCountByStageId = getLeadCountByStageId();
+      const getStageLeadCount = (stageId) => leadCountByStageId.get(String(stageId || "").trim()) || 0;
+      const captureStages = getStagesForSubfunnel(captureSubfunnel.id);
+      if (!captureStages.length) {
+        writeStoredB2CExternalCaptureNormalizationDone(true);
+        return false;
+      }
+
+      const captureStagePool = [...captureStages];
+      const usedCaptureStageIds = new Set();
+      const selectCaptureStage = (preferredNames = [], { preferLeadStage = false } = {}) => {
+        const nameKeys = preferredNames.map(compareKey);
+        const candidates = captureStagePool.filter((stage) =>
+          !usedCaptureStageIds.has(stage.id)
+          && nameKeys.includes(compareKey(stage.name || ""))
+        );
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => {
+          const exactA = compareKey(a.name || "") === nameKeys[0] ? 1 : 0;
+          const exactB = compareKey(b.name || "") === nameKeys[0] ? 1 : 0;
+          if (exactA !== exactB) return exactB - exactA;
+          const leadDiff = getStageLeadCount(b.id) - getStageLeadCount(a.id);
+          if (preferLeadStage && leadDiff !== 0) return leadDiff;
+          if (!preferLeadStage && leadDiff !== 0) return leadDiff * -1;
+          return Number(a.position || 0) - Number(b.position || 0);
+        });
+        const selected = candidates[0] || null;
+        if (selected) usedCaptureStageIds.add(selected.id);
+        return selected;
+      };
+
+      const captureStagePlan = [
+        { name: "Lead captado", preferredNames: ["Lead captado", "Novo Lead/Prospecção"], preferLeadStage: true },
+        { name: "Ação, local e data registrados", preferredNames: ["Ação, local e data registrados", "Novo Lead/Prospecção", "Apresentação/Negociação", "Follow-Up"] },
+        { name: "Nome e telefone pendentes", preferredNames: ["Nome e telefone pendentes", "Abordagem/Qualificação", "Apresentação/Negociação", "Follow-Up"] },
+        { name: "Dados completos", preferredNames: ["Dados completos"] },
+        { name: "Autorização para contato confirmada", preferredNames: ["Autorização para contato confirmada"] },
+        { name: "Verificação na base", preferredNames: ["Verificação na base"] },
+        { name: "Interesse classificado como alto, médio ou baixo", preferredNames: ["Interesse classificado como alto, médio ou baixo"] },
+        { name: "Consultor responsável definido", preferredNames: ["Consultor responsável definido", "Vendedor responsável definido"] },
+        { name: "Lead liberado para atendimento", preferredNames: ["Lead liberado para atendimento"] }
+      ];
+
+      const selectedCaptureStages = [];
+      for (const plan of captureStagePlan) {
+        let stage = selectCaptureStage(plan.preferredNames, { preferLeadStage: plan.preferLeadStage === true });
+        if (!stage) {
+          stage = await createStageForSubfunnel({
+            name: plan.name,
+            color: DEFAULT_STAGE_COLOR,
+            stage_type: "andamento",
+            custom_stage_type: null,
+            position: state.stages.length,
+            created_by: state.currentUser?.id || null
+          }, captureSubfunnel.id, { deferSync: true });
+          usedCaptureStageIds.add(stage.id);
+        }
+        selectedCaptureStages.push({ ...plan, stage });
+      }
+
+      const moveLeadsBetweenStages = async (sourceStageId, targetStageId, targetSubfunnelId) => {
+        if (!sourceStageId || !targetStageId || sourceStageId === targetStageId) return 0;
+        const sourceLeadIds = state.leads
+          .filter((lead) => String(lead?.stage_id || "").trim() === String(sourceStageId || "").trim())
+          .map((lead) => String(lead?.id || "").trim())
+          .filter(Boolean);
+        if (!sourceLeadIds.length) return 0;
+
+        const { error } = await supabaseApi.updateRowsByColumnValue(
+          state.supabase,
+          "leads",
+          "stage_id",
+          sourceStageId,
+          { stage_id: targetStageId }
+        );
+        if (error) throw error;
+
+        await persistLeadAssignmentsToSupabase(sourceLeadIds, targetSubfunnelId);
+        moveLeadsToStageLocally(sourceLeadIds, targetStageId);
+        sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, targetSubfunnelId, { deferSync: true }));
+        return sourceLeadIds.length;
+      };
+
+      const findStageByCompareNames = (subfunnelId, names = []) => getStagesForSubfunnel(subfunnelId).find((stage) =>
+        names.some((name) => compareKey(stage?.name || "") === compareKey(name))
+      ) || null;
+      const recycleStageTargets = {
+        naoResponde: findStageByCompareNames(recycleSubfunnel.id, ["Não respondeu", "Não respondeu.", "Não responde"]),
+        jaAssociado: findStageByCompareNames(recycleSubfunnel.id, ["Já é associado", "Já é associado."]),
+        naoInteresse: findStageByCompareNames(recycleSubfunnel.id, ["Não tem interesse", "Não tem interesse."])
+      };
+
+      const captureExtraStages = captureStagePool.filter((stage) => !usedCaptureStageIds.has(stage.id));
+      const stagesToDelete = [];
+
+      for (const stage of captureExtraStages) {
+        const stageKey = compareKey(stage.name || "");
+        const leadCount = getStageLeadCount(stage.id);
+        let target = null;
+
+        if (stageKey === compareKey("Não responde")) {
+          target = recycleStageTargets.naoResponde;
+        } else if (stageKey === compareKey("Já é associado")) {
+          target = recycleStageTargets.jaAssociado;
+        } else if (stageKey === compareKey("Não tem interesse") || stageKey === compareKey("Cancelados")) {
+          target = recycleStageTargets.naoInteresse;
+        }
+
+        let movedLeads = 0;
+        if (leadCount > 0 && target?.id) {
+          movedLeads = await moveLeadsBetweenStages(stage.id, target.id, recycleSubfunnel.id);
+        }
+
+        if (leadCount === 0 || movedLeads === leadCount) {
+          stagesToDelete.push(stage.id);
+        }
+      }
+
+      for (const [index, entry] of selectedCaptureStages.entries()) {
+        const nextStage = entry.stage;
+        const nextName = entry.name;
+        const nextPosition = index;
+        const nextColor = sanitizeHexColor(nextStage.color);
+        const nextType = nextStage.stage_type || "andamento";
+        const nextCustomType = nextStage.custom_stage_type || null;
+
+        const { error: updateError } = await supabaseApi.updateRowById(state.supabase, "stages", nextStage.id, {
+          name: nextName,
+          position: nextPosition,
+          color: nextColor,
+          stage_type: nextType,
+          custom_stage_type: nextCustomType
+        });
+        if (updateError) throw updateError;
+
+        assignStageToSubfunnel(nextStage.id, captureSubfunnel.id, { deferSync: true });
+        const localStage = state.stages.find((stage) => stage.id === nextStage.id);
+        if (localStage) {
+          localStage.name = nextName;
+          localStage.position = nextPosition;
+        }
+      }
+
+      if (stagesToDelete.length) {
+        await removeStagesByIds(stagesToDelete);
+      }
+
+      state.suppressFunnelSync = true;
+      writeStoredFunnelWorkspace();
+      writeStoredAppDataCache();
       writeStoredB2CExternalCaptureNormalizationDone(true);
-      return false;
+      notifyLiveSyncChange("funnel-workspace");
+      return true;
+    } finally {
+      state.b2cExternalCaptureNormalizationInFlight = false;
     }
-
-    const captureStagePool = [...captureStages];
-    const usedCaptureStageIds = new Set();
-    const selectCaptureStage = (preferredNames = [], { preferLeadStage = false } = {}) => {
-      const nameKeys = preferredNames.map(compareKey);
-      const candidates = captureStagePool.filter((stage) =>
-        !usedCaptureStageIds.has(stage.id)
-        && nameKeys.includes(compareKey(stage.name || ""))
-      );
-      if (!candidates.length) return null;
-      candidates.sort((a, b) => {
-        const exactA = compareKey(a.name || "") === nameKeys[0] ? 1 : 0;
-        const exactB = compareKey(b.name || "") === nameKeys[0] ? 1 : 0;
-        if (exactA !== exactB) return exactB - exactA;
-        const leadDiff = getStageLeadCount(b.id) - getStageLeadCount(a.id);
-        if (preferLeadStage && leadDiff !== 0) return leadDiff;
-        if (!preferLeadStage && leadDiff !== 0) return leadDiff * -1;
-        return Number(a.position || 0) - Number(b.position || 0);
-      });
-      const selected = candidates[0] || null;
-      if (selected) usedCaptureStageIds.add(selected.id);
-      return selected;
-    };
-
-    const captureStagePlan = [
-      { name: "Lead captado", preferredNames: ["Lead captado", "Novo Lead/Prospecção"], preferLeadStage: true },
-      { name: "Ação, local e data registrados", preferredNames: ["Ação, local e data registrados", "Novo Lead/Prospecção", "Apresentação/Negociação", "Follow-Up"] },
-      { name: "Nome e telefone pendentes", preferredNames: ["Nome e telefone pendentes", "Abordagem/Qualificação", "Apresentação/Negociação", "Follow-Up"] },
-      { name: "Dados completos", preferredNames: ["Dados completos"] },
-      { name: "Autorização para contato confirmada", preferredNames: ["Autorização para contato confirmada"] },
-      { name: "Verificação na base", preferredNames: ["Verificação na base"] },
-      { name: "Interesse classificado como alto, médio ou baixo", preferredNames: ["Interesse classificado como alto, médio ou baixo"] },
-      { name: "Consultor responsável definido", preferredNames: ["Consultor responsável definido", "Vendedor responsável definido"] },
-      { name: "Lead liberado para atendimento", preferredNames: ["Lead liberado para atendimento"] }
-    ];
-
-    const selectedCaptureStages = [];
-    for (const plan of captureStagePlan) {
-      let stage = selectCaptureStage(plan.preferredNames, { preferLeadStage: plan.preferLeadStage === true });
-      if (!stage) {
-        stage = await createStageForSubfunnel({
-          name: plan.name,
-          color: DEFAULT_STAGE_COLOR,
-          stage_type: "andamento",
-          custom_stage_type: null,
-          position: state.stages.length,
-          created_by: state.currentUser?.id || null
-        }, captureSubfunnel.id, { deferSync: true });
-        usedCaptureStageIds.add(stage.id);
-      }
-      selectedCaptureStages.push({ ...plan, stage });
-    }
-
-    const moveLeadsBetweenStages = async (sourceStageId, targetStageId, targetSubfunnelId) => {
-      if (!sourceStageId || !targetStageId || sourceStageId === targetStageId) return 0;
-      const sourceLeadIds = state.leads
-        .filter((lead) => String(lead?.stage_id || "").trim() === String(sourceStageId || "").trim())
-        .map((lead) => String(lead?.id || "").trim())
-        .filter(Boolean);
-      if (!sourceLeadIds.length) return 0;
-
-      const { error } = await supabaseApi.updateRowsByColumnValue(
-        state.supabase,
-        "leads",
-        "stage_id",
-        sourceStageId,
-        { stage_id: targetStageId }
-      );
-      if (error) throw error;
-
-      await persistLeadAssignmentsToSupabase(sourceLeadIds, targetSubfunnelId);
-      moveLeadsToStageLocally(sourceLeadIds, targetStageId);
-      sourceLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, targetSubfunnelId, { deferSync: true }));
-      return sourceLeadIds.length;
-    };
-
-    const findStageByCompareNames = (subfunnelId, names = []) => getStagesForSubfunnel(subfunnelId).find((stage) =>
-      names.some((name) => compareKey(stage?.name || "") === compareKey(name))
-    ) || null;
-    const recycleStageTargets = {
-      naoResponde: findStageByCompareNames(recycleSubfunnel.id, ["Não respondeu", "Não respondeu.", "Não responde"]),
-      jaAssociado: findStageByCompareNames(recycleSubfunnel.id, ["Já é associado", "Já é associado."]),
-      naoInteresse: findStageByCompareNames(recycleSubfunnel.id, ["Não tem interesse", "Não tem interesse."])
-    };
-
-    const captureExtraStages = captureStagePool.filter((stage) => !usedCaptureStageIds.has(stage.id));
-    const stagesToDelete = [];
-
-    for (const stage of captureExtraStages) {
-      const stageKey = compareKey(stage.name || "");
-      const leadCount = getStageLeadCount(stage.id);
-      let target = null;
-
-      if (stageKey === compareKey("Não responde")) {
-        target = recycleStageTargets.naoResponde;
-      } else if (stageKey === compareKey("Já é associado")) {
-        target = recycleStageTargets.jaAssociado;
-      } else if (stageKey === compareKey("Não tem interesse") || stageKey === compareKey("Cancelados")) {
-        target = recycleStageTargets.naoInteresse;
-      }
-
-      let movedLeads = 0;
-      if (leadCount > 0 && target?.id) {
-        movedLeads = await moveLeadsBetweenStages(stage.id, target.id, recycleSubfunnel.id);
-      }
-
-      if (leadCount === 0 || movedLeads === leadCount) {
-        stagesToDelete.push(stage.id);
-      }
-    }
-
-    for (const [index, entry] of selectedCaptureStages.entries()) {
-      const nextStage = entry.stage;
-      const nextName = entry.name;
-      const nextPosition = index;
-      const nextColor = sanitizeHexColor(nextStage.color);
-      const nextType = nextStage.stage_type || "andamento";
-      const nextCustomType = nextStage.custom_stage_type || null;
-
-      const { error: updateError } = await supabaseApi.updateRowById(state.supabase, "stages", nextStage.id, {
-        name: nextName,
-        position: nextPosition,
-        color: nextColor,
-        stage_type: nextType,
-        custom_stage_type: nextCustomType
-      });
-      if (updateError) throw updateError;
-
-      assignStageToSubfunnel(nextStage.id, captureSubfunnel.id, { deferSync: true });
-      const localStage = state.stages.find((stage) => stage.id === nextStage.id);
-      if (localStage) {
-        localStage.name = nextName;
-        localStage.position = nextPosition;
-      }
-    }
-
-    if (stagesToDelete.length) {
-      await removeStagesByIds(stagesToDelete);
-    }
-
-    state.suppressFunnelSync = true;
-    writeStoredFunnelWorkspace();
-    writeStoredAppDataCache();
-    writeStoredB2CExternalCaptureNormalizationDone(true);
-    notifyLiveSyncChange("funnel-workspace");
-    return true;
   }
 
   async function persistFunnelWorkspaceToSupabase() {
