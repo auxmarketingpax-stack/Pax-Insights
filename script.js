@@ -537,6 +537,11 @@
   const ALLOWED_EXTERNAL_SCRIPT_URLS = new Set([CHART_JS_URL]);
   const deletingLeadIds = new Set();
   const TRANSIENT_POSITION_BASE = 1000000;
+  const PENDING_STAGE_POSITION_COMMIT_TTL_MS = 30000;
+  const PENDING_STAGE_ASSIGNMENT_COMMIT_TTL_MS = 45000;
+  const PENDING_LEAD_ASSIGNMENT_COMMIT_TTL_MS = 45000;
+  const PENDING_LEAD_MOVE_COMMIT_TTL_MS = 30000;
+  const PENDING_LEAD_ROW_COMMIT_TTL_MS = 30000;
   const CHART_GREEN_PALETTE = [
     "#14532D",
     "#166534",
@@ -2884,6 +2889,48 @@
     }
 
     return chunks;
+  }
+
+  function resolvePendingCommitTtl(ttlMs, fallbackMs = 10000) {
+    return Math.max(4000, Number(ttlMs) || Number(fallbackMs) || 10000);
+  }
+
+  function getChunkAwarePendingCommitTtl(itemCount = 0, {
+    baseMs = 10000,
+    chunkSize = 120,
+    perChunkMs = 4500
+  } = {}) {
+    const normalizedCount = Math.max(0, Number(itemCount) || 0);
+    const chunkCount = Math.max(1, Math.ceil(normalizedCount / Math.max(1, Number(chunkSize) || 1)));
+    return resolvePendingCommitTtl(baseMs + ((chunkCount - 1) * Math.max(0, Number(perChunkMs) || 0)), baseMs);
+  }
+
+  function getWorkspaceAssignmentCommitTtl(stageIds = [], leadIds = []) {
+    const normalizedStageCount = normalizeIdList(stageIds).length;
+    const normalizedLeadCount = normalizeIdList(leadIds).length;
+    return Math.max(
+      getChunkAwarePendingCommitTtl(normalizedStageCount, {
+        baseMs: PENDING_STAGE_ASSIGNMENT_COMMIT_TTL_MS,
+        chunkSize: 120,
+        perChunkMs: 3000
+      }),
+      getChunkAwarePendingCommitTtl(normalizedLeadCount, {
+        baseMs: PENDING_LEAD_ASSIGNMENT_COMMIT_TTL_MS,
+        chunkSize: 120,
+        perChunkMs: 4500
+      })
+    );
+  }
+
+  function getStagePositionCommitTtl(positionRows = []) {
+    return getChunkAwarePendingCommitTtl(
+      Array.isArray(positionRows) ? positionRows.length : 0,
+      {
+        baseMs: PENDING_STAGE_POSITION_COMMIT_TTL_MS,
+        chunkSize: 100,
+        perChunkMs: 2500
+      }
+    );
   }
 
   function waitForNextPaint() {
@@ -5625,7 +5672,7 @@
     return fields;
   }
 
-  function registerPendingLeadRowsFromUpdates(updates = [], ttlMs = 10000) {
+  function registerPendingLeadRowsFromUpdates(updates = [], ttlMs = PENDING_LEAD_ROW_COMMIT_TTL_MS) {
     (Array.isArray(updates) ? updates : []).forEach((item) => {
       const leadId = String(item?.id || "").trim();
       if (!leadId) return;
@@ -8531,7 +8578,7 @@
       if (permissionUpsertError) throw permissionUpsertError;
     }
 
-    for (const funnelId of normalizedFunnelIds) {
+    const permissionDeletionTasks = normalizedFunnelIds.map(async (funnelId) => {
       const nextDepartmentIds = new Set(
         permissionRows
           .filter((item) => String(item?.funnel_id || "").trim() === String(funnelId))
@@ -8542,7 +8589,7 @@
         .map((item) => String(item.department_id || "").trim())
         .filter((departmentId) => departmentId && !nextDepartmentIds.has(departmentId));
 
-      if (!removedDepartmentIds.length) continue;
+      if (!removedDepartmentIds.length) return;
       const { error: deletePermissionError } = await supabaseApi.deleteRowsByColumnValuesInChunks(
         state.supabase,
         "crm_funnel_department_permissions",
@@ -8554,7 +8601,9 @@
         }
       );
       if (deletePermissionError) throw deletePermissionError;
-    }
+    });
+
+    await Promise.all(permissionDeletionTasks);
   }
 
   async function persistFunnelsSubsetToSupabase(funnels = [], options = {}) {
@@ -8580,47 +8629,56 @@
     const funnelIds = funnelRows.map((item) => String(item.id || "").trim()).filter(Boolean);
     if (!funnelIds.length) return;
 
+    const persistenceTasks = [];
+
     if (includeSubfunnels) {
-      const subfunnelRows = buildSubfunnelRowsForFunnels(normalizedFunnels);
-      const existingSubfunnelsRes = await supabaseApi.selectRows(state.supabase, "crm_subfunnels", {
-        select: "id, funnel_id",
-        filters: [{ column: "funnel_id", op: "in", value: funnelIds }]
-      });
-      if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
-        throw existingSubfunnelsRes.error;
-      }
-
-      const nextSubfunnelIds = new Set(subfunnelRows.map((item) => String(item.id || "").trim()).filter(Boolean));
-      const removedSubfunnelIds = (existingSubfunnelsRes.data || [])
-        .filter((item) => funnelIds.includes(String(item?.funnel_id || "").trim()))
-        .map((item) => String(item?.id || "").trim())
-        .filter((id) => id && !nextSubfunnelIds.has(id));
-
-      if (removedSubfunnelIds.length) {
-        const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_subfunnels", "id", removedSubfunnelIds, {
-          chunkSize: 80
+      persistenceTasks.push((async () => {
+        const subfunnelRows = buildSubfunnelRowsForFunnels(normalizedFunnels);
+        const existingSubfunnelsRes = await supabaseApi.selectRows(state.supabase, "crm_subfunnels", {
+          select: "id, funnel_id",
+          filters: [{ column: "funnel_id", op: "in", value: funnelIds }]
         });
-        if (error) throw error;
-      }
+        if (existingSubfunnelsRes.error && !isMissingRelationError(existingSubfunnelsRes.error)) {
+          throw existingSubfunnelsRes.error;
+        }
 
-      if (subfunnelRows.length) {
-        const finalResult = await supabaseApi.upsertRowsWithTransientPositions(
-          state.supabase,
-          "crm_subfunnels",
-          subfunnelRows,
-          { onConflict: "id", chunkSize: 80 }
-        );
-        if (finalResult.error) throw finalResult.error;
-      }
+        const nextSubfunnelIds = new Set(subfunnelRows.map((item) => String(item.id || "").trim()).filter(Boolean));
+        const removedSubfunnelIds = (existingSubfunnelsRes.data || [])
+          .filter((item) => funnelIds.includes(String(item?.funnel_id || "").trim()))
+          .map((item) => String(item?.id || "").trim())
+          .filter((id) => id && !nextSubfunnelIds.has(id));
 
-      forgetDeletedFunnelWorkspaceIds({
-        subfunnels: (deletedWorkspaceIds.subfunnels || []).filter((id) => removedSubfunnelIds.includes(String(id || "").trim()))
-      });
+        if (removedSubfunnelIds.length) {
+          const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_subfunnels", "id", removedSubfunnelIds, {
+            chunkSize: 80
+          });
+          if (error) throw error;
+        }
+
+        if (subfunnelRows.length) {
+          const finalResult = await supabaseApi.upsertRowsWithTransientPositions(
+            state.supabase,
+            "crm_subfunnels",
+            subfunnelRows,
+            { onConflict: "id", chunkSize: 80 }
+          );
+          if (finalResult.error) throw finalResult.error;
+        }
+
+        forgetDeletedFunnelWorkspaceIds({
+          subfunnels: (deletedWorkspaceIds.subfunnels || []).filter((id) => removedSubfunnelIds.includes(String(id || "").trim()))
+        });
+      })());
     }
 
     if (includePermissions) {
-      const permissionRows = buildPermissionRowsForFunnels(normalizedFunnels);
-      await persistFunnelPermissionRowsToSupabase(funnelIds, permissionRows);
+      persistenceTasks.push(
+        persistFunnelPermissionRowsToSupabase(funnelIds, buildPermissionRowsForFunnels(normalizedFunnels))
+      );
+    }
+
+    if (persistenceTasks.length) {
+      await Promise.all(persistenceTasks);
     }
   }
 
@@ -8666,6 +8724,25 @@
         subfunnel_id: normalizedSubfunnelId
       },
       { onConflict: "stage_id" }
+    );
+    if (error) throw error;
+  }
+
+  async function persistStageAssignmentsToSupabase(stageIds = [], subfunnelId) {
+    const normalizedSubfunnelId = String(subfunnelId || "").trim();
+    const normalizedStageIds = normalizeIdList(stageIds);
+    if (!normalizedStageIds.length || !normalizedSubfunnelId || !state.supabase) return;
+
+    const rows = normalizedStageIds.map((stageId) => ({
+      stage_id: stageId,
+      subfunnel_id: normalizedSubfunnelId
+    }));
+
+    const { error } = await supabaseApi.upsertRowsInChunks(
+      state.supabase,
+      "crm_stage_subfunnel_assignments",
+      rows,
+      { onConflict: "stage_id", chunkSize: 120 }
     );
     if (error) throw error;
   }
@@ -9118,16 +9195,19 @@
 
     if (!state.funnelDataLoadedFromSupabase) return true;
 
-    registerPendingStageAssignmentCommits(normalizedStageIds, normalizedSubfunnelId);
-    registerPendingLeadAssignmentCommits(normalizedLeadIds, normalizedSubfunnelId);
+    const pendingCommitTtl = getWorkspaceAssignmentCommitTtl(normalizedStageIds, normalizedLeadIds);
+    registerPendingStageAssignmentCommits(normalizedStageIds, normalizedSubfunnelId, pendingCommitTtl);
+    registerPendingLeadAssignmentCommits(normalizedLeadIds, normalizedSubfunnelId, pendingCommitTtl);
 
     try {
-      for (const stageId of normalizedStageIds) {
-        await persistStageAssignmentToSupabase(stageId, normalizedSubfunnelId);
-      }
-      if (normalizedLeadIds.length) {
-        await persistLeadAssignmentsToSupabase(normalizedLeadIds, normalizedSubfunnelId);
-      }
+      await Promise.all([
+        normalizedStageIds.length
+          ? persistStageAssignmentsToSupabase(normalizedStageIds, normalizedSubfunnelId)
+          : Promise.resolve(),
+        normalizedLeadIds.length
+          ? persistLeadAssignmentsToSupabase(normalizedLeadIds, normalizedSubfunnelId)
+          : Promise.resolve()
+      ]);
       if (notify) {
         notifyLiveSyncChange(notifyScope);
       }
@@ -11218,8 +11298,8 @@
     }
   }
 
-  function registerPendingStagePositionCommits(positionRows = [], ttlMs = 10000) {
-    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+  function registerPendingStagePositionCommits(positionRows = [], ttlMs = PENDING_STAGE_POSITION_COMMIT_TTL_MS) {
+    const expiresAt = Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_STAGE_POSITION_COMMIT_TTL_MS);
     (Array.isArray(positionRows) ? positionRows : []).forEach((row) => {
       const stageId = String(row?.id || "").trim();
       const position = Number(row?.position);
@@ -11273,8 +11353,8 @@
     }
   }
 
-  function registerPendingSubfunnelPositionCommits(positionRows = [], ttlMs = 10000) {
-    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+  function registerPendingSubfunnelPositionCommits(positionRows = [], ttlMs = PENDING_STAGE_POSITION_COMMIT_TTL_MS) {
+    const expiresAt = Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_STAGE_POSITION_COMMIT_TTL_MS);
     (Array.isArray(positionRows) ? positionRows : []).forEach((row) => {
       const subfunnelId = String(row?.id || "").trim();
       const funnelId = String(row?.funnel_id || "").trim();
@@ -11341,7 +11421,7 @@
     }
   }
 
-  function registerPendingLeadRowCommit(leadId, fields = {}, ttlMs = 10000) {
+  function registerPendingLeadRowCommit(leadId, fields = {}, ttlMs = PENDING_LEAD_ROW_COMMIT_TTL_MS) {
     const normalizedLeadId = String(leadId || "").trim();
     if (!normalizedLeadId) return;
     const currentCommit = state.pendingLeadRowCommits.get(normalizedLeadId) || {};
@@ -11351,7 +11431,7 @@
         ...(currentCommit.fields || {}),
         ...(fields && typeof fields === "object" ? fields : {})
       },
-      expiresAt: Date.now() + Math.max(2000, Number(ttlMs) || 10000)
+      expiresAt: Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_LEAD_ROW_COMMIT_TTL_MS)
     });
   }
 
@@ -11390,10 +11470,10 @@
     }
   }
 
-  function registerPendingStageAssignmentCommits(stageIds = [], subfunnelId, ttlMs = 10000) {
+  function registerPendingStageAssignmentCommits(stageIds = [], subfunnelId, ttlMs = PENDING_STAGE_ASSIGNMENT_COMMIT_TTL_MS) {
     const normalizedSubfunnelId = String(subfunnelId || "").trim();
     if (!normalizedSubfunnelId) return;
-    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    const expiresAt = Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_STAGE_ASSIGNMENT_COMMIT_TTL_MS);
     normalizeIdList(stageIds).forEach((stageId) => {
       state.pendingStageAssignmentCommits.set(stageId, {
         subfunnelId: normalizedSubfunnelId,
@@ -11447,10 +11527,10 @@
     }
   }
 
-  function registerPendingLeadAssignmentCommits(leadIds = [], subfunnelId, ttlMs = 10000) {
+  function registerPendingLeadAssignmentCommits(leadIds = [], subfunnelId, ttlMs = PENDING_LEAD_ASSIGNMENT_COMMIT_TTL_MS) {
     const normalizedSubfunnelId = String(subfunnelId || "").trim();
     if (!normalizedSubfunnelId) return;
-    const expiresAt = Date.now() + Math.max(2000, Number(ttlMs) || 10000);
+    const expiresAt = Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_LEAD_ASSIGNMENT_COMMIT_TTL_MS);
     normalizeIdList(leadIds).forEach((leadId) => {
       state.pendingLeadAssignmentCommits.set(leadId, {
         subfunnelId: normalizedSubfunnelId,
@@ -11474,7 +11554,7 @@
     }
   }
 
-  function registerPendingLeadMoveCommit(leadId, payload = {}, ttlMs = 10000) {
+  function registerPendingLeadMoveCommit(leadId, payload = {}, ttlMs = PENDING_LEAD_MOVE_COMMIT_TTL_MS) {
     const normalizedLeadId = String(leadId || "").trim();
     const stageId = String(payload.stageId || "").trim();
     if (!normalizedLeadId || !stageId) return;
@@ -11482,7 +11562,7 @@
       stageId,
       subfunnelId: String(payload.subfunnelId || "").trim() || null,
       notes: String(payload.notes || ""),
-      expiresAt: Date.now() + Math.max(2000, Number(ttlMs) || 10000)
+      expiresAt: Date.now() + resolvePendingCommitTtl(ttlMs, PENDING_LEAD_MOVE_COMMIT_TTL_MS)
     });
   }
 
@@ -11845,7 +11925,10 @@
   }
 
   async function persistStageMoveMutation(context = {}) {
-    registerPendingStagePositionCommits(context.changedPositionRows);
+    registerPendingStagePositionCommits(
+      context.changedPositionRows,
+      getStagePositionCommitTtl(context.changedPositionRows)
+    );
 
     try {
       await executeFinalizedCriticalMutation({
@@ -11878,7 +11961,7 @@
         finalize: {
           notifyScope: "stage-order",
           refreshReason: "stage-order",
-          cooldownMs: 900,
+          cooldownMs: 1400,
           syncSelectedLeadIds: false,
           writeCache: false,
           render: false
