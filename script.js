@@ -4959,6 +4959,32 @@
       .trim();
   }
 
+  function buildStagePersistencePayload(payload = {}, options = {}) {
+    const fallbackName = normalizeStageName(options.fallbackName || "");
+    const normalizedName = normalizeStageName(payload?.name || "");
+    const resolvedName = normalizedName || fallbackName;
+    if (!resolvedName) {
+      throw new Error("Informe o nome da pipeline antes de salvar.");
+    }
+
+    const normalizedStageType = ["andamento", "fechado", "cancelado", "espera", "personalizado"].includes(payload?.stage_type)
+      ? payload.stage_type
+      : "andamento";
+    const normalizedCustomStageType = normalizedStageType === "personalizado"
+      ? (String(payload?.custom_stage_type || "").trim() || null)
+      : null;
+
+    return {
+      ...payload,
+      name: resolvedName,
+      color: sanitizeHexColor(payload?.color),
+      stage_type: normalizedStageType,
+      custom_stage_type: normalizedCustomStageType,
+      position: Number.isFinite(Number(payload?.position)) ? Number(payload.position) : state.stages.length,
+      created_by: payload?.created_by || state.currentUser?.id || null
+    };
+  }
+
   async function ensureStageNamesWithoutTrailingPeriods(options = {}) {
     if (state.stageNameCleanupInFlight || !state.currentUser || !state.supabase) return;
 
@@ -7970,13 +7996,15 @@
     const insertedStages = [];
     const basePosition = state.stages.length;
 
-    const payloadRows = sourceStages.map((sourceStage, index) => ({
+    const payloadRows = sourceStages.map((sourceStage, index) => buildStagePersistencePayload({
       name: sourceStage.name,
-      color: sanitizeHexColor(sourceStage.color),
+      color: sourceStage.color,
       stage_type: sourceStage.stage_type || "andamento",
       custom_stage_type: sourceStage.custom_stage_type || null,
       position: basePosition + index,
       created_by: state.currentUser?.id || sourceStage.created_by || null
+    }, {
+      fallbackName: `Pipeline ${basePosition + index + 1}`
     }));
 
     for (const chunk of chunkArray(payloadRows, 80)) {
@@ -17535,16 +17563,17 @@
   }
 
   async function persistStageRecordUpdate(updateContext = {}, context = {}) {
+    const stagePayload = buildStagePersistencePayload(context.payload);
     const { error } = await supabaseApi.updateRowById(
       state.supabase,
       "stages",
       updateContext.stageId,
       {
-        name: context.payload.name,
-        color: context.payload.color,
-        stage_type: context.payload.stage_type,
-        custom_stage_type: context.payload.custom_stage_type,
-        position: context.payload.position
+        name: stagePayload.name,
+        color: stagePayload.color,
+        stage_type: stagePayload.stage_type,
+        custom_stage_type: stagePayload.custom_stage_type,
+        position: stagePayload.position
       }
     );
     if (error) throw error;
@@ -17622,9 +17651,11 @@
   }
 
   async function persistNewStage(context = {}) {
-    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", context.payload);
+    const stagePayload = buildStagePersistencePayload(context.payload);
+    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", stagePayload);
     if (error) throw error;
 
+    context.payload = stagePayload;
     await logCreatedStageChange(context, data);
     await persistCreatedStageAssignments(data, context);
   }
@@ -18251,7 +18282,10 @@
   }
 
   async function createStageForSubfunnel(payload, subfunnelId, options = {}) {
-    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", payload);
+    const stagePayload = buildStagePersistencePayload(payload, {
+      fallbackName: options.fallbackName || ""
+    });
+    const { data, error } = await supabaseApi.insertSingleRow(state.supabase, "stages", stagePayload);
     if (error) throw error;
     const normalizedStage = upsertStageLocally(data);
     if (data?.id) assignStageToSubfunnel(data.id, subfunnelId, { deferSync: options.deferSync === true });
@@ -18392,16 +18426,21 @@
     const normalizedTargetSubfunnelId = String(targetSubfunnelId || "").trim();
     const sourceScope = getStageScope(sourceStage.id);
     const previousSourceSubfunnelId = String(sourceScope?.subfunnelId || "").trim();
-    const nextTargetPayload = payload ? {
-      name: normalizeStageName(payload.name || targetStage.name || sourceStage.name || "Pipeline"),
-      color: sanitizeHexColor(payload.color || targetStage.color || sourceStage.color),
-      stage_type: ["andamento", "fechado", "cancelado", "espera", "personalizado"].includes(payload.stage_type)
-        ? payload.stage_type
-        : (targetStage.stage_type || sourceStage.stage_type || "andamento"),
-      custom_stage_type: payload.stage_type === "personalizado"
-        ? (payload.custom_stage_type || targetStage.custom_stage_type || sourceStage.custom_stage_type || null)
-        : null
-    } : null;
+    const nextTargetPayload = payload
+      ? buildStagePersistencePayload({
+          ...payload,
+          name: payload.name || targetStage.name || sourceStage.name || "Pipeline",
+          color: payload.color || targetStage.color || sourceStage.color,
+          stage_type: payload.stage_type || targetStage.stage_type || sourceStage.stage_type || "andamento",
+          custom_stage_type: payload.stage_type === "personalizado"
+            ? (payload.custom_stage_type || targetStage.custom_stage_type || sourceStage.custom_stage_type || null)
+            : null,
+          position: payload.position ?? targetStage.position ?? sourceStage.position ?? state.stages.length,
+          created_by: payload.created_by || targetStage.created_by || sourceStage.created_by || state.currentUser?.id || null
+        }, {
+          fallbackName: targetStage.name || sourceStage.name || "Pipeline"
+        })
+      : null;
 
     if (nextTargetPayload) {
       const { error: updateTargetError } = await supabaseApi.updateRowById(
