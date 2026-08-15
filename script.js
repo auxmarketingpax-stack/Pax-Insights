@@ -481,6 +481,7 @@
     liveSyncPendingBroadcastScope: null,
     appDataCacheWriteTimer: null,
     liveSyncProtectedMutationCount: 0,
+    serializedMutationQueues: {},
     lastSharedFunnelMetaSignature: "",
     lastSharedFunnelGroupsSignature: "",
     lastSharedFunnelLinksSignature: "",
@@ -2194,7 +2195,7 @@
       ...funnelPermissions,
       canEditStage: funnelPermissions.canManageStages,
       canDuplicateStage: funnelPermissions.canManageStages,
-      canNotifyStage: funnelPermissions.canManageStages,
+      canNotifyStage: funnelPermissions.canEditLeads,
       canDeleteStage: funnelPermissions.canManageStages
     };
   }
@@ -3644,41 +3645,77 @@
     });
   }
 
-  async function executeCriticalMutation(options = {}) {
-    const snapshot = options.snapshot
-      ? createCriticalMutationSnapshot(options.snapshot)
-      : null;
-    const protectedCooldownMs = Math.max(600, Number(options.protectedCooldownMs || options.cooldownMs || 1600));
-
-    beginProtectedLiveSyncMutation(protectedCooldownMs);
-
-    try {
-      if (typeof options.applyOptimistic === "function") {
-        await options.applyOptimistic(snapshot);
-        finalizeLocalMutation({
-          notifyScope: null,
-          refresh: false,
-          syncSelectedLeadIds: options.optimisticSyncSelectedLeadIds !== false,
-          writeCache: options.optimisticWriteCache !== false,
-          render: options.optimisticRender !== false
-        });
-      }
-
-      const result = typeof options.persist === "function"
-        ? await options.persist(snapshot)
-        : null;
-      if (typeof options.afterPersist === "function") {
-        await options.afterPersist(result, snapshot);
-      }
-      return result;
-    } catch (error) {
-      if (snapshot) {
-        restoreCriticalMutationSnapshot(snapshot, options.rollback || {});
-      }
-      throw error;
-    } finally {
-      endProtectedLiveSyncMutation(protectedCooldownMs);
+  function enqueueSerializedMutation(queueKey, task) {
+    const normalizedQueueKey = String(queueKey || "").trim();
+    if (!normalizedQueueKey || typeof task !== "function") {
+      return Promise.resolve().then(() => (typeof task === "function" ? task() : null));
     }
+
+    if (!state.serializedMutationQueues || typeof state.serializedMutationQueues !== "object") {
+      state.serializedMutationQueues = {};
+    }
+
+    const previous = state.serializedMutationQueues[normalizedQueueKey] instanceof Promise
+      ? state.serializedMutationQueues[normalizedQueueKey]
+      : Promise.resolve();
+
+    const nextTask = previous
+      .catch(() => null)
+      .then(() => task());
+
+    const cleanupPromise = nextTask.finally(() => {
+      if (state.serializedMutationQueues?.[normalizedQueueKey] === cleanupPromise) {
+        delete state.serializedMutationQueues[normalizedQueueKey];
+      }
+    });
+
+    state.serializedMutationQueues[normalizedQueueKey] = cleanupPromise;
+    return cleanupPromise;
+  }
+
+  async function executeCriticalMutation(options = {}) {
+    const runMutation = async () => {
+      const snapshot = options.snapshot
+        ? createCriticalMutationSnapshot(options.snapshot)
+        : null;
+      const protectedCooldownMs = Math.max(600, Number(options.protectedCooldownMs || options.cooldownMs || 1600));
+
+      beginProtectedLiveSyncMutation(protectedCooldownMs);
+
+      try {
+        if (typeof options.applyOptimistic === "function") {
+          await options.applyOptimistic(snapshot);
+          finalizeLocalMutation({
+            notifyScope: null,
+            refresh: false,
+            syncSelectedLeadIds: options.optimisticSyncSelectedLeadIds !== false,
+            writeCache: options.optimisticWriteCache !== false,
+            render: options.optimisticRender !== false
+          });
+        }
+
+        const result = typeof options.persist === "function"
+          ? await options.persist(snapshot)
+          : null;
+        if (typeof options.afterPersist === "function") {
+          await options.afterPersist(result, snapshot);
+        }
+        return result;
+      } catch (error) {
+        if (snapshot) {
+          restoreCriticalMutationSnapshot(snapshot, options.rollback || {});
+        }
+        throw error;
+      } finally {
+        endProtectedLiveSyncMutation(protectedCooldownMs);
+      }
+    };
+
+    if (options.serializeKey) {
+      return enqueueSerializedMutation(options.serializeKey, runMutation);
+    }
+
+    return runMutation();
   }
 
   async function executeFinalizedCriticalMutation(options = {}) {
@@ -4069,34 +4106,36 @@
   }
 
   async function executeFunnelWorkspaceMetaMutation({ applyLocal, persist, afterPersist, finalize } = {}) {
-    const snapshot = createFunnelWorkspaceMetaSnapshot();
-    const protectedCooldownMs = 1800;
-    beginProtectedLiveSyncMutation(protectedCooldownMs);
-    try {
-      if (typeof applyLocal === "function") {
-        await applyLocal(snapshot);
-        state.suppressFunnelSync = true;
-        writeStoredFunnelWorkspace();
+    return enqueueSerializedMutation("funnel-workspace-meta", async () => {
+      const snapshot = createFunnelWorkspaceMetaSnapshot();
+      const protectedCooldownMs = 1800;
+      beginProtectedLiveSyncMutation(protectedCooldownMs);
+      try {
+        if (typeof applyLocal === "function") {
+          await applyLocal(snapshot);
+          state.suppressFunnelSync = true;
+          writeStoredFunnelWorkspace();
+        }
+        if (typeof persist === "function") {
+          await persist(snapshot);
+        }
+        if (typeof afterPersist === "function") {
+          await afterPersist(snapshot);
+        }
+        const resolvedFinalizeOptions = typeof finalize === "function"
+          ? finalize(snapshot)
+          : finalize;
+        if (resolvedFinalizeOptions !== false) {
+          finalizeLocalMutation(resolvedFinalizeOptions || {});
+        }
+        return true;
+      } catch (error) {
+        restoreFunnelWorkspaceMetaSnapshot(snapshot);
+        throw error;
+      } finally {
+        endProtectedLiveSyncMutation(protectedCooldownMs);
       }
-      if (typeof persist === "function") {
-        await persist(snapshot);
-      }
-      if (typeof afterPersist === "function") {
-        await afterPersist(snapshot);
-      }
-      const resolvedFinalizeOptions = typeof finalize === "function"
-        ? finalize(snapshot)
-        : finalize;
-      if (resolvedFinalizeOptions !== false) {
-        finalizeLocalMutation(resolvedFinalizeOptions || {});
-      }
-      return true;
-    } catch (error) {
-      restoreFunnelWorkspaceMetaSnapshot(snapshot);
-      throw error;
-    } finally {
-      endProtectedLiveSyncMutation(protectedCooldownMs);
-    }
+    });
   }
 
   async function executeLiveDataRefresh(reason = "external-change") {
@@ -17631,6 +17670,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "stage-workspace-content",
         persist: async () => {
           await persistStageFormSubmission(context);
         },
@@ -17779,8 +17819,8 @@
 
   function validateStageNotificationContext(context = {}) {
     const stagePermissions = getStagePermissionCapabilities(context.stage);
-    if (!context.stage || !stagePermissions.canManageStages) {
-      alert("Somente administradores podem alterar esta notificação.");
+    if (!context.stage || !stagePermissions.canNotifyStage) {
+      alert("Seu perfil não tem permissão para alterar esta notificação.");
       return false;
     }
     if (context.enabled && !context.nextReminder) {
@@ -17840,6 +17880,7 @@
 
   async function persistStageNotificationChange(targetId, context = {}) {
     await executeFinalizedCriticalMutation({
+      serializeKey: "stage-workspace-content",
       snapshot: {
         leads: true,
         funnelWorkspace: true,
@@ -18164,6 +18205,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "stage-workspace-content",
         snapshot: {
           stages: true,
           leads: true,
@@ -18625,6 +18667,7 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        serializeKey: "stage-workspace-content",
         snapshot: {
           stages: true,
           leads: true,
@@ -19090,17 +19133,19 @@
     const openStageContextMenu = ({ stageId, x = 0, y = 0 } = {}) => {
       const stage = state.stages.find((item) => item.id === stageId);
       const stagePermissions = getStagePermissionCapabilities(stage);
-      if (!stage || !stagePermissions.canManageStages) return;
+      if (!stage) return;
+      const actions = [
+        stagePermissions.canEditStage ? { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) } : null,
+        stagePermissions.canDuplicateStage ? { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) } : null,
+        stagePermissions.canNotifyStage ? { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) } : null,
+        stagePermissions.canDeleteStage ? { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => openStageDeleteModal(stage) } : null
+      ].filter(Boolean);
+      if (!actions.length) return;
       openFunnelContextMenu({
         x,
         y,
         scope: "pipeline",
-        actions: [
-          stagePermissions.canEditStage ? { id: `edit-stage-${stage.id}`, label: "Editar", handler: () => openStageModal(stage) } : null,
-          stagePermissions.canDuplicateStage ? { id: `duplicate-stage-${stage.id}`, label: "Duplicar", handler: () => openStageDuplicateModal(stage) } : null,
-          stagePermissions.canNotifyStage ? { id: `notify-stage-${stage.id}`, label: "Notificação", handler: () => openStageNotificationEditor(stage) } : null,
-          stagePermissions.canDeleteStage ? { id: `delete-stage-${stage.id}`, label: "Excluir", danger: true, handler: () => openStageDeleteModal(stage) } : null
-        ].filter(Boolean)
+        actions
       });
     };
     const openLeadContextMenu = ({ lead, x = 0, y = 0 } = {}) => {
