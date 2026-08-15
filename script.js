@@ -11393,7 +11393,7 @@
   }
 
   function handlePipelineStageDragStart(event) {
-    const item = getPipelineStageDropTarget(event.target);
+    const item = event.target?.closest?.(".pipeline-stage-tab[data-stage-id]") || null;
     const stagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!item || !stagePermissions.canManageStages) {
       event.preventDefault();
@@ -12122,14 +12122,19 @@
 
     if (!normalizedRows.length) return;
 
-    const result = await supabaseApi.upsertRowsWithTransientPositions(
-      state.supabase,
-      "stages",
-      normalizedRows,
-      { onConflict: "id", positionField: "position" }
-    );
-    if (result.error) {
-      throw result.error;
+    for (const chunk of chunkArray(normalizedRows, 20)) {
+      const results = await Promise.all(
+        chunk.map((row) => supabaseApi.updateRowById(
+          state.supabase,
+          "stages",
+          row.id,
+          { position: row.position }
+        ))
+      );
+      const failedResult = results.find((result) => result?.error);
+      if (failedResult?.error) {
+        throw failedResult.error;
+      }
     }
   }
 
@@ -13677,7 +13682,7 @@
         : '<div class="empty-state">Nenhum lead nesta etapa.</div>';
 
       return `
-        <section class="column" data-stage-id="${stage.id}" draggable="${canReorderPipelineStages ? "true" : "false"}">
+        <section class="column" data-stage-id="${stage.id}" draggable="false">
           <div class="column-body">${cards}</div>
         </section>
       `;
@@ -19447,7 +19452,7 @@
     });
 
     document.querySelectorAll(".column").forEach((column) => {
-      column.draggable = canReorderPipelineStages;
+      column.draggable = false;
       column.oncontextmenu = (event) => {
         if (event.target.closest(".card")) return;
         const stageId = String(column.dataset.stageId || "").trim();
@@ -19467,20 +19472,6 @@
           openStageContextMenu({ stageId, x, y });
         });
       };
-      column.onpointerdown = (event) => {
-        if (!canReorderPipelineStages || event.target.closest(".card, button, input, select, textarea, a, label")) return;
-        beginTouchPipelineDrag("stage", String(column.dataset.stageId || "").trim(), column, event);
-      };
-      column.ondragstart = (event) => {
-        if (!canReorderPipelineStages || event.target.closest("button, input, select, textarea, a, label")) {
-          event.preventDefault();
-          return false;
-        }
-        if (event.target.closest(".card")) return true;
-        handlePipelineStageDragStart(event);
-        return true;
-      };
-
       column.ondragover = (e) => {
         if (state.pipelineStageDrag?.stageId) {
           handlePipelineStageDragOver(e);
@@ -19511,7 +19502,6 @@
         const stageId = column.dataset.stageId;
         if (leadId && stageId) await moveLeadToStage(leadId, stageId);
       };
-      column.ondragend = handlePipelineStageDragEnd;
     });
 
   }
