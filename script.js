@@ -11180,6 +11180,11 @@
       stopPipelineDragAutoScroll();
       state.pipelineStageDrag = null;
     }
+    if (state.pipelineStageDrag?.stageId) {
+      clearPipelineStageDragIndicators();
+      stopPipelineDragAutoScroll();
+      state.pipelineStageDrag = null;
+    }
     state.touchPipelineDrag = null;
   }
 
@@ -19439,6 +19444,7 @@
           event.preventDefault();
           return false;
         }
+        handlePipelineStageDragEnd();
         state.pipelineCardPan = null;
         card.classList.add("dragging");
         return true;
@@ -19447,6 +19453,7 @@
         card.classList.remove("dragging");
         card.classList.remove("card-panning");
         card.draggable = true;
+        handlePipelineStageDragEnd();
         stopPipelineDragAutoScroll();
       };
     });
@@ -19473,7 +19480,8 @@
         });
       };
       column.ondragover = (e) => {
-        if (state.pipelineStageDrag?.stageId) {
+        const draggedLeadCard = document.querySelector(".card.dragging");
+        if (!draggedLeadCard && state.pipelineStageDrag?.stageId) {
           handlePipelineStageDragOver(e);
           return;
         }
@@ -19484,12 +19492,13 @@
       };
 
       column.ondragleave = () => {
-        if (state.pipelineStageDrag?.stageId) return;
+        if (!document.querySelector(".card.dragging") && state.pipelineStageDrag?.stageId) return;
         column.classList.remove("drag-over");
       };
 
       column.ondrop = async (e) => {
-        if (state.pipelineStageDrag?.stageId) {
+        const dragged = document.querySelector(".card.dragging");
+        if (!dragged && state.pipelineStageDrag?.stageId) {
           await handlePipelineStageDrop(e);
           return;
         }
@@ -19497,7 +19506,6 @@
         e.preventDefault();
         column.classList.remove("drag-over");
         stopPipelineDragAutoScroll();
-        const dragged = document.querySelector(".card.dragging");
         const leadId = dragged?.dataset?.leadId;
         const stageId = column.dataset.stageId;
         if (leadId && stageId) await moveLeadToStage(leadId, stageId);
