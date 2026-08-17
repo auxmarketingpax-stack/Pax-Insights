@@ -10240,9 +10240,30 @@
     els.desktopFiltersBtn.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
     els.desktopFiltersBtn.classList.toggle("is-open", shouldOpen);
     requestAnimationFrame(() => {
+      updateDesktopFiltersPanelPosition();
       updateStickyLayout();
       syncPipelineScrollBars();
     });
+  }
+
+  function updateDesktopFiltersPanelPosition() {
+    if (!els.desktopFiltersPanel || !els.desktopFiltersBtn || els.desktopFiltersPanel.classList.contains("hidden")) return;
+
+    const viewportPadding = 16;
+    const panelGap = 6;
+    const buttonRect = els.desktopFiltersBtn.getBoundingClientRect();
+    const maxPanelWidth = Math.max(320, window.innerWidth - (viewportPadding * 2));
+    const panelWidth = Math.min(700, maxPanelWidth);
+    const maxHeight = Math.max(240, window.innerHeight - buttonRect.bottom - panelGap - viewportPadding);
+    const preferredLeft = buttonRect.right - panelWidth;
+    const clampedLeft = Math.min(
+      Math.max(viewportPadding, preferredLeft),
+      Math.max(viewportPadding, window.innerWidth - panelWidth - viewportPadding)
+    );
+
+    els.desktopFiltersPanel.style.setProperty("--desktop-filters-left", `${Math.round(clampedLeft)}px`);
+    els.desktopFiltersPanel.style.setProperty("--desktop-filters-top", `${Math.round(buttonRect.bottom + panelGap)}px`);
+    els.desktopFiltersPanel.style.setProperty("--desktop-filters-max-height", `${Math.round(maxHeight)}px`);
   }
 
   const FILTER_SELECTION_KEYS = {
@@ -20021,6 +20042,14 @@
       closeFilterDropdowns();
       setDesktopFiltersOpen(false);
     });
+
+    window.addEventListener("resize", () => {
+      updateDesktopFiltersPanelPosition();
+    });
+
+    window.addEventListener("scroll", () => {
+      updateDesktopFiltersPanelPosition();
+    }, { passive: true });
 
     els.categoryFilter?.addEventListener("change", () => {
       clearFilterSelections(["group", "funnel", "subfunnel"]);

@@ -657,10 +657,12 @@ input:focus,select:focus,textarea:focus{
   font-weight:800;
 }
 .desktop-filters-panel{
-  position:absolute;
-  right:0;
-  top:calc(100% + 12px);
-  width:min(760px, calc(100vw - 64px));
+  position:fixed;
+  left:var(--desktop-filters-left, 16px);
+  top:var(--desktop-filters-top, 16px);
+  width:min(700px, calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  max-height:var(--desktop-filters-max-height, calc(100dvh - 32px));
   padding:16px;
   border:1px solid rgba(34,197,94,.2);
   border-radius:20px;
@@ -668,6 +670,10 @@ input:focus,select:focus,textarea:focus{
   box-shadow:0 24px 64px rgba(0,0,0,.42);
   backdrop-filter:blur(18px);
   z-index:70;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
 }
 .desktop-filters-panel-head{
   display:flex;
@@ -1726,7 +1732,6 @@ input:focus,select:focus,textarea:focus{
   }
   .desktop-filters-panel{
     width:min(640px, calc(100vw - 32px));
-    right:0;
   }
   .desktop-filters-grid{
     grid-template-columns:1fr;
