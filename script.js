@@ -19977,18 +19977,6 @@
     els.mobileMenuBtn?.addEventListener("click", () => {
       setMobileFiltersOpen(false);
       if (isCompactViewport()) {
-        if (state.activeView !== "funil") {
-          state.funnelSidebarOpen = true;
-          bindView("funil", {
-            resetFunnelDetail: false,
-            preserveFunnelSidebarState: true,
-            keepFunnelSidebarOpen: true
-          });
-          syncFunnelSidebarVisibility();
-          renderAll();
-          return;
-        }
-
         state.funnelSidebarOpen = !state.funnelSidebarOpen;
         syncPrimaryMenuState();
         syncFunnelSidebarVisibility();
