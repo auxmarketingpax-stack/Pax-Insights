@@ -486,6 +486,7 @@
     lastSharedFunnelGroupsSignature: "",
     lastSharedFunnelLinksSignature: "",
     funnelWorkspace: null,
+    funnelWorkspaceDirtyScope: null,
     funnelDataLoadedFromSupabase: false,
     funnelSyncInFlight: false,
     funnelSyncQueued: false,
@@ -2853,7 +2854,15 @@
   }
 
   function normalizeIdList(values) {
-    const list = Array.isArray(values) ? values : [values];
+    const list = Array.isArray(values)
+      ? values
+      : (
+        values
+        && typeof values !== "string"
+        && typeof values[Symbol.iterator] === "function"
+      )
+        ? [...values]
+        : [values];
     const seen = new Set();
 
     return list.reduce((acc, value) => {
@@ -6532,7 +6541,105 @@
     });
   }
 
-  function writeStoredFunnelWorkspace() {
+  function createEmptyFunnelWorkspaceDirtyScope() {
+    return {
+      all: false,
+      funnelIds: new Set(),
+      groupIds: new Set(),
+      stageIds: new Set(),
+      leadIds: new Set(),
+      removedFunnelIds: new Set(),
+      removedGroupIds: new Set(),
+      removedSubfunnelIds: new Set(),
+      syncSharedMeta: false,
+      syncSharedGroups: false,
+      syncSharedLinks: false,
+      syncStageReminders: false
+    };
+  }
+
+  function cloneFunnelWorkspaceDirtyScope(scope = null) {
+    const source = scope && typeof scope === "object" ? scope : createEmptyFunnelWorkspaceDirtyScope();
+    return {
+      all: Boolean(source.all),
+      funnelIds: new Set(normalizeIdList(source.funnelIds || [])),
+      groupIds: new Set(normalizeIdList(source.groupIds || [])),
+      stageIds: new Set(normalizeIdList(source.stageIds || [])),
+      leadIds: new Set(normalizeIdList(source.leadIds || [])),
+      removedFunnelIds: new Set(normalizeIdList(source.removedFunnelIds || [])),
+      removedGroupIds: new Set(normalizeIdList(source.removedGroupIds || [])),
+      removedSubfunnelIds: new Set(normalizeIdList(source.removedSubfunnelIds || [])),
+      syncSharedMeta: Boolean(source.syncSharedMeta),
+      syncSharedGroups: Boolean(source.syncSharedGroups),
+      syncSharedLinks: Boolean(source.syncSharedLinks),
+      syncStageReminders: Boolean(source.syncStageReminders)
+    };
+  }
+
+  function ensureFunnelWorkspaceDirtyScope() {
+    if (!state.funnelWorkspaceDirtyScope || typeof state.funnelWorkspaceDirtyScope !== "object") {
+      state.funnelWorkspaceDirtyScope = createEmptyFunnelWorkspaceDirtyScope();
+    }
+    return state.funnelWorkspaceDirtyScope;
+  }
+
+  function mergeIdsIntoFunnelWorkspaceDirtySet(targetSet, ids = []) {
+    normalizeIdList(ids).forEach((id) => targetSet.add(id));
+  }
+
+  function mergeFunnelWorkspaceDirtyScope(targetScope, partialScope = null) {
+    const scope = targetScope && typeof targetScope === "object"
+      ? targetScope
+      : createEmptyFunnelWorkspaceDirtyScope();
+    const partial = partialScope && typeof partialScope === "object" ? partialScope : {};
+
+    scope.all = scope.all || Boolean(partial.all);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.funnelIds, partial.funnelIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.groupIds, partial.groupIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.stageIds, partial.stageIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.leadIds, partial.leadIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.removedFunnelIds, partial.removedFunnelIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.removedGroupIds, partial.removedGroupIds || []);
+    mergeIdsIntoFunnelWorkspaceDirtySet(scope.removedSubfunnelIds, partial.removedSubfunnelIds || []);
+    scope.syncSharedMeta = scope.syncSharedMeta || Boolean(partial.syncSharedMeta);
+    scope.syncSharedGroups = scope.syncSharedGroups || Boolean(partial.syncSharedGroups);
+    scope.syncSharedLinks = scope.syncSharedLinks || Boolean(partial.syncSharedLinks);
+    scope.syncStageReminders = scope.syncStageReminders || Boolean(partial.syncStageReminders);
+
+    return scope;
+  }
+
+  function markFunnelWorkspaceDirty(partialScope = null) {
+    const scope = ensureFunnelWorkspaceDirtyScope();
+    return mergeFunnelWorkspaceDirtyScope(scope, partialScope);
+  }
+
+  function hasFunnelWorkspaceDirtyScope(scope = null) {
+    const normalizedScope = scope && typeof scope === "object" ? scope : null;
+    if (!normalizedScope) return false;
+    return Boolean(
+      normalizedScope.all
+      || normalizedScope.syncSharedMeta
+      || normalizedScope.syncSharedGroups
+      || normalizedScope.syncSharedLinks
+      || normalizedScope.syncStageReminders
+      || normalizedScope.funnelIds?.size
+      || normalizedScope.groupIds?.size
+      || normalizedScope.stageIds?.size
+      || normalizedScope.leadIds?.size
+      || normalizedScope.removedFunnelIds?.size
+      || normalizedScope.removedGroupIds?.size
+      || normalizedScope.removedSubfunnelIds?.size
+    );
+  }
+
+  function consumeFunnelWorkspaceDirtyScope() {
+    const currentScope = cloneFunnelWorkspaceDirtyScope(state.funnelWorkspaceDirtyScope);
+    state.funnelWorkspaceDirtyScope = createEmptyFunnelWorkspaceDirtyScope();
+    return currentScope;
+  }
+
+  function writeStoredFunnelWorkspace(dirtyScope = null) {
     try {
       window.localStorage.setItem(FUNNEL_WORKSPACE_STORAGE_KEY, JSON.stringify(state.funnelWorkspace || getDefaultFunnelWorkspace()));
     } catch (_error) {
@@ -6543,6 +6650,7 @@
       return;
     }
     if (state.funnelDataLoadedFromSupabase) {
+      markFunnelWorkspaceDirty(dirtyScope || { all: true });
       markLocalMutationCooldown(1800);
       queueFunnelWorkspaceSync();
     }
@@ -8560,6 +8668,119 @@
     });
   }
 
+  async function persistFunnelWorkspaceDirtyScopeToSupabase(scope = null) {
+    const dirtyScope = cloneFunnelWorkspaceDirtyScope(scope);
+    if (!hasFunnelWorkspaceDirtyScope(dirtyScope)) return false;
+    if (dirtyScope.all) {
+      await persistFunnelWorkspaceToSupabase();
+      return true;
+    }
+    if (!state.funnelDataLoadedFromSupabase || !state.funnelWorkspace || !state.currentUser) return false;
+
+    const workspace = state.funnelWorkspace;
+    const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
+    const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
+    const trackedRemovedGroupIds = new Set([
+      ...normalizeIdList(deletedWorkspaceIds.groups || []),
+      ...normalizeIdList(dirtyScope.removedGroupIds || [])
+    ]);
+    const trackedRemovedFunnelIds = new Set([
+      ...normalizeIdList(deletedWorkspaceIds.funnels || []),
+      ...normalizeIdList(dirtyScope.removedFunnelIds || [])
+    ]);
+    const trackedRemovedSubfunnelIds = new Set([
+      ...normalizeIdList(deletedWorkspaceIds.subfunnels || []),
+      ...normalizeIdList(dirtyScope.removedSubfunnelIds || [])
+    ]);
+
+    if (trackedRemovedGroupIds.size) {
+      dirtyScope.syncSharedGroups = true;
+      dirtyScope.syncSharedMeta = true;
+    }
+    if (dirtyScope.funnelIds.size || trackedRemovedFunnelIds.size) {
+      dirtyScope.syncSharedLinks = true;
+    }
+
+    const funnelIds = [...dirtyScope.funnelIds];
+    const stageIds = [...dirtyScope.stageIds];
+    const leadIds = [...dirtyScope.leadIds];
+
+    if (!workspaceStagePermissions.canManageStages) {
+      if (leadIds.length) {
+        await persistWorkspaceAssignmentsSubsetToSupabase({ leadIds });
+      }
+      return Boolean(leadIds.length);
+    }
+
+    const persistenceTasks = [];
+
+    if (funnelIds.length) {
+      const funnels = funnelIds
+        .map((funnelId) => getFunnelById(funnelId))
+        .filter(Boolean);
+      if (funnels.length) {
+        persistenceTasks.push(persistFunnelsSubsetToSupabase(funnels, {
+          includeSubfunnels: true,
+          includePermissions: true
+        }));
+      }
+    }
+
+    if (stageIds.length || leadIds.length) {
+      persistenceTasks.push(
+        persistWorkspaceAssignmentsSubsetToSupabase({ stageIds, leadIds })
+      );
+    }
+
+    if (dirtyScope.syncStageReminders) {
+      persistenceTasks.push(
+        loadStageReminderSyncState(workspace, buildStageReminderRowsForWorkspace(workspace))
+          .then((syncState) => persistStageReminderRowsToSupabase(syncState))
+      );
+    }
+
+    if (dirtyScope.syncSharedMeta) {
+      persistenceTasks.push(persistSharedFunnelWorkspaceMetaToSupabase(workspace));
+    } else {
+      if (dirtyScope.syncSharedGroups) {
+        persistenceTasks.push(persistSharedFunnelGroupsMetaToSupabase(workspace));
+      }
+      if (dirtyScope.syncSharedLinks) {
+        persistenceTasks.push(persistSharedFunnelLinksMetaToSupabase(workspace));
+      }
+    }
+
+    if (trackedRemovedSubfunnelIds.size) {
+      persistenceTasks.push(deleteSubfunnelsByIdsFromSupabase([...trackedRemovedSubfunnelIds]));
+    }
+
+    if (trackedRemovedFunnelIds.size) {
+      persistenceTasks.push((async () => {
+        const removedFunnelIds = [...trackedRemovedFunnelIds];
+        await deleteFunnelPermissionsByFunnelIds(removedFunnelIds);
+        await deleteFunnelsByIdsFromSupabase(removedFunnelIds);
+      })());
+    }
+
+    if (persistenceTasks.length) {
+      await Promise.all(persistenceTasks);
+    }
+
+    if (
+      trackedRemovedGroupIds.size
+      || trackedRemovedFunnelIds.size
+      || trackedRemovedSubfunnelIds.size
+    ) {
+      forgetDeletedFunnelWorkspaceIds({
+        groups: [...trackedRemovedGroupIds],
+        funnels: [...trackedRemovedFunnelIds],
+        subfunnels: [...trackedRemovedSubfunnelIds]
+      });
+    }
+
+    return true;
+  }
+
   function buildFunnelRowPayload(funnel) {
     if (!funnel?.id) return null;
     return {
@@ -9047,11 +9268,14 @@
 
     state.funnelSyncInFlight = true;
     window.setTimeout(async () => {
+      const dirtyScope = consumeFunnelWorkspaceDirtyScope();
       try {
+        if (!hasFunnelWorkspaceDirtyScope(dirtyScope)) return;
         await executeQueuedFunnelWorkspaceSync(async () => {
-          await persistFunnelWorkspaceToSupabase();
+          await persistFunnelWorkspaceDirtyScopeToSupabase(dirtyScope);
         });
       } catch (error) {
+        markFunnelWorkspaceDirty(dirtyScope);
         console.error("Erro ao sincronizar funis com Supabase:", error);
         if (/row-level security policy/i.test(String(error?.message || ""))) {
           state.funnelDataLoadedFromSupabase = false;
