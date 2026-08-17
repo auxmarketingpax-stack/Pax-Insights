@@ -10255,7 +10255,7 @@
     const maxPanelWidth = Math.max(320, window.innerWidth - (viewportPadding * 2));
     const panelWidth = Math.min(700, maxPanelWidth);
     const maxHeight = Math.max(240, window.innerHeight - buttonRect.bottom - panelGap - viewportPadding);
-    const preferredLeft = buttonRect.right - panelWidth;
+    const preferredLeft = buttonRect.left;
     const clampedLeft = Math.min(
       Math.max(viewportPadding, preferredLeft),
       Math.max(viewportPadding, window.innerWidth - panelWidth - viewportPadding)
@@ -19977,11 +19977,7 @@
     els.mobileMenuBtn?.addEventListener("click", () => {
       setMobileFiltersOpen(false);
       if (isCompactViewport()) {
-        state.funnelSidebarOpen = !state.funnelSidebarOpen;
-        syncPrimaryMenuState();
-        syncFunnelSidebarVisibility();
-        writeStoredFunnelUiState();
-        renderAll();
+        openFunnelSidebarOnly();
         return;
       }
 

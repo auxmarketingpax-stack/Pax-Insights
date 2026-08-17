@@ -669,7 +669,7 @@ input:focus,select:focus,textarea:focus{
   background:linear-gradient(180deg,rgba(16,35,26,.96),rgba(9,22,16,.96));
   box-shadow:0 24px 64px rgba(0,0,0,.42);
   backdrop-filter:blur(18px);
-  z-index:70;
+  z-index:220;
   overflow-x:hidden;
   overflow-y:auto;
   overscroll-behavior:contain;
