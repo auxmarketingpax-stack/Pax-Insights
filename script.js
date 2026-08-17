@@ -8520,186 +8520,43 @@
     const workspace = state.funnelWorkspace;
     const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
     const workspaceStagePermissions = getWorkspaceStagePermissionCapabilities();
-    const leadRows = Object.entries(workspace.leadAssignments || {}).map(([leadId, subfunnelId]) => ({
-      lead_id: leadId,
-      subfunnel_id: subfunnelId
-    }));
+    const leadIds = Object.keys(workspace.leadAssignments || {});
+    const stageIds = Object.keys(workspace.stageAssignments || {});
+    const normalizedFunnels = Array.isArray(workspace.funnels) ? workspace.funnels.filter((funnel) => funnel?.id) : [];
+    const trackedRemovedFunnelIds = normalizeIdList(deletedWorkspaceIds.funnels || []);
+    const trackedRemovedSubfunnelIds = normalizeIdList(deletedWorkspaceIds.subfunnels || []);
+    const stageReminderSyncState = await loadStageReminderSyncState(workspace, buildStageReminderRowsForWorkspace(workspace));
 
     if (!workspaceStagePermissions.canManageStages) {
-      if (!leadRows.length) return;
-      const { error } = await supabaseApi.upsertRowsInChunks(
-        state.supabase,
-        "crm_lead_subfunnel_assignments",
-        leadRows,
-        { onConflict: "lead_id", chunkSize: 120 }
-      );
-      if (error) throw error;
+      if (!leadIds.length) return;
+      await persistWorkspaceAssignmentsSubsetToSupabase({ leadIds });
       return;
     }
 
-    const funnelRows = (workspace.funnels || []).map((funnel) => ({
-      id: funnel.id,
-      name: funnel.name,
-      category: funnel.category,
-      visibility_scope: funnel.visibility_scope || "all",
-      visibility_access_level: getFunnelGlobalAccessLevelValue(funnel.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
-      created_by: funnel.created_by || state.currentUser.id,
-      archived_at: null
-    }));
-
-    const subfunnelRows = (workspace.funnels || []).flatMap((funnel) =>
-      (funnel.subfunnels || []).map((subfunnel, index) => ({
-        id: subfunnel.id,
-        funnel_id: funnel.id,
-        name: subfunnel.name,
-        position: index
-      }))
-    );
-
-    const permissionRows = (workspace.funnels || []).flatMap((funnel) =>
-      getFunnelDepartmentPermissions(funnel).map((permission) => ({
-        funnel_id: funnel.id,
-        department_id: permission.department_id,
-        access_level: permission.access_level || FUNNEL_ACCESS_LEVEL.VIEW
-      }))
-    );
-
-    const stageRows = Object.entries(workspace.stageAssignments || {}).map(([stageId, subfunnelId]) => ({
-      stage_id: stageId,
-      subfunnel_id: subfunnelId
-    }));
-
-    const stageReminderRows = Object.entries(workspace.stageReminderConfigs || {})
-      .map(([stageId, config]) => {
-        const normalizedConfig = normalizeStageReminderConfig(config);
-        if (!normalizedConfig) return null;
-        return {
-          stage_id: stageId,
-          days: normalizedConfig.days,
-          message: normalizedConfig.message || "",
-          created_by: state.currentUser.id
-        };
-      })
-      .filter(Boolean);
-
-    const trackedRemovedFunnelIds = normalizeIdList(deletedWorkspaceIds.funnels || []);
-    const trackedRemovedSubfunnelIds = normalizeIdList(deletedWorkspaceIds.subfunnels || []);
-    const stageIdsInWorkspace = normalizeIdList([
-      ...Object.keys(workspace.stageAssignments || {}),
-      ...Object.keys(workspace.stageReminderConfigs || {})
-    ]);
-    const existingStageRemindersRes = await supabaseApi.selectRows(state.supabase, "crm_stage_reminder_configs", {
-      select: "stage_id",
-      ...(stageIdsInWorkspace.length
-        ? { filters: [{ column: "stage_id", op: "in", value: stageIdsInWorkspace }] }
-        : {})
+    await persistFunnelsSubsetToSupabase(normalizedFunnels, {
+      includeSubfunnels: true,
+      includePermissions: true
     });
-    const stageReminderTableAvailable = !isMissingRelationError(existingStageRemindersRes?.error);
-    if (existingStageRemindersRes.error && stageReminderTableAvailable) {
-      throw existingStageRemindersRes.error;
-    }
-    const existingStageReminderIds = new Set((existingStageRemindersRes.data || []).map((item) => String(item.stage_id)));
-    const nextStageReminderIds = new Set(stageReminderRows.map((item) => String(item.stage_id)));
-    const removedFunnelIds = trackedRemovedFunnelIds;
-    const removedSubfunnelIds = trackedRemovedSubfunnelIds;
-    const removedStageReminderIds = [...existingStageReminderIds].filter((id) => !nextStageReminderIds.has(id));
 
-    if (funnelRows.length) {
-      const { error } = await supabaseApi.upsertRowsInChunks(state.supabase, "crm_funnels", funnelRows, {
-        onConflict: "id",
-        chunkSize: 40
-      });
-      if (error) throw error;
+    await Promise.all([
+      persistWorkspaceAssignmentsSubsetToSupabase({ stageIds, leadIds }),
+      persistStageReminderRowsToSupabase(stageReminderSyncState)
+    ]);
+
+    if (trackedRemovedSubfunnelIds.length) {
+      await deleteSubfunnelsByIdsFromSupabase(trackedRemovedSubfunnelIds);
     }
 
-    if (removedSubfunnelIds.length) {
-      const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_subfunnels", "id", removedSubfunnelIds, {
-        chunkSize: 80
-      });
-      if (error) throw error;
-    }
-
-    if (subfunnelRows.length) {
-      // Evita conflito com unique (funnel_id, position) ao trocar a ordem
-      // de subfunis já existentes dentro do mesmo funil.
-      const result = await supabaseApi.upsertRowsWithTransientPositions(
-        state.supabase,
-        "crm_subfunnels",
-        subfunnelRows,
-        { onConflict: "id", positionField: "position", chunkSize: 80 }
-      );
-      if (result.error) throw result.error;
-    }
-
-    const funnelIds = funnelRows.map((item) => item.id);
-    const persistenceTasks = [];
-
-    if (funnelIds.length) {
-      persistenceTasks.push(
-        persistFunnelPermissionRowsToSupabase(funnelIds, permissionRows)
-      );
-    }
-
-    if (stageRows.length) {
-      persistenceTasks.push((async () => {
-        const { error } = await supabaseApi.upsertRowsInChunks(
-          state.supabase,
-          "crm_stage_subfunnel_assignments",
-          stageRows,
-          { onConflict: "stage_id", chunkSize: 120 }
-        );
-        if (error) throw error;
-      })());
-    }
-
-    if (leadRows.length) {
-      persistenceTasks.push((async () => {
-        const { error } = await supabaseApi.upsertRowsInChunks(
-          state.supabase,
-          "crm_lead_subfunnel_assignments",
-          leadRows,
-          { onConflict: "lead_id", chunkSize: 120 }
-        );
-        if (error) throw error;
-      })());
-    }
-
-    if (stageReminderTableAvailable) {
-      persistenceTasks.push((async () => {
-        if (removedStageReminderIds.length) {
-          const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_stage_reminder_configs", "stage_id", removedStageReminderIds, {
-            chunkSize: 80
-          });
-          if (error) throw error;
-        }
-        if (stageReminderRows.length) {
-          const { error } = await supabaseApi.upsertRowsInChunks(
-            state.supabase,
-            "crm_stage_reminder_configs",
-            stageReminderRows,
-            { onConflict: "stage_id", chunkSize: 80 }
-          );
-          if (error) throw error;
-        }
-      })());
-    }
-
-    if (persistenceTasks.length) {
-      await Promise.all(persistenceTasks);
-    }
-
-    if (removedFunnelIds.length) {
-      const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(state.supabase, "crm_funnels", "id", removedFunnelIds, {
-        chunkSize: 80
-      });
-      if (error) throw error;
+    if (trackedRemovedFunnelIds.length) {
+      await deleteFunnelPermissionsByFunnelIds(trackedRemovedFunnelIds);
+      await deleteFunnelsByIdsFromSupabase(trackedRemovedFunnelIds);
     }
 
     await persistSharedFunnelWorkspaceMetaToSupabase(workspace);
     forgetDeletedFunnelWorkspaceIds({
       groups: deletedWorkspaceIds.groups || [],
-      funnels: removedFunnelIds,
-      subfunnels: removedSubfunnelIds
+      funnels: trackedRemovedFunnelIds,
+      subfunnels: trackedRemovedSubfunnelIds
     });
   }
 
@@ -8975,6 +8832,80 @@
       { chunkSize: 80 }
     );
     if (error) throw error;
+  }
+
+  function buildStageReminderRowsForWorkspace(workspace = state.funnelWorkspace) {
+    return Object.entries(workspace?.stageReminderConfigs || {})
+      .map(([stageId, config]) => {
+        const normalizedConfig = normalizeStageReminderConfig(config);
+        if (!normalizedConfig) return null;
+        return {
+          stage_id: String(stageId || "").trim(),
+          days: normalizedConfig.days,
+          message: normalizedConfig.message || "",
+          created_by: state.currentUser?.id || null
+        };
+      })
+      .filter((row) => row?.stage_id);
+  }
+
+  async function loadStageReminderSyncState(workspace = state.funnelWorkspace, stageReminderRows = []) {
+    const stageIdsInWorkspace = normalizeIdList([
+      ...Object.keys(workspace?.stageAssignments || {}),
+      ...Object.keys(workspace?.stageReminderConfigs || {})
+    ]);
+
+    const existingStageRemindersRes = await supabaseApi.selectRows(state.supabase, "crm_stage_reminder_configs", {
+      select: "stage_id",
+      ...(stageIdsInWorkspace.length
+        ? { filters: [{ column: "stage_id", op: "in", value: stageIdsInWorkspace }] }
+        : {})
+    });
+
+    const stageReminderTableAvailable = !isMissingRelationError(existingStageRemindersRes?.error);
+    if (existingStageRemindersRes.error && stageReminderTableAvailable) {
+      throw existingStageRemindersRes.error;
+    }
+
+    const existingStageReminderIds = new Set((existingStageRemindersRes.data || []).map((item) => String(item.stage_id || "").trim()).filter(Boolean));
+    const nextStageReminderIds = new Set(stageReminderRows.map((item) => String(item.stage_id || "").trim()).filter(Boolean));
+    const removedStageReminderIds = [...existingStageReminderIds].filter((id) => !nextStageReminderIds.has(id));
+
+    return {
+      stageReminderTableAvailable,
+      stageReminderRows,
+      removedStageReminderIds
+    };
+  }
+
+  async function persistStageReminderRowsToSupabase(syncState = {}) {
+    if (!syncState?.stageReminderTableAvailable) return false;
+
+    const removedStageReminderIds = normalizeIdList(syncState.removedStageReminderIds || []);
+    const stageReminderRows = Array.isArray(syncState.stageReminderRows) ? syncState.stageReminderRows : [];
+
+    if (removedStageReminderIds.length) {
+      const { error } = await supabaseApi.deleteRowsByColumnValuesInChunks(
+        state.supabase,
+        "crm_stage_reminder_configs",
+        "stage_id",
+        removedStageReminderIds,
+        { chunkSize: 80 }
+      );
+      if (error) throw error;
+    }
+
+    if (stageReminderRows.length) {
+      const { error } = await supabaseApi.upsertRowsInChunks(
+        state.supabase,
+        "crm_stage_reminder_configs",
+        stageReminderRows,
+        { onConflict: "stage_id", chunkSize: 80 }
+      );
+      if (error) throw error;
+    }
+
+    return true;
   }
 
   async function persistStageReminderConfigToSupabase(stageId, nextReminder) {
