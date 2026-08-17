@@ -6719,7 +6719,7 @@
         message: DEMO_PIPELINE_REMINDER_MESSAGE
       }
     };
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
 
     const dismissals = readNotificationDismissals();
     const dismissKey = `${lead.id}:pipeline_days:${stageId}:${DEMO_PIPELINE_REMINDER_DAYS}:${getLeadStageEntryDate(lead, stageId)}`;
@@ -6943,7 +6943,6 @@
           owner_department_id: String(group.owner_department_id || "").trim() || null,
           department_permissions: departmentPermissions,
           department_ids: departmentPermissions.map((item) => item.department_id),
-          collapsed: Boolean(group.collapsed),
           created_by: group.created_by || null,
           created_at: group.created_at || null
         };
@@ -9371,8 +9370,11 @@
       state.activeSubfunnelId = null;
     }
 
-    state.suppressFunnelSync = remoteHasContent;
-    writeStoredFunnelWorkspace();
+    if (remoteHasContent) {
+      writeStoredFunnelWorkspaceLocallyOnly();
+    } else {
+      writeStoredFunnelWorkspace();
+    }
   }
 
   function restoreStoredFunnelUiState() {
@@ -9421,14 +9423,14 @@
     if (!stageId || !subfunnelId || !state.funnelWorkspace) return;
     state.funnelWorkspace.stageAssignments[stageId] = subfunnelId;
     if (options.deferSync === true) return;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   function assignLeadToSubfunnel(leadId, subfunnelId, options = {}) {
     if (!leadId || !subfunnelId || !state.funnelWorkspace) return;
     state.funnelWorkspace.leadAssignments[leadId] = subfunnelId;
     if (options.deferSync === true) return;
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
   }
 
   function applyStageAssignmentsLocally(stageIds = [], subfunnelId) {
@@ -15241,7 +15243,7 @@
       ...group,
       collapsed: !group.collapsed
     }));
-    writeStoredFunnelWorkspace();
+    writeStoredFunnelWorkspaceLocallyOnly();
     renderFunnelNav();
   }
 
