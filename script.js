@@ -10104,6 +10104,7 @@
     if (state.funnelSidebarOpen) {
       state.funnelSidebarOpen = false;
       syncPrimaryMenuState();
+      syncFunnelSidebarVisibility();
       writeStoredFunnelUiState();
       renderAll();
       return;
@@ -10114,6 +10115,7 @@
       state.activeView = getDefaultAllowedView();
     }
     syncPrimaryMenuState();
+    syncFunnelSidebarVisibility();
     writeStoredFunnelUiState();
     renderAll();
   }
@@ -16186,6 +16188,7 @@
     syncSelectedLeadIds();
     applyRoleBasedUi();
     syncResponsiveHeaderState();
+    syncFunnelSidebarVisibility();
     if (!isViewAllowed(state.activeView)) {
       bindView(getDefaultAllowedView(), { resetFunnelDetail: false });
     }
