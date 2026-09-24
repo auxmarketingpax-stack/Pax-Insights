@@ -96,7 +96,7 @@
             <option value="">Todos os funis</option>
           </select>
         </div>
-        <div class="form-group">
+        <div class="form-group" id="mobileSubfunnelFilterGroup">
           <label for="mobileSubfunnelFilter">Subfunil</label>
           <select id="mobileSubfunnelFilter">
             <option value="">Todos os subfunis</option>
@@ -837,6 +837,23 @@
           </select>
         </div>
 
+        <div class="form-group" id="funnelStructureModeGroup">
+          <label for="funnelStructureMode">Estrutura do funil</label>
+          <select id="funnelStructureMode">
+            <option value="complex">Complexo — usa subfunis</option>
+            <option value="simple">Simples — vai direto para pipelines</option>
+          </select>
+          <p class="helper-text">No modo simples, cadastro, edi&ccedil;&atilde;o e relat&oacute;rios ocultam os subfunis. Voltar ao modo complexo restaura a organiza&ccedil;&atilde;o anterior.</p>
+        </div>
+
+        <div class="form-group" id="funnelStructureApplyAllGroup">
+          <label class="lead-reminder-toggle" for="funnelStructureApplyAll">
+            <input type="checkbox" id="funnelStructureApplyAll" />
+            <span>Aplicar este modo a todos os funis</span>
+          </label>
+          <p class="helper-text">Os subfunis existentes s&atilde;o preservados e voltam a aparecer ao retornar ao modo complexo.</p>
+        </div>
+
         <div class="form-group" id="funnelOfficialDepartmentGroup">
           <label for="funnelOfficialDepartmentSelect" id="funnelOfficialDepartmentLabel">Departamento oficial com edição</label>
           <select id="funnelOfficialDepartmentSelect"></select>
@@ -866,12 +883,12 @@
           <p class="helper-text">Use o olho para liberar só visualização e o lápis para permitir edição dentro do funil.</p>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" id="funnelSubCountGroup">
           <label for="funnelSubCount">Quantidade de subfunis</label>
           <input type="number" id="funnelSubCount" min="1" max="12" value="2" required />
         </div>
 
-        <div class="form-group">
+        <div class="form-group" id="funnelSubfieldsGroup">
           <label>Nome de cada subfunil</label>
           <div id="funnelSubfields" class="funnel-subfields"></div>
         </div>
@@ -1052,7 +1069,7 @@
           <select id="stageFunnelSelect" required></select>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" id="stageSubfunnelGroup">
           <label for="stageSubfunnelSelect">Subfunil</label>
           <select id="stageSubfunnelSelect" required></select>
         </div>
@@ -1147,7 +1164,7 @@
           <select id="stageDuplicateFunnel" required></select>
         </div>
 
-        <div class="form-group form-group-full">
+        <div class="form-group form-group-full" id="stageDuplicateSubfunnelGroup">
           <label for="stageDuplicateSubfunnel">Subfunil</label>
           <select id="stageDuplicateSubfunnel" required></select>
         </div>

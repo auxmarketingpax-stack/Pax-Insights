@@ -74,6 +74,7 @@
     mobileCategoryFilter: $("mobileCategoryFilter"),
     mobileGroupFilter: $("mobileGroupFilter"),
     mobileFunnelFilter: $("mobileFunnelFilter"),
+    mobileSubfunnelFilterGroup: $("mobileSubfunnelFilterGroup"),
     mobileSubfunnelFilter: $("mobileSubfunnelFilter"),
     mobileOwnerFilter: $("mobileOwnerFilter"),
     mobileMonthFilter: $("mobileMonthFilter"),
@@ -229,6 +230,10 @@
     funnelEditId: $("funnelEditId"),
     funnelName: $("funnelName"),
     funnelCategory: $("funnelCategory"),
+    funnelStructureModeGroup: $("funnelStructureModeGroup"),
+    funnelStructureMode: $("funnelStructureMode"),
+    funnelStructureApplyAllGroup: $("funnelStructureApplyAllGroup"),
+    funnelStructureApplyAll: $("funnelStructureApplyAll"),
     funnelVisibilityScope: $("funnelVisibilityScope"),
     funnelGlobalAccessGroup: $("funnelGlobalAccessGroup"),
     funnelGlobalAccessLevel: $("funnelGlobalAccessLevel"),
@@ -238,7 +243,9 @@
     funnelOfficialDepartmentSelect: $("funnelOfficialDepartmentSelect"),
     funnelDepartmentsGroup: $("funnelDepartmentsGroup"),
     funnelDepartmentsChecklist: $("funnelDepartmentsChecklist"),
+    funnelSubCountGroup: $("funnelSubCountGroup"),
     funnelSubCount: $("funnelSubCount"),
+    funnelSubfieldsGroup: $("funnelSubfieldsGroup"),
     funnelSubfields: $("funnelSubfields"),
     saveFunnelBtn: $("saveFunnelBtn"),
 
@@ -283,6 +290,7 @@
     stageId: $("stageId"),
     stageName: $("stageName"),
     stageFunnelSelect: $("stageFunnelSelect"),
+    stageSubfunnelGroup: $("stageSubfunnelGroup"),
     stageSubfunnelSelect: $("stageSubfunnelSelect"),
     stageColor: $("stageColor"),
     stageColorPreview: $("stageColorPreview"),
@@ -309,6 +317,7 @@
     stageDuplicateCategory: $("stageDuplicateCategory"),
     stageDuplicateGroup: $("stageDuplicateGroup"),
     stageDuplicateFunnel: $("stageDuplicateFunnel"),
+    stageDuplicateSubfunnelGroup: $("stageDuplicateSubfunnelGroup"),
     stageDuplicateSubfunnel: $("stageDuplicateSubfunnel"),
     saveStageDuplicateBtn: $("saveStageDuplicateBtn"),
     stageDeleteModalOverlay: $("stageDeleteModalOverlay"),
@@ -536,6 +545,11 @@
     VIEW: "view",
     EDIT: "edit"
   };
+  const FUNNEL_STRUCTURE_MODE = {
+    SIMPLE: "simple",
+    COMPLEX: "complex"
+  };
+  const SIMPLE_FUNNEL_DEFAULT_SUBFUNNEL_NAME = "Principal";
   const CHART_JS_URL = "https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js";
   const ALLOWED_EXTERNAL_SCRIPT_URLS = new Set([CHART_JS_URL]);
   const deletingLeadIds = new Set();
@@ -2663,12 +2677,18 @@
     const activeLeadFunnelId = selectedFunnelId || getLeadFunnelId(lead) || state.activeFunnelId || selectableFunnels[0]?.id || "";
     const resolvedFunnel = selectableFunnels.find((item) => item.id === activeLeadFunnelId) || selectableFunnels[0] || null;
     const hasDetailedAccess = canSelectDetailedLeadTarget(resolvedFunnel);
+    const simpleFunnel = isSimpleFunnel(resolvedFunnel);
     const subfunnels = resolvedFunnel ? getSubfunnelsForFunnel(resolvedFunnel.id) : [];
-    const resolvedSubfunnel = subfunnels.find((item) => item.id === selectedSubfunnelId)
+    const requestedStage = state.stages.find((item) => item.id === (selectedStageId || lead?.stage_id)) || null;
+    const requestedStageSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[requestedStage?.id] || "").trim();
+    const resolvedSubfunnel = subfunnels.find((item) => item.id === (simpleFunnel ? requestedStageSubfunnelId : selectedSubfunnelId))
+      || subfunnels.find((item) => item.id === selectedSubfunnelId)
       || subfunnels.find((item) => item.id === getLeadSubfunnelId(lead))
       || subfunnels[0]
       || null;
-    const stageOptions = resolvedSubfunnel ? getStagesForSubfunnel(resolvedSubfunnel.id) : [];
+    const stageOptions = simpleFunnel
+      ? getStagesForFunnel(resolvedFunnel?.id)
+      : (resolvedSubfunnel ? getStagesForSubfunnel(resolvedSubfunnel.id) : []);
     const resolvedStage = stageOptions.find((item) => item.id === selectedStageId)
       || stageOptions.find((item) => item.id === lead?.stage_id)
       || stageOptions[0]
@@ -2703,6 +2723,7 @@
 
     els.leadSubfunnelSelect.disabled = !hasDetailedAccess;
     els.stage.disabled = !hasDetailedAccess;
+    $("leadSubfunnelGroup")?.classList.toggle("hidden", simpleFunnel);
 
     if (resolvedFunnel?.id) els.leadFunnelSelect.value = resolvedFunnel.id;
     if (resolvedSubfunnel?.id) els.leadSubfunnelSelect.value = resolvedSubfunnel.id;
@@ -3797,6 +3818,7 @@
       String(funnel?.id || "").trim(),
       String(funnel?.name || ""),
       String(funnel?.category || ""),
+      normalizeFunnelStructureMode(funnel?.structure_mode),
       String(funnel?.group_id || ""),
       Array.isArray(funnel?.subfunnels) ? funnel.subfunnels.length : 0
     ].join(":"))).join("|");
@@ -5686,6 +5708,7 @@
   function applyFunnelCoreFieldsLocally(funnelOrId, {
     name,
     category,
+    structureMode,
     ownerDepartmentId,
     visibilityScope,
     visibilityAccessLevel,
@@ -5696,6 +5719,7 @@
       ...funnel,
       name,
       category,
+      structure_mode: normalizeFunnelStructureMode(structureMode),
       owner_department_id: ownerDepartmentId || null,
       visibility_scope: visibilityScope,
       visibility_access_level: visibilityAccessLevel,
@@ -5740,6 +5764,7 @@
   function buildLocalFunnelRecord({
     name,
     category,
+    structureMode,
     ownerDepartmentId,
     visibilityScope,
     visibilityAccessLevel,
@@ -5751,6 +5776,7 @@
       id: createFunnelId(),
       name,
       category,
+      structure_mode: normalizeFunnelStructureMode(structureMode),
       owner_department_id: ownerDepartmentId || null,
       visibility_scope: visibilityScope,
       visibility_access_level: visibilityAccessLevel,
@@ -5766,6 +5792,7 @@
   function applyExistingFunnelWorkspaceUpdate(existingFunnelId, {
     name,
     category,
+    structureMode,
     ownerDepartmentId,
     visibilityScope,
     visibilityAccessLevel,
@@ -5782,6 +5809,7 @@
     applyFunnelCoreFieldsLocally(localExistingFunnel, {
       name,
       category,
+      structureMode,
       ownerDepartmentId,
       visibilityScope,
       visibilityAccessLevel,
@@ -5792,7 +5820,7 @@
 
     const { validSubfunnelIds } = reconcileWorkspaceAssignmentsForSubfunnels(previousSubfunnels, nextSubfunnels);
     state.activeFunnelId = localExistingFunnel.id;
-    if (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId)) {
+    if (isSimpleFunnel(localExistingFunnel) || (state.activeSubfunnelId && !validSubfunnelIds.has(state.activeSubfunnelId))) {
       state.activeSubfunnelId = null;
     }
 
@@ -5802,6 +5830,7 @@
   function createFunnelInWorkspace({
     name,
     category,
+    structureMode,
     ownerDepartmentId,
     visibilityScope,
     visibilityAccessLevel,
@@ -5812,6 +5841,7 @@
     const newFunnel = buildLocalFunnelRecord({
       name,
       category,
+      structureMode,
       ownerDepartmentId,
       visibilityScope,
       visibilityAccessLevel,
@@ -6193,6 +6223,7 @@
       els.socialSource,
       els.trafficType,
       els.funnelCategory,
+      els.funnelStructureMode,
       els.funnelVisibilityScope,
       els.funnelGlobalAccessLevel,
       els.funnelOfficialDepartmentSelect,
@@ -7241,6 +7272,38 @@
     return state.funnelWorkspace?.funnels?.find((item) => item.id === funnelId) || null;
   }
 
+  function normalizeFunnelStructureMode(value) {
+    return String(value || "").trim().toLowerCase() === FUNNEL_STRUCTURE_MODE.SIMPLE
+      ? FUNNEL_STRUCTURE_MODE.SIMPLE
+      : FUNNEL_STRUCTURE_MODE.COMPLEX;
+  }
+
+  function isSimpleFunnel(funnel = null) {
+    return normalizeFunnelStructureMode(funnel?.structure_mode) === FUNNEL_STRUCTURE_MODE.SIMPLE;
+  }
+
+  function getDefaultSubfunnelIdForFunnel(funnelOrId = null) {
+    const funnel = typeof funnelOrId === "string" ? getFunnelById(funnelOrId) : funnelOrId;
+    return String(funnel?.subfunnels?.[0]?.id || "").trim() || null;
+  }
+
+  function getStagesForFunnel(funnelId) {
+    const subfunnelIds = new Set(
+      getSubfunnelsForFunnel(funnelId)
+        .map((subfunnel) => String(subfunnel?.id || "").trim())
+        .filter(Boolean)
+    );
+    if (!subfunnelIds.size) return [];
+    return sortStagesByStablePosition(
+      state.stages.filter((stage) => subfunnelIds.has(String(state.funnelWorkspace?.stageAssignments?.[stage.id] || "").trim()))
+    );
+  }
+
+  function getActiveSimpleFunnel() {
+    const funnel = getFunnelById(state.activeFunnelId);
+    return funnel && isSimpleFunnel(funnel) ? funnel : null;
+  }
+
   function getFunnelsByCategory(category) {
     return getAvailableFunnels().filter((item) => item.category === category);
   }
@@ -7390,7 +7453,10 @@
   }
 
   function isFunnelDetailActive() {
-    return state.activeView === "funil" && !!state.activeSubfunnelId && !!getSubfunnelById(state.activeSubfunnelId);
+    if (state.activeView !== "funil") return false;
+    const activeFunnel = getFunnelById(state.activeFunnelId);
+    if (activeFunnel && isSimpleFunnel(activeFunnel)) return true;
+    return !!state.activeSubfunnelId && !!getSubfunnelById(state.activeSubfunnelId);
   }
 
   function getSubfunnelById(subfunnelId) {
@@ -7633,6 +7699,7 @@
       })),
       { selectedValue: resolvedSubfunnelId }
     );
+    els.stageSubfunnelGroup?.classList.toggle("hidden", isSimpleFunnel(getFunnelById(fallbackFunnelId)));
     syncBrandedSelects();
   }
 
@@ -7645,6 +7712,11 @@
         return funnelId && canViewFunnelItem(getFunnelById(funnelId));
       });
     }
+    const activeSimpleFunnel = getActiveSimpleFunnel();
+    if (activeSimpleFunnel) {
+      if (!canViewFunnelItem(activeSimpleFunnel)) return [];
+      return getStagesForFunnel(activeSimpleFunnel.id);
+    }
     if (!canViewFunnelItem(getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id))) return [];
     return getVisibleStagesForSubfunnel(state.activeSubfunnelId);
   }
@@ -7656,6 +7728,15 @@
         const funnelId = getLeadFunnelId(lead);
         return funnelId && canViewFunnelItem(getFunnelById(funnelId));
       });
+    }
+    const activeSimpleFunnel = getActiveSimpleFunnel();
+    if (activeSimpleFunnel) {
+      if (!canViewFunnelItem(activeSimpleFunnel)) return [];
+      const validStageIds = new Set(getScopedStages().map((stage) => stage.id));
+      return state.leads.filter((lead) => (
+        getLeadFunnelId(lead) === activeSimpleFunnel.id
+        && validStageIds.has(lead.stage_id)
+      ));
     }
     if (!canViewFunnelItem(getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id))) return [];
     const validStageIds = new Set(getScopedStages().map((stage) => stage.id));
@@ -7714,6 +7795,7 @@
           id: row.id || createFunnelId(),
           name: String(row.name || "Novo funil").trim(),
           category: FUNNEL_CATEGORIES.includes(String(row.category || "").trim()) ? String(row.category).trim() : "B2C",
+          structure_mode: normalizeFunnelStructureMode(row.structure_mode),
           group_id: String(sharedMetaFunnel?.group_id || row.group_id || "").trim() || null,
           owner_department_id: String(
             sharedMetaFunnel?.owner_department_id
@@ -8787,6 +8869,7 @@
       id: funnel.id,
       name: funnel.name,
       category: funnel.category,
+      structure_mode: normalizeFunnelStructureMode(funnel.structure_mode),
       visibility_scope: funnel.visibility_scope || "all",
       visibility_access_level: getFunnelGlobalAccessLevelValue(funnel.visibility_access_level || FUNNEL_ACCESS_LEVEL.VIEW),
       created_by: funnel.created_by || state.currentUser?.id || null,
@@ -8881,6 +8964,7 @@
 
     const includeSubfunnels = options.includeSubfunnels !== false;
     const includePermissions = options.includePermissions !== false;
+    const preferUpdate = options.preferUpdate === true;
     const deletedWorkspaceIds = readDeletedFunnelWorkspaceIds();
     const normalizedFunnels = (Array.isArray(funnels) ? funnels : []).filter((item) => item?.id);
     if (!normalizedFunnels.length) return;
@@ -8889,11 +8973,19 @@
       .map((funnel) => buildFunnelRowPayload(funnel))
       .filter(Boolean);
     if (funnelRows.length) {
-      const { error } = await supabaseApi.upsertRowsInChunks(state.supabase, "crm_funnels", funnelRows, {
-        onConflict: "id",
-        chunkSize: 40
-      });
-      if (error) throw error;
+      if (preferUpdate) {
+        for (const row of funnelRows) {
+          const { id, ...values } = row;
+          const { error } = await supabaseApi.updateRowsByIds(state.supabase, "crm_funnels", [id], values);
+          if (error) throw error;
+        }
+      } else {
+        const { error } = await supabaseApi.upsertRowsInChunks(state.supabase, "crm_funnels", funnelRows, {
+          onConflict: "id",
+          chunkSize: 40
+        });
+        if (error) throw error;
+      }
     }
 
     const funnelIds = funnelRows.map((item) => String(item.id || "").trim()).filter(Boolean);
@@ -9442,6 +9534,7 @@
         id: normalizedFunnelId,
         name: String(item.name || "Novo funil").trim(),
         category: FUNNEL_CATEGORIES.includes(item.category) ? item.category : "B2C",
+        structure_mode: normalizeFunnelStructureMode(item.structure_mode || storedMatch?.structure_mode),
         group_id: String(item.group_id || item.groupId || storedMatch?.group_id || storedMatch?.groupId || "").trim() || null,
         owner_department_id: String(
           item.owner_department_id
@@ -9524,6 +9617,9 @@
     if (!getSubfunnelById(state.activeSubfunnelId) || !canViewFunnelItem(getFunnelById(getSubfunnelById(state.activeSubfunnelId)?.funnel_id))) {
       state.activeSubfunnelId = null;
     }
+    if (isSimpleFunnel(getFunnelById(state.activeFunnelId))) {
+      state.activeSubfunnelId = null;
+    }
 
     if (remoteHasContent) {
       writeStoredFunnelWorkspaceLocallyOnly();
@@ -9548,12 +9644,12 @@
     if (storedFunnel) {
       state.activeFunnelId = storedFunnel.id;
     }
-    if (storedSubfunnel && storedFunnel && storedSubfunnel.funnel_id === storedFunnel.id) {
+    if (storedSubfunnel && storedFunnel && !isSimpleFunnel(storedFunnel) && storedSubfunnel.funnel_id === storedFunnel.id) {
       state.activeSubfunnelId = storedSubfunnel.id;
     }
 
     if (state.activeView === "funil") {
-      if (storedSubfunnel && storedFunnel && storedSubfunnel.funnel_id === storedFunnel.id) {
+      if (storedSubfunnel && storedFunnel && !isSimpleFunnel(storedFunnel) && storedSubfunnel.funnel_id === storedFunnel.id) {
         return;
       }
       if (storedFunnel) return;
@@ -10007,6 +10103,10 @@
     const funnel = getFunnelById(funnelId);
     const subfunnel = getSubfunnelById(subfunnelId);
     if (!funnel || !subfunnel) return;
+    if (isSimpleFunnel(funnel)) {
+      openFunnelHub(funnel.id);
+      return;
+    }
     state.funnelSidebarOpen = getPreservedFunnelSidebarState();
     state.activeFunnelId = funnel.id;
     state.activeSubfunnelId = subfunnelId;
@@ -11716,7 +11816,13 @@
       : (currentIndex < targetIndex ? targetIndex - 1 : targetIndex);
 
     state.pipelineStageDrag = null;
-    await moveStageToIndex(draggedStageId, nextIndex, state.activeSubfunnelId);
+    const activeSimpleFunnel = getActiveSimpleFunnel();
+    await moveStageToIndex(
+      draggedStageId,
+      nextIndex,
+      state.activeSubfunnelId,
+      activeSimpleFunnel?.id || null
+    );
   }
 
   function handlePipelineStageDragEnd() {
@@ -12370,16 +12476,19 @@
     }
   }
 
-  function collectStageMoveContext(stageId, targetIndex, subfunnelId = null) {
-    const scopeSubfunnelId = subfunnelId || state.structureSubfunnelId;
+  function collectStageMoveContext(stageId, targetIndex, subfunnelId = null, funnelId = null) {
+    const scopeFunnelId = String(funnelId || "").trim() || null;
+    const scopeSubfunnelId = scopeFunnelId ? null : (subfunnelId || state.structureSubfunnelId);
     const useVisibleScopedStages = Boolean(
-      scopeSubfunnelId
-      && isFunnelDetailActive()
+      isFunnelDetailActive()
+      && scopeSubfunnelId
       && scopeSubfunnelId === state.activeSubfunnelId
     );
-    const scopedAllStages = sortStagesByStablePosition(scopeSubfunnelId
-      ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
-      : state.stages);
+    const scopedAllStages = sortStagesByStablePosition(scopeFunnelId
+      ? getStagesForFunnel(scopeFunnelId)
+      : (scopeSubfunnelId
+          ? state.stages.filter((stage) => state.funnelWorkspace?.stageAssignments?.[stage.id] === scopeSubfunnelId)
+          : state.stages));
     const scopedVisibleStages = sortStagesByStablePosition(useVisibleScopedStages ? getScopedStages() : scopedAllStages);
     const currentIndex = scopedVisibleStages.findIndex((stage) => stage.id === stageId);
     const movedStage = currentIndex >= 0
@@ -12387,13 +12496,16 @@
       : null;
     const normalizedTargetIndex = Math.max(0, Math.min(Number(targetIndex), scopedVisibleStages.length - 1));
     const previousStages = state.stages.map((item) => normalizeStage(item));
-    const scopedOrderedPositions = scopedAllStages
-      .map((item) => Number(item.position))
-      .filter((value) => Number.isFinite(value))
-      .sort((a, b) => a - b);
+    const scopedOrderedPositions = scopeFunnelId
+      ? scopedAllStages.map((_item, index) => index)
+      : scopedAllStages
+          .map((item) => Number(item.position))
+          .filter((value) => Number.isFinite(value))
+          .sort((a, b) => a - b);
 
     return {
       stageId,
+      scopeFunnelId,
       scopeSubfunnelId,
       useVisibleScopedStages,
       scopedAllStages,
@@ -12511,14 +12623,14 @@
     }
   }
 
-  async function moveStageToIndex(stageId, targetIndex, subfunnelId = null) {
+  async function moveStageToIndex(stageId, targetIndex, subfunnelId = null, funnelId = null) {
     const stagePermissions = getWorkspaceStagePermissionCapabilities();
     if (!stagePermissions.canManageStages) {
       alert("Somente administradores podem reordenar pipelines.");
       return;
     }
 
-    const moveContext = collectStageMoveContext(stageId, targetIndex, subfunnelId);
+    const moveContext = collectStageMoveContext(stageId, targetIndex, subfunnelId, funnelId);
     if (moveContext.currentIndex === -1) return;
     if (!Number.isFinite(moveContext.normalizedTargetIndex) || moveContext.normalizedTargetIndex === moveContext.currentIndex) return;
     const mutationContext = buildStageMoveMutationContext(moveContext);
@@ -13277,6 +13389,25 @@
     return parts.join(" • ");
   }
 
+  function shouldHideSubfunnelFilters(funnelIds = []) {
+    if (state.activeView === "funil" && isSimpleFunnel(getFunnelById(state.activeFunnelId))) {
+      return true;
+    }
+    const selectedFunnels = normalizeIdList(funnelIds)
+      .map((funnelId) => getFunnelById(funnelId))
+      .filter(Boolean);
+    return selectedFunnels.length > 0 && selectedFunnels.every((funnel) => isSimpleFunnel(funnel));
+  }
+
+  function syncSubfunnelFilterVisibility(hidden) {
+    const shouldHide = Boolean(hidden);
+    els.subfunnelFilterDropdown?.classList.toggle("hidden", shouldHide);
+    els.mobileSubfunnelFilterGroup?.classList.toggle("hidden", shouldHide);
+    if (shouldHide) {
+      closeFilterDropdowns();
+    }
+  }
+
   function populateFilters() {
     rebuildReferralCanonicalMaps();
 
@@ -13336,10 +13467,14 @@
 
     const subfunnelOptions = [...new Set(subfunnelSourceLeads.map((lead) => getLeadSubfunnelId(lead)).filter(Boolean))]
       .map((subfunnelId) => getSubfunnelById(subfunnelId))
-      .filter(Boolean)
+      .filter((subfunnel) => Boolean(subfunnel) && !isSimpleFunnel(getFunnelById(subfunnel.funnel_id)))
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
 
-    const validSubfunnelIds = intersectFilterValues(currentSubfunnels, subfunnelOptions.map((subfunnel) => subfunnel.id));
+    const hideSubfunnelFilters = shouldHideSubfunnelFilters(validFunnelIds);
+    const validSubfunnelIds = hideSubfunnelFilters
+      ? []
+      : intersectFilterValues(currentSubfunnels, subfunnelOptions.map((subfunnel) => subfunnel.id));
+    syncSubfunnelFilterVisibility(hideSubfunnelFilters);
 
     const scopedStages = sourceStages.filter((stage) => {
       const assignedSubfunnelId = state.funnelWorkspace?.stageAssignments?.[stage.id] || null;
@@ -15212,13 +15347,14 @@
 
     if (isFunnelDetailActive()) {
       const importedLeadIds = importedRows.map((item) => item?.id).filter(Boolean);
+      const detailSubfunnelId = state.activeSubfunnelId || getDefaultSubfunnelIdForFunnel(getActiveSimpleFunnel());
       if (importedLeadIds.length) {
         try {
-          await persistLeadAssignmentsSafely(importedLeadIds, state.activeSubfunnelId, {
+          await persistLeadAssignmentsSafely(importedLeadIds, detailSubfunnelId, {
             notifyScope: "funnel-workspace"
           });
         } catch (assignmentError) {
-          alert(`Os leads foram importados, mas não foi possível vincular ao subfunil atual: ${formatSupabaseError(assignmentError)}`);
+          alert(`Os leads foram importados, mas não foi possível vinculá-los ao funil atual: ${formatSupabaseError(assignmentError)}`);
         }
       }
     }
@@ -15588,14 +15724,15 @@
     const detailActive = isFunnelDetailActive();
     const activeFunnel = getFunnelById(state.activeFunnelId);
     const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
+    const simpleActive = Boolean(activeFunnel && isSimpleFunnel(activeFunnel));
     const activeFunnelPermissions = activeFunnel ? getFunnelPermissionCapabilities(activeFunnel) : null;
     els.funnelHubPanel.classList.toggle("hidden", detailActive || !activeFunnel);
     els.funnelDetailPanel.classList.toggle("hidden", !detailActive);
-    els.funnelBackBtn?.classList.toggle("hidden", !detailActive);
+    els.funnelBackBtn?.classList.toggle("hidden", !detailActive || simpleActive);
     els.pipelineScrollTop?.classList.toggle("hidden", !detailActive);
-    els.editCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive || !activeFunnelPermissions?.canManageStages);
-    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || detailActive || !activeFunnelPermissions?.canManageStages);
-    if (detailActive && activeFunnel && activeSubfunnel) {
+    els.editCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || (detailActive && !simpleActive) || !activeFunnelPermissions?.canManageStages);
+    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", state.activeView !== "funil" || !activeFunnel || (detailActive && !simpleActive) || !activeFunnelPermissions?.canManageStages);
+    if (detailActive && activeFunnel && (simpleActive || activeSubfunnel)) {
       renderFunnelDiagram(null);
       return;
     }
@@ -15690,7 +15827,7 @@
 
     state.highlightedLeadId = lead.id;
     state.activeFunnelId = funnelId;
-    state.activeSubfunnelId = subfunnelId;
+    state.activeSubfunnelId = isSimpleFunnel(getFunnelById(funnelId)) ? null : subfunnelId;
     state.funnelSidebarOpen = shouldAutoCloseFunnelSidebarOnSelection() ? false : state.funnelSidebarOpen;
     setNotificationsPanelOpen(false);
     setShellTab("crm");
@@ -15737,7 +15874,9 @@
           </div>
           <div class="notifications-item-copy">${escapeHtml(item.message)}</div>
           <div class="notifications-item-meta">
-            ${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.subfunnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}
+            ${isSimpleFunnel(item.funnel)
+              ? `${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}`
+              : `${escapeHtml(item.funnel?.name || "-")} / ${escapeHtml(item.subfunnel?.name || "-")} / ${escapeHtml(item.stage?.name || "-")}`}
           </div>
         </button>
         <button type="button" class="notifications-item-dismiss" data-dismiss-notification="${escapeHtml(item.dismissKey)}" aria-label="Dispensar notificação">×</button>
@@ -15755,6 +15894,31 @@
         <input type="text" id="funnelSubfield${index + 1}" data-funnel-subfield="true" value="${escapeHtml(names[index] || "")}" placeholder="Nome do subfunil ${index + 1}" required />
       </div>
     `).join("");
+  }
+
+  function syncFunnelStructureModeFields() {
+    const modalMode = String(state.funnelModalContext?.mode || "create").trim().toLowerCase();
+    const isSubfunnelOnlyMode = modalMode === "create-subfunnel" || modalMode === "edit-subfunnel";
+    const canApplyStructureModeToAll = !isSubfunnelOnlyMode && Boolean(state.funnelModalContext?.funnelId);
+    const simple = !isSubfunnelOnlyMode
+      && normalizeFunnelStructureMode(els.funnelStructureMode?.value) === FUNNEL_STRUCTURE_MODE.SIMPLE;
+
+    els.funnelStructureModeGroup?.classList.toggle("hidden", isSubfunnelOnlyMode);
+    if (els.funnelStructureMode) els.funnelStructureMode.disabled = isSubfunnelOnlyMode;
+    els.funnelStructureApplyAllGroup?.classList.toggle("hidden", !canApplyStructureModeToAll);
+    if (els.funnelStructureApplyAll) els.funnelStructureApplyAll.disabled = !canApplyStructureModeToAll;
+    els.funnelSubCountGroup?.classList.toggle("hidden", simple || isSubfunnelOnlyMode);
+    els.funnelSubfieldsGroup?.classList.toggle("hidden", simple && !isSubfunnelOnlyMode);
+
+    if (els.funnelSubCount) {
+      els.funnelSubCount.disabled = simple || isSubfunnelOnlyMode;
+      els.funnelSubCount.required = !simple && !isSubfunnelOnlyMode;
+    }
+    els.funnelSubfields?.querySelectorAll("[data-funnel-subfield='true']").forEach((input) => {
+      input.disabled = simple;
+      input.required = !simple;
+    });
+    syncBrandedSelects();
   }
 
   function getFunnelModalModeConfig({ mode = "create", funnel = null, subfunnel = null } = {}) {
@@ -15815,9 +15979,13 @@
       els.funnelOfficialDepartmentGroup?.classList.add("hidden");
       els.funnelDepartmentsGroup?.classList.add("hidden");
       if (els.funnelSubCount) els.funnelSubCount.disabled = true;
+      els.funnelStructureModeGroup?.classList.add("hidden");
+      if (els.funnelStructureMode) els.funnelStructureMode.disabled = true;
       return;
     }
 
+    els.funnelStructureModeGroup?.classList.remove("hidden");
+    if (els.funnelStructureMode) els.funnelStructureMode.disabled = false;
     els.funnelGlobalAccessGroup?.classList.remove("hidden");
     els.funnelOfficialDepartmentGroup?.classList.remove("hidden");
     els.funnelDepartmentsGroup?.classList.remove("hidden");
@@ -15860,6 +16028,13 @@
       els.funnelCategory.disabled = false;
       els.funnelCategory.value = presetCategory;
     }
+    if (els.funnelStructureMode) {
+      els.funnelStructureMode.disabled = false;
+      els.funnelStructureMode.value = normalizeFunnelStructureMode(funnel?.structure_mode);
+    }
+    if (els.funnelStructureApplyAll) {
+      els.funnelStructureApplyAll.checked = false;
+    }
     if (els.funnelVisibilityScope) {
       els.funnelVisibilityScope.disabled = false;
       els.funnelVisibilityScope.value = funnel?.visibility_scope || "all";
@@ -15898,6 +16073,7 @@
     if (subfieldsLabel) subfieldsLabel.textContent = modeConfig.subLabel;
     if (els.funnelSubCount) els.funnelSubCount.value = String(modeConfig.subfunnelNames.length || 1);
     renderFunnelSubfields(modeConfig.subfunnelNames);
+    syncFunnelStructureModeFields();
     syncBrandedSelects();
     openModalOverlay(els.funnelModalOverlay, modeConfig.focusSelector);
   }
@@ -15913,6 +16089,7 @@
     const category = FUNNEL_CATEGORIES.includes(String(els.funnelCategory?.value || "").trim())
       ? String(els.funnelCategory.value).trim()
       : "B2C";
+    const structureMode = normalizeFunnelStructureMode(els.funnelStructureMode?.value);
     const visibilityScope = ["all", "owner", "departments"].includes(String(els.funnelVisibilityScope?.value || "").trim())
       ? String(els.funnelVisibilityScope.value).trim()
       : "all";
@@ -15929,6 +16106,7 @@
     const selectedDepartmentIds = selectedDepartmentPermissions.map((item) => item.department_id);
     const editingId = String(els.funnelEditId?.value || "").trim();
     const existingFunnel = editingId ? getFunnelById(editingId) : null;
+    const applyStructureModeToAll = Boolean(existingFunnel && els.funnelStructureApplyAll?.checked);
     const previousSubfunnels = existingFunnel?.subfunnels || [];
     const subfunnelNames = [...document.querySelectorAll("[data-funnel-subfield='true']")]
       .map((input) => String(input.value || "").trim())
@@ -15938,6 +16116,8 @@
       modalContext,
       name,
       category,
+      structureMode,
+      applyStructureModeToAll,
       visibilityScope,
       visibilityAccessLevel,
       officialDepartmentId,
@@ -15969,8 +16149,22 @@
       return false;
     }
 
-    if (!(context.subfunnelNames || []).length) {
+    if (!isSubfunnelOnlyMode && context.structureMode === FUNNEL_STRUCTURE_MODE.COMPLEX && !(context.subfunnelNames || []).length) {
       alert("Informe ao menos um subfunil.");
+      return false;
+    }
+
+    if (context.applyStructureModeToAll) {
+      const restrictedFunnels = (state.funnelWorkspace?.funnels || [])
+        .filter((funnel) => !getFunnelPermissionCapabilities(funnel).canManageStages);
+      if (restrictedFunnels.length) {
+        alert("Você não tem permissão para alterar a estrutura de todos os funis.");
+        return false;
+      }
+    }
+
+    if (isSubfunnelOnlyMode && !(context.subfunnelNames || []).length) {
+      alert("Informe o nome do subfunil.");
       return false;
     }
 
@@ -16023,6 +16217,12 @@
   }
 
   function buildFullFunnelSubmissionSubfunnels(context = {}) {
+    if (context.structureMode === FUNNEL_STRUCTURE_MODE.SIMPLE) {
+      if ((context.previousSubfunnels || []).length) {
+        return context.previousSubfunnels.map((subfunnel) => ({ ...subfunnel }));
+      }
+      return buildFunnelSubfunnels([SIMPLE_FUNNEL_DEFAULT_SUBFUNNEL_NAME], []);
+    }
     return buildFunnelSubfunnels(context.subfunnelNames, context.previousSubfunnels);
   }
 
@@ -16031,6 +16231,7 @@
       applyExistingFunnelWorkspaceUpdate(context.existingFunnel.id, {
         name: context.name,
         category: context.category,
+        structureMode: context.structureMode,
         ownerDepartmentId: context.officialDepartmentId,
         visibilityScope: context.visibilityScope,
         visibilityAccessLevel: context.visibilityAccessLevel,
@@ -16039,12 +16240,21 @@
         previousSubfunnels: context.previousSubfunnels,
         nextSubfunnels
       });
+      if (context.applyStructureModeToAll) {
+        (state.funnelWorkspace?.funnels || []).forEach((funnel) => {
+          funnel.structure_mode = normalizeFunnelStructureMode(context.structureMode);
+        });
+        if (context.structureMode === FUNNEL_STRUCTURE_MODE.SIMPLE) {
+          state.activeSubfunnelId = null;
+        }
+      }
       return;
     }
 
     createFunnelInWorkspace({
       name: context.name,
       category: context.category,
+      structureMode: context.structureMode,
       ownerDepartmentId: context.officialDepartmentId,
       visibilityScope: context.visibilityScope,
       visibilityAccessLevel: context.visibilityAccessLevel,
@@ -16058,8 +16268,23 @@
     const targetFunnelId = context.existingFunnel?.id || state.activeFunnelId;
     await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
       includeSubfunnels: true,
-      includePermissions: true
+      includePermissions: true,
+      preferUpdate: Boolean(context.existingFunnel)
     });
+    if (context.applyStructureModeToAll) {
+      const otherFunnelIds = (state.funnelWorkspace?.funnels || [])
+        .filter((funnel) => funnel.id !== targetFunnelId)
+        .map((funnel) => funnel.id);
+      for (const funnelIds of chunkArray(otherFunnelIds, 200)) {
+        const { error } = await supabaseApi.updateRowsByIds(
+          state.supabase,
+          "crm_funnels",
+          funnelIds,
+          { structure_mode: normalizeFunnelStructureMode(context.structureMode) }
+        );
+        if (error) throw error;
+      }
+    }
     await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
   }
 
@@ -16068,19 +16293,23 @@
 
     try {
       await executeFunnelWorkspaceMetaMutation({
-        applyLocal: () => applyFullFunnelSubmissionLocally(context, nextSubfunnels),
-        persist: async () => persistFullFunnelSubmission(context),
-        afterPersist: async () => {
+        applyLocal: () => {
+          applyFullFunnelSubmissionLocally(context, nextSubfunnels);
           closeFunnelModal();
           bindView("funil", { resetFunnelDetail: false });
+          finalizeUiOnlyMutation();
         },
+        persist: async () => persistFullFunnelSubmission(context),
         finalize: {
           notifyScope: "funnel-workspace",
           refreshReason: "funnel-save",
-          cooldownMs: 1800
+          cooldownMs: 1800,
+          render: false
         }
       });
     } catch (error) {
+      bindView("funil", { resetFunnelDetail: false });
+      finalizeUiOnlyMutation();
       alert(`Erro ao salvar funil: ${formatSupabaseError(error)}`);
       return false;
     }
@@ -16329,9 +16558,13 @@
   }
 
   function getStageModalContext(stage = null) {
-    const assignedSubfunnelId = stage
+    let assignedSubfunnelId = stage
       ? state.funnelWorkspace?.stageAssignments?.[stage.id]
       : (state.activeSubfunnelId || state.structureSubfunnelId);
+    const activeSimpleFunnel = getActiveSimpleFunnel();
+    if (!stage && activeSimpleFunnel) {
+      assignedSubfunnelId = getDefaultSubfunnelIdForFunnel(activeSimpleFunnel);
+    }
     const assignedSubfunnel = getSubfunnelById(assignedSubfunnelId);
     return {
       assignedSubfunnelId,
@@ -16469,6 +16702,7 @@
         : String(subfunnels[0]?.id || "");
       if (nextSubfunnelId) els.stageDuplicateSubfunnel.value = nextSubfunnelId;
     }
+    els.stageDuplicateSubfunnelGroup?.classList.toggle("hidden", isSimpleFunnel(getFunnelById(selectedFunnelId)));
 
     syncBrandedSelects();
   }
@@ -16518,13 +16752,22 @@
   function renderStageDeleteTargets(stage) {
     if (!els.stageDeleteTargetStage || !els.stageDeleteTargetHint) return;
     const scope = getStageScope(stage.id);
+    const simpleFunnel = isSimpleFunnel(scope.funnel);
     const equivalentStageIds = new Set(getEquivalentStagesInSubfunnel(stage).map((item) => item.id));
-    const currentStages = getStagesForSubfunnel(scope.subfunnelId).filter((item) => !equivalentStageIds.has(item.id));
-    const nearestStage = getNearestStageForDeletion(stage.id);
+    const stageScope = simpleFunnel ? getStagesForFunnel(scope.funnel?.id) : getStagesForSubfunnel(scope.subfunnelId);
+    const currentIndex = stageScope.findIndex((item) => item.id === stage.id);
+    const currentStages = stageScope.filter((item) => !equivalentStageIds.has(item.id));
+    const nearestStage = currentIndex >= 0
+      ? stageScope.slice(currentIndex + 1).find((item) => !equivalentStageIds.has(item.id))
+        || stageScope.slice(0, currentIndex).reverse().find((item) => !equivalentStageIds.has(item.id))
+        || null
+      : null;
 
     if (!currentStages.length) {
       els.stageDeleteTargetStage.innerHTML = "";
-      els.stageDeleteTargetHint.textContent = "Não existe outra pipeline nesse subfunil. Se mantiver os leads, o sistema criará uma pipeline padrão automaticamente.";
+      els.stageDeleteTargetHint.textContent = simpleFunnel
+        ? "Não existe outra pipeline nesse funil. Se mantiver os leads, o sistema criará uma pipeline padrão automaticamente."
+        : "Não existe outra pipeline nesse subfunil. Se mantiver os leads, o sistema criará uma pipeline padrão automaticamente.";
       syncBrandedSelects();
       return;
     }
@@ -16539,7 +16782,7 @@
     }
     const duplicateCount = Math.max(0, equivalentStageIds.size - 1);
     els.stageDeleteTargetHint.textContent = duplicateCount > 0
-      ? `Existem ${duplicateCount + 1} pipelines com esse mesmo nome neste subfunil. Ao excluir, o sistema removerá todas elas e moverá os leads para a pipeline selecionada.`
+      ? `Existem ${duplicateCount + 1} pipelines com esse mesmo nome neste ${simpleFunnel ? "funil" : "subfunil"}. Ao excluir, o sistema removerá todas elas e moverá os leads para a pipeline selecionada.`
       : "Os leads serão movidos para a pipeline selecionada.";
     syncBrandedSelects();
   }
@@ -16598,11 +16841,13 @@
 
   function collectStageDuplicateSubmissionContext() {
     const sourceStageId = String(els.stageDuplicateSourceId?.value || "").trim();
+    const targetFunnelId = String(els.stageDuplicateFunnel?.value || "").trim();
     const targetSubfunnelId = String(els.stageDuplicateSubfunnel?.value || "").trim();
     const duplicateMode = document.querySelector('input[name="stageDuplicateMode"]:checked')?.value || "stage_only";
     const sourceStage = state.stages.find((stage) => stage.id === sourceStageId) || null;
     return {
       sourceStageId,
+      targetFunnelId,
       targetSubfunnelId,
       duplicateMode,
       sourceStage
@@ -16615,7 +16860,12 @@
       return false;
     }
     if (!context.targetSubfunnelId) {
-      alert("Selecione o subfunil de destino.");
+      const targetFunnel = getFunnelById(String(els.stageDuplicateFunnel?.value || "").trim());
+      alert(isSimpleFunnel(targetFunnel) ? "Selecione um funil de destino válido." : "Selecione o subfunil de destino.");
+      return false;
+    }
+    if (getSubfunnelById(context.targetSubfunnelId)?.funnel_id !== context.targetFunnelId) {
+      alert("O destino selecionado não pertence ao funil informado.");
       return false;
     }
     return true;
@@ -17683,9 +17933,12 @@
       requestedOwner: els.owner.value.trim()
     });
     const selectedFunnelId = String(els.leadFunnelSelect?.value || "").trim();
-    const selectedSubfunnelId = String(els.leadSubfunnelSelect?.value || "").trim();
     const selectedStageId = String(els.stage?.value || "").trim();
     const selectedFunnel = getFunnelById(selectedFunnelId);
+    const selectedStageSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[selectedStageId] || "").trim();
+    const selectedSubfunnelId = isSimpleFunnel(selectedFunnel)
+      ? selectedStageSubfunnelId
+      : String(els.leadSubfunnelSelect?.value || "").trim();
 
     const invalidPlan = normalizedModalPlans.find((item) => item.name && !isNoPlanName(item.name) && String(item?.value ?? "").trim() === "");
     if (existingLead && invalidPlan) return alert("Ao adicionar um plano, informe tambem o valor.");
@@ -17729,11 +17982,15 @@
     };
 
     if (!selectedFunnelId) return alert("Selecione um funil.");
-    if (!selectedSubfunnelId) return alert("Selecione um subfunil.");
+    if (!selectedSubfunnelId) return alert(isSimpleFunnel(selectedFunnel) ? "Selecione uma pipeline válida." : "Selecione um subfunil.");
     if (!selectedFunnel || !canRoleEditFunnelContent(selectedFunnel)) {
       return alert("Seu perfil nao pode editar leads nesse funil.");
     }
     if (!payload.stage_id) return alert("Selecione uma etapa.");
+    const selectedStageScope = getStageScope(payload.stage_id);
+    if (selectedStageScope.funnel?.id !== selectedFunnel.id || selectedStageScope.subfunnelId !== selectedSubfunnelId) {
+      return alert("A pipeline selecionada não pertence ao destino informado.");
+    }
     const requiresOwner = leadPermissions.canAssignLeadOwner || !existingLead;
     if (!payload.name || !payload.contact || !payload.start_date || !payload.traffic_type || !payload.social_source || (requiresOwner && !payload.owner)) {
       return alert("Preencha os campos obrigatorios.");
@@ -17823,7 +18080,7 @@
                 notifyScope: "funnel-workspace"
               });
             } catch (assignmentError) {
-              alert(`Lead salvo, mas não foi possível vincular o subfunil corretamente: ${formatSupabaseError(assignmentError)}`);
+              alert(`Lead salvo, mas não foi possível vinculá-lo ${isSimpleFunnel(selectedFunnel) ? "ao funil" : "ao subfunil"} corretamente: ${formatSupabaseError(assignmentError)}`);
               const silentAssignmentError = new Error("lead-subfunnel-assignment-failed");
               silentAssignmentError.silent = true;
               throw silentAssignmentError;
@@ -17858,6 +18115,7 @@
 
   function collectStageFormSubmissionContext() {
     const selectedType = String(els.stageType.value || "andamento").trim();
+    const selectedFunnelId = String(els.stageFunnelSelect?.value || "").trim();
     const selectedSubfunnelId = String(els.stageSubfunnelSelect?.value || "").trim();
     const customStageTypeInput = String(els.customStageType?.value || "").trim();
     const existingCustomType = selectedType.startsWith("custom:") ? selectedType.replace(/^custom:/, "") : "";
@@ -17878,6 +18136,7 @@
     };
     return {
       selectedType,
+      selectedFunnelId,
       selectedSubfunnelId,
       customStageTypeInput,
       existingCustomType,
@@ -17894,7 +18153,12 @@
       return false;
     }
     if (!context.selectedSubfunnelId) {
-      alert("Selecione o subfunil desta pipeline.");
+      const targetFunnel = getFunnelById(String(els.stageFunnelSelect?.value || "").trim());
+      alert(isSimpleFunnel(targetFunnel) ? "Selecione um funil válido para esta pipeline." : "Selecione o subfunil desta pipeline.");
+      return false;
+    }
+    if (getSubfunnelById(context.selectedSubfunnelId)?.funnel_id !== context.selectedFunnelId) {
+      alert("O destino selecionado não pertence ao funil informado.");
       return false;
     }
     if (context.payload.stage_type === "personalizado" && !context.payload.custom_stage_type) {
@@ -19256,10 +19520,28 @@
       }
     }
 
+    const targetSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[targetStage.id] || "").trim();
+    if (targetSubfunnelId && state.funnelDataLoadedFromSupabase) {
+      registerPendingLeadAssignmentCommits(
+        affectedLeadIds,
+        targetSubfunnelId,
+        getWorkspaceAssignmentCommitTtl([], affectedLeadIds)
+      );
+      try {
+        await persistLeadAssignmentsToSupabase(affectedLeadIds, targetSubfunnelId);
+      } catch (error) {
+        clearPendingLeadAssignmentCommits(affectedLeadIds);
+        throw error;
+      }
+    }
+
     updateLeadsLocallyByIds(affectedLeadIds, (lead) => ({
       ...lead,
       stage_id: targetStage.id
     }));
+    if (targetSubfunnelId) {
+      affectedLeadIds.forEach((leadId) => assignLeadToSubfunnel(leadId, targetSubfunnelId, { deferSync: true }));
+    }
 
     await logChange(
       "bulk_move_stage",
@@ -19284,8 +19566,9 @@
 
     if (!context.deleteWithLeads && context.affectedLeads?.length && targetStage?.id) {
       moveLeadsToStageLocally(context.stageIdsToDelete, targetStage.id);
+      const targetSubfunnelId = String(state.funnelWorkspace?.stageAssignments?.[targetStage.id] || "").trim();
       context.affectedLeads.forEach((lead) => {
-        const assignedSubfunnelId = state.funnelWorkspace?.leadAssignments?.[lead.id];
+        const assignedSubfunnelId = targetSubfunnelId || state.funnelWorkspace?.leadAssignments?.[lead.id];
         if (assignedSubfunnelId) assignLeadToSubfunnel(lead.id, assignedSubfunnelId, { deferSync: true });
       });
     }
@@ -19487,13 +19770,14 @@
 
     const activeFunnel = getFunnelById(state.activeFunnelId);
     const activeSubfunnel = getSubfunnelById(state.activeSubfunnelId);
+    const activeFunnelIsSimple = Boolean(activeFunnel && isSimpleFunnel(activeFunnel));
     const activeFunnelGroup = activeFunnel?.group_id ? getGroupById(activeFunnel.group_id) : null;
     const activeFunnelPermissions = activeFunnel ? getFunnelPermissionCapabilities(activeFunnel) : null;
     const titles = {
       funil: isFunnelDetailActive()
         ? [
-            activeSubfunnel?.name || "Pipeline de Vendas",
-            activeFunnel ? `${activeFunnel.name}` : "Gerencie os leads por etapa compartilhada."
+            activeFunnelIsSimple ? activeFunnel.name : (activeSubfunnel?.name || "Pipeline de Vendas"),
+            activeFunnelIsSimple ? "Pipelines do funil" : (activeFunnel ? `${activeFunnel.name}` : "Gerencie os leads por etapa compartilhada.")
           ]
         : activeFunnel
           ? [activeFunnel.name, ""]
@@ -19521,8 +19805,8 @@
     }
     els.topbar?.classList.toggle("hidden", shouldHideTopbar);
     document.querySelector(".topbar-actions")?.classList.toggle("hidden", !shouldShowTopbarControls);
-    els.editCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive() || !activeFunnelPermissions?.canManageStages);
-    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || isFunnelDetailActive() || !activeFunnelPermissions?.canManageStages);
+    els.editCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || (isFunnelDetailActive() && !activeFunnelIsSimple) || !activeFunnelPermissions?.canManageStages);
+    els.deleteCurrentFunnelBtn?.classList.toggle("hidden", name !== "funil" || !activeFunnel || (isFunnelDetailActive() && !activeFunnelIsSimple) || !activeFunnelPermissions?.canManageStages);
     if (!shouldShowTopbarControls) {
       setDesktopFiltersOpen(false);
     }
@@ -19788,7 +20072,11 @@
     els.cancelFunnelGroupBtn?.addEventListener("click", closeFunnelGroupModal);
     els.funnelGroupForm?.addEventListener("submit", submitFunnelGroupForm);
     els.funnelGroupOwnerDepartment?.addEventListener("change", refreshGroupDepartmentChecklist);
-    els.funnelSubCount?.addEventListener("input", () => renderFunnelSubfields());
+    els.funnelSubCount?.addEventListener("input", () => {
+      renderFunnelSubfields();
+      syncFunnelStructureModeFields();
+    });
+    els.funnelStructureMode?.addEventListener("change", syncFunnelStructureModeFields);
     els.funnelVisibilityScope?.addEventListener("change", () => {
       toggleFunnelDepartmentsVisibility();
       refreshFunnelDepartmentChecklistForModal();
@@ -20373,6 +20661,7 @@
       if (subfunnels[0]?.id) {
         els.stageSubfunnelSelect.value = subfunnels[0].id;
       }
+      els.stageSubfunnelGroup?.classList.toggle("hidden", isSimpleFunnel(getFunnelById(selectedFunnelId)));
       syncBrandedSelects();
     });
     els.removeCustomTypeBtn.addEventListener("click", removeCurrentCustomStageType);
