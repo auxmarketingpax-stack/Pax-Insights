@@ -16106,6 +16106,7 @@
     const selectedDepartmentIds = selectedDepartmentPermissions.map((item) => item.department_id);
     const editingId = String(els.funnelEditId?.value || "").trim();
     const existingFunnel = editingId ? getFunnelById(editingId) : null;
+    const existingFunnelSnapshot = existingFunnel ? cloneMutableState(existingFunnel, null) : null;
     const applyStructureModeToAll = Boolean(existingFunnel && els.funnelStructureApplyAll?.checked);
     const previousSubfunnels = existingFunnel?.subfunnels || [];
     const subfunnelNames = [...document.querySelectorAll("[data-funnel-subfield='true']")]
@@ -16125,6 +16126,7 @@
       selectedDepartmentIds,
       editingId,
       existingFunnel,
+      existingFunnelSnapshot,
       previousSubfunnels,
       subfunnelNames
     };
@@ -16264,8 +16266,65 @@
     });
   }
 
-  async function persistFullFunnelSubmission(context = {}) {
+  function getFunnelSubfunnelsSignature(subfunnels = []) {
+    return JSON.stringify((Array.isArray(subfunnels) ? subfunnels : []).map((subfunnel) => ({
+      id: String(subfunnel?.id || "").trim(),
+      name: String(subfunnel?.name || "").trim()
+    })));
+  }
+
+  function getFunnelPermissionsSignature(permissions = []) {
+    return JSON.stringify(
+      normalizeFunnelDepartmentPermissions(permissions)
+        .map((permission) => ({
+          department_id: String(permission.department_id || "").trim(),
+          access_level: String(permission.access_level || FUNNEL_ACCESS_LEVEL.VIEW).trim()
+        }))
+        .sort((a, b) => `${a.department_id}:${a.access_level}`.localeCompare(`${b.department_id}:${b.access_level}`))
+    );
+  }
+
+  function isStructureModeOnlyFunnelSubmission(context = {}, nextSubfunnels = []) {
+    const existingFunnel = context.existingFunnelSnapshot || context.existingFunnel;
+    if (!existingFunnel) return false;
+    if (normalizeFunnelStructureMode(existingFunnel.structure_mode) === normalizeFunnelStructureMode(context.structureMode)) return false;
+
+    return String(existingFunnel.name || "").trim() === String(context.name || "").trim()
+      && String(existingFunnel.category || "").trim() === String(context.category || "").trim()
+      && String(existingFunnel.visibility_scope || "all").trim() === String(context.visibilityScope || "all").trim()
+      && getFunnelGlobalAccessLevelValue(existingFunnel.visibility_access_level) === getFunnelGlobalAccessLevelValue(context.visibilityAccessLevel)
+      && getFunnelOfficialDepartmentId(existingFunnel) === String(context.officialDepartmentId || "").trim()
+      && getFunnelPermissionsSignature(existingFunnel.department_permissions || existingFunnel.department_ids || [])
+        === getFunnelPermissionsSignature(context.selectedDepartmentPermissions || context.selectedDepartmentIds || [])
+      && getFunnelSubfunnelsSignature(existingFunnel.subfunnels)
+        === getFunnelSubfunnelsSignature(nextSubfunnels);
+  }
+
+  async function persistFunnelStructureModeByIds(funnelIds = [], structureMode) {
+    const normalizedFunnelIds = normalizeIdList(funnelIds);
+    if (!normalizedFunnelIds.length || !state.funnelDataLoadedFromSupabase || !state.supabase) return;
+
+    for (const idsChunk of chunkArray(normalizedFunnelIds, 200)) {
+      const { error } = await supabaseApi.updateRowsByIds(
+        state.supabase,
+        "crm_funnels",
+        idsChunk,
+        { structure_mode: normalizeFunnelStructureMode(structureMode) }
+      );
+      if (error) throw error;
+    }
+  }
+
+  async function persistFullFunnelSubmission(context = {}, nextSubfunnels = []) {
     const targetFunnelId = context.existingFunnel?.id || state.activeFunnelId;
+    if (isStructureModeOnlyFunnelSubmission(context, nextSubfunnels)) {
+      const affectedFunnelIds = context.applyStructureModeToAll
+        ? (state.funnelWorkspace?.funnels || []).map((funnel) => funnel.id)
+        : [targetFunnelId];
+      await persistFunnelStructureModeByIds(affectedFunnelIds, context.structureMode);
+      return;
+    }
+
     await persistSingleFunnelSubsetByIdOrThrow(targetFunnelId, {
       includeSubfunnels: true,
       includePermissions: true,
@@ -16275,15 +16334,7 @@
       const otherFunnelIds = (state.funnelWorkspace?.funnels || [])
         .filter((funnel) => funnel.id !== targetFunnelId)
         .map((funnel) => funnel.id);
-      for (const funnelIds of chunkArray(otherFunnelIds, 200)) {
-        const { error } = await supabaseApi.updateRowsByIds(
-          state.supabase,
-          "crm_funnels",
-          funnelIds,
-          { structure_mode: normalizeFunnelStructureMode(context.structureMode) }
-        );
-        if (error) throw error;
-      }
+      await persistFunnelStructureModeByIds(otherFunnelIds, context.structureMode);
     }
     await persistSharedFunnelLinksMetaToSupabase(state.funnelWorkspace);
   }
@@ -16299,7 +16350,7 @@
           bindView("funil", { resetFunnelDetail: false });
           finalizeUiOnlyMutation();
         },
-        persist: async () => persistFullFunnelSubmission(context),
+        persist: async () => persistFullFunnelSubmission(context, nextSubfunnels),
         finalize: {
           notifyScope: "funnel-workspace",
           refreshReason: "funnel-save",
