@@ -34,8 +34,11 @@
     topbar: document.querySelector(".topbar"),
     shellTabCrm: $("shellTabCrm"),
     shellTabIntel: $("shellTabIntel"),
+    shellTabTasks: $("shellTabTasks"),
     shellViewCrm: $("shellViewCrm"),
     shellViewIntel: $("shellViewIntel"),
+    shellViewTasks: $("shellViewTasks"),
+    tasksAppFrame: $("tasksAppFrame"),
     shellBrandLogo: $("shellBrandLogo"),
     notificationsBtn: $("notificationsBtn"),
     notificationsCount: $("notificationsCount"),
@@ -3225,16 +3228,67 @@
     els.profileMenuBtn?.setAttribute("aria-expanded", String(nextOpen));
   }
 
+  function getTasksAppUrl() {
+    const configuredUrl = String(window.APP_CONFIG?.tasksAppUrl || "").trim();
+    return /^https?:\/\//i.test(configuredUrl) ? configuredUrl : "";
+  }
+
+  function getTasksAppOrigin() {
+    const tasksAppUrl = getTasksAppUrl();
+    try {
+      return tasksAppUrl ? new URL(tasksAppUrl).origin : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  async function sendTasksAuthSession() {
+    const tasksAppOrigin = getTasksAppOrigin();
+    if (!tasksAppOrigin || !els.tasksAppFrame?.contentWindow || !state.supabase) return;
+
+    try {
+      const { data, error } = await supabaseApi.getAuthSession(state.supabase);
+      if (error || !data?.session?.access_token) return;
+      els.tasksAppFrame.contentWindow.postMessage({
+        type: "pax:tasks-auth",
+        accessToken: data.session.access_token,
+        supabaseUrl: window.APP_CONFIG?.supabaseUrl || "",
+        supabaseAnonKey: window.APP_CONFIG?.supabaseAnonKey || ""
+      }, tasksAppOrigin);
+    } catch (error) {
+      console.error("Não foi possível preparar a sessão de Tarefas.", error);
+    }
+  }
+
+  function loadTasksApp() {
+    const tasksAppUrl = getTasksAppUrl();
+    if (!els.tasksAppFrame || !tasksAppUrl) return;
+    const targetUrl = new URL(tasksAppUrl);
+    targetUrl.searchParams.set("pax_parent_origin", window.location.origin);
+    const sourceUrl = targetUrl.toString();
+    if (els.tasksAppFrame.dataset.sourceUrl === sourceUrl) {
+      void sendTasksAuthSession();
+      return;
+    }
+    els.tasksAppFrame.onload = () => void sendTasksAuthSession();
+    els.tasksAppFrame.src = sourceUrl;
+    els.tasksAppFrame.dataset.sourceUrl = sourceUrl;
+  }
+
   function setShellTab(name) {
     const previous = state.activeShellTab;
-    const normalized = name === "intel" ? "intel" : "crm";
+    const normalized = ["crm", "intel", "tasks"].includes(name) ? name : "crm";
     state.activeShellTab = normalized;
     els.shellTabCrm?.classList.toggle("active", normalized === "crm");
     els.shellTabIntel?.classList.toggle("active", normalized === "intel");
+    els.shellTabTasks?.classList.toggle("active", normalized === "tasks");
     els.shellViewCrm?.classList.toggle("shell-view-active", normalized === "crm");
     els.shellViewCrm?.classList.toggle("hidden", normalized !== "crm");
     els.shellViewIntel?.classList.toggle("shell-view-active", normalized === "intel");
     els.shellViewIntel?.classList.toggle("hidden", normalized !== "intel");
+    els.shellViewTasks?.classList.toggle("shell-view-active", normalized === "tasks");
+    els.shellViewTasks?.classList.toggle("hidden", normalized !== "tasks");
+    if (normalized === "tasks") loadTasksApp();
     closeProfileMenu();
 
     if (previous !== normalized && normalized === "crm") {
@@ -20093,6 +20147,17 @@
 
     els.shellTabCrm?.addEventListener("click", () => setShellTab("crm"));
     els.shellTabIntel?.addEventListener("click", () => setShellTab("intel"));
+    els.shellTabTasks?.addEventListener("click", () => setShellTab("tasks"));
+    window.addEventListener("message", (event) => {
+      const tasksAppOrigin = getTasksAppOrigin();
+      if (
+        !tasksAppOrigin
+        || event.origin !== tasksAppOrigin
+        || event.source !== els.tasksAppFrame?.contentWindow
+        || event.data?.type !== "pax:tasks-auth-request"
+      ) return;
+      void sendTasksAuthSession();
+    });
 
     els.profileMenuBtn?.addEventListener("click", (event) => {
       event.stopPropagation();

@@ -158,6 +158,7 @@
       <nav class="shell-tabs" aria-label="Navegação principal">
         <button type="button" id="shellTabCrm" class="shell-tab active">CRM</button>
         <button type="button" id="shellTabIntel" class="shell-tab">Central de Inteligência</button>
+        <button type="button" id="shellTabTasks" class="shell-tab">Tarefas</button>
       </nav>
 
       <div class="shell-profile">
@@ -767,8 +768,12 @@
           <p>Esta área já está reservada no shell do Pax Insights. O conteúdo analítico entra na próxima etapa.</p>
         </div>
       </div>
+    <section id="shellViewTasks" class="shell-view hidden">
+      <div class="tasks-workspace">
+        <iframe id="tasksAppFrame" class="tasks-app-frame" title="Plataforma de tarefas" loading="lazy" referrerpolicy="same-origin"></iframe>
+      </div>
     </section>
-  </section>
+    </section>
 
   <div class="crm-modal-overlay hidden" id="accountModalOverlay">
     <div class="crm-modal crm-small-modal">
@@ -1389,8 +1394,8 @@
 
   <script src="vendor/supabase.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
-  <script src="config.js?v=20260415-02"></script>
+  <script src="config.js?v=20260926-01"></script>
   <script src="supabase-api.js?v=20260814-01"></script>
-  <script src="script.js?v=20260817-20"></script>
+  <script src="script.js?v=20260926-01"></script>
 </body>
 </html>

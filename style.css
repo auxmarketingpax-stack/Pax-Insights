@@ -3462,6 +3462,20 @@ input,select,textarea{
   display:block;
 }
 
+.tasks-workspace{
+  min-height:calc(100vh - var(--shell-header-height, 0px));
+  background:#f8faf9;
+}
+
+.tasks-app-frame{
+  display:block;
+  width:100%;
+  height:calc(100vh - var(--shell-header-height, 0px));
+  min-height:680px;
+  border:0;
+  background:#ffffff;
+}
+
 .app{
   display:block;
   min-height:0;
@@ -5928,6 +5942,11 @@ body[data-theme="dark"] .main,
 body[data-theme="dark"] .app,
 body[data-theme="dark"] .shell-view{
   background:#0d1010 !important;
+}
+
+html[data-theme="dark"] .tasks-workspace,
+body[data-theme="dark"] .tasks-workspace{
+  background:#0d1010;
 }
 
 html[data-theme="dark"] .auth-card,
