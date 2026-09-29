@@ -1,7 +1,7 @@
 window.APP_CONFIG = {
   supabaseUrl: "https://qxuuladntzrojngvdfil.supabase.co",
   supabaseAnonKey: "sb_publishable_oepxAXvlNxop_3tITuiw3Q_yGgWPcmf",
-  tasksAppUrl: "tarefas-v20260926-47/index.html",
+  tasksAppUrl: "tarefas-v20260926-48/index.html",
   allowSelfRegistration: true,
   allowedSignupEmailDomains: []
 };

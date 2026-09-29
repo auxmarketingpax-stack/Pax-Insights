@@ -16036,11 +16036,11 @@
       <div class="notifications-item-shell notifications-item-task">
         <button type="button" class="notifications-item" data-task-notification="true">
           <div class="notifications-item-head">
-            <span class="notifications-item-title">${escapeHtml(item.sender || "Pax Rio Verde")}</span>
+            <span class="notifications-item-title">${escapeHtml(item.subject || "Mensagem da Pax Rio Verde")}</span>
             <span class="notifications-item-badge">Tarefas</span>
           </div>
           <div class="notifications-item-copy">${escapeHtml(item.body || "Nova mensagem")}</div>
-          <div class="notifications-item-meta">${escapeHtml(item.createdAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.createdAt)) : "Agora")}</div>
+          <div class="notifications-item-meta">${escapeHtml(item.sender || "Pax Rio Verde")} · ${escapeHtml(item.createdAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.createdAt)) : "Agora")}</div>
         </button>
       </div>
     `).join("");
@@ -20304,6 +20304,7 @@
           ? event.data.notifications.slice(0, 30).map((item) => ({
             id: String(item?.id || ""),
             sender: String(item?.sender || "Pax Rio Verde"),
+            subject: String(item?.subject || "Mensagem da Pax Rio Verde"),
             body: String(item?.body || ""),
             createdAt: String(item?.createdAt || "")
           })).filter((item) => item.id && item.body)
