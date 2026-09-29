@@ -3476,6 +3476,18 @@ input,select,textarea{
   background:#ffffff;
 }
 
+body[data-theme="dark"] .tasks-app-frame{
+  background:#0d1010;
+  color-scheme:dark;
+}
+
+/* A sobreposição é apenas o fundo do popup. No modo escuro ela não pode
+   receber a cor sólida das superfícies do CRM. */
+body[data-theme="dark"] .crm-modal-overlay{
+  background:rgba(0,0,0,.26) !important;
+  backdrop-filter:blur(5px);
+}
+
 .app{
   display:block;
   min-height:0;
@@ -5660,15 +5672,15 @@ body{
 }
 
 body[data-theme="dark"]{
-  --bg:#08120d;
-  --panel:#0f1f17;
-  --panel-2:#163126;
-  --text:#edf7f0;
-  --muted:#9eb7a8;
+  --bg:#0d1010;
+  --panel:#151818;
+  --panel-2:#1b1f1f;
+  --text:#eff2f0;
+  --muted:#98a39f;
   --primary:#6fad2b;
   --primary-hover:#86c93e;
   --border:rgba(255,255,255,.08);
-  background:linear-gradient(135deg,#08120d,#0f1f17 40%,#102419);
+  background:#0d1010;
   color:var(--text);
   color-scheme:dark;
 }
@@ -10713,4 +10725,9 @@ body[data-theme="dark"] .profile-menu-badge{
   .mobile-brand-block strong{
     font-size:13px;
   }
+}
+
+body[data-theme="dark"] .crm-modal-overlay{
+  background:rgba(0,0,0,.26) !important;
+  backdrop-filter:blur(5px);
 }

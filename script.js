@@ -521,6 +521,7 @@
     funnelNavDrag: null,
     touchContextTap: null,
     notificationPanelOpen: false,
+    taskNotifications: [],
     highlightedLeadId: null,
     pendingSubfunnelPositionCommits: new Map(),
     pendingStagePositionCommits: new Map(),
@@ -552,6 +553,8 @@
     SIMPLE: "simple",
     COMPLEX: "complex"
   };
+  // View preference only: never changes the shared funnel structure for other users.
+  const FUNNEL_VIEW_MODE_STORAGE_KEY = "pax-insights.funnel-view-mode.v1";
   const SIMPLE_FUNNEL_DEFAULT_SUBFUNNEL_NAME = "Principal";
   const CHART_JS_URL = "https://cdn.jsdelivr.net/npm/chart.js/dist/chart.umd.min.js";
   const ALLOWED_EXTERNAL_SCRIPT_URLS = new Set([CHART_JS_URL]);
@@ -608,6 +611,7 @@
   const DEMO_PIPELINE_REMINDER_SEEDED_STORAGE_KEY = `${APP_STORAGE_PREFIX}.demo-pipeline-reminder-seeded-v1`;
   const GROUP_FILTER_UNGROUPED_VALUE = "__ungrouped__";
   const THEME_STORAGE_KEY = `${APP_STORAGE_PREFIX}.theme`;
+  const SHELL_TAB_STORAGE_KEY = `${APP_STORAGE_PREFIX}.shell-tab`;
   const FUNNEL_STORAGE_SCHEMA_VERSION = "20260728-remote-truth-v1";
   const DEFAULT_SOCIAL_SOURCE = "Instagram";
   const DEMO_PIPELINE_REMINDER_LEAD_NAME = "Lead demonstracao notificacao";
@@ -2828,16 +2832,19 @@
     state.ownerReconciliationInProgress = true;
 
     try {
-      for (const batch of chunkArray(updates, 200)) {
-        const payload = batch.map((item) => ({
-          id: item.id,
-          owner: item.next_owner
-        }));
-
-        const { error } = await supabaseApi.upsertRows(state.supabase, "leads", payload, { onConflict: "id" });
+      for (const batch of chunkArray(updates, 20)) {
+        const results = await Promise.all(batch.map((item) => supabaseApi.updateRows(
+          state.supabase,
+          "leads",
+          { owner: item.next_owner },
+          { filters: [{ column: "id", op: "eq", value: item.id }] }
+        )));
+        const error = results.find((result) => result?.error)?.error || null;
 
         if (error) {
-          console.error("Erro ao reconciliar responsáveis:", error);
+          console.warn("Reconciliação automática de responsáveis ignorada por permissão.", error?.code || "unknown");
+          state.ownerReconciliationDone = true;
+          writeStoredOwnerReconciliationDone(true);
           return false;
         }
       }
@@ -3192,6 +3199,23 @@
     }
   }
 
+  function readStoredShellTab() {
+    try {
+      const storedTab = window.sessionStorage.getItem(SHELL_TAB_STORAGE_KEY);
+      return ["crm", "intel", "tasks"].includes(storedTab) ? storedTab : "crm";
+    } catch (_error) {
+      return "crm";
+    }
+  }
+
+  function writeStoredShellTab(tab) {
+    try {
+      window.sessionStorage.setItem(SHELL_TAB_STORAGE_KEY, tab);
+    } catch (_error) {
+      // Navigation must continue when session storage is unavailable.
+    }
+  }
+
   function applyTheme(theme = "light", options = {}) {
     const normalizedTheme = theme === "dark" ? "dark" : "light";
     const persist = options.persist !== false;
@@ -3202,6 +3226,7 @@
     document.documentElement.dataset.theme = normalizedTheme;
     document.documentElement.style.colorScheme = normalizedTheme;
     syncThemeToggleUi();
+    sendTasksTheme(normalizedTheme);
 
     if (persist) {
       writeStoredTheme(normalizedTheme);
@@ -3230,7 +3255,13 @@
 
   function getTasksAppUrl() {
     const configuredUrl = String(window.APP_CONFIG?.tasksAppUrl || "").trim();
-    return /^https?:\/\//i.test(configuredUrl) ? configuredUrl : "";
+    if (!configuredUrl) return "";
+    try {
+      const targetUrl = new URL(configuredUrl, window.location.href);
+      return targetUrl.origin === window.location.origin ? targetUrl.toString() : "";
+    } catch (_error) {
+      return "";
+    }
   }
 
   function getTasksAppOrigin() {
@@ -3240,6 +3271,15 @@
     } catch (_error) {
       return "";
     }
+  }
+
+  function sendTasksTheme(theme = state.theme) {
+    const tasksAppOrigin = getTasksAppOrigin();
+    if (!tasksAppOrigin || !els.tasksAppFrame?.contentWindow) return;
+    els.tasksAppFrame.contentWindow.postMessage({
+      type: "pax:tasks-theme",
+      theme: theme === "dark" ? "dark" : "light"
+    }, tasksAppOrigin);
   }
 
   async function sendTasksAuthSession() {
@@ -3253,7 +3293,8 @@
         type: "pax:tasks-auth",
         accessToken: data.session.access_token,
         supabaseUrl: window.APP_CONFIG?.supabaseUrl || "",
-        supabaseAnonKey: window.APP_CONFIG?.supabaseAnonKey || ""
+        supabaseAnonKey: window.APP_CONFIG?.supabaseAnonKey || "",
+        avatarUrl: String(data.session.user?.user_metadata?.avatar_url || state.profile?.avatar_url || "")
       }, tasksAppOrigin);
     } catch (error) {
       console.error("Não foi possível preparar a sessão de Tarefas.", error);
@@ -3263,22 +3304,36 @@
   function loadTasksApp() {
     const tasksAppUrl = getTasksAppUrl();
     if (!els.tasksAppFrame || !tasksAppUrl) return;
-    const targetUrl = new URL(tasksAppUrl);
+    let targetUrl;
+    try {
+      targetUrl = new URL(tasksAppUrl);
+    } catch (_error) {
+      console.error("A URL configurada para Tarefas não é válida.");
+      return;
+    }
     targetUrl.searchParams.set("pax_parent_origin", window.location.origin);
+    targetUrl.searchParams.set("pax_theme", state.theme === "dark" ? "dark" : "light");
     const sourceUrl = targetUrl.toString();
     if (els.tasksAppFrame.dataset.sourceUrl === sourceUrl) {
+      sendTasksTheme();
       void sendTasksAuthSession();
       return;
     }
-    els.tasksAppFrame.onload = () => void sendTasksAuthSession();
+    els.tasksAppFrame.onload = () => {
+      sendTasksTheme();
+      void sendTasksAuthSession();
+    };
     els.tasksAppFrame.src = sourceUrl;
     els.tasksAppFrame.dataset.sourceUrl = sourceUrl;
   }
 
-  function setShellTab(name) {
+  function setShellTab(name, options = {}) {
     const previous = state.activeShellTab;
     const normalized = ["crm", "intel", "tasks"].includes(name) ? name : "crm";
     state.activeShellTab = normalized;
+    if (options.persist !== false) {
+      writeStoredShellTab(normalized);
+    }
     els.shellTabCrm?.classList.toggle("active", normalized === "crm");
     els.shellTabIntel?.classList.toggle("active", normalized === "intel");
     els.shellTabTasks?.classList.toggle("active", normalized === "tasks");
@@ -3404,7 +3459,7 @@
     const { data: profile, error: profileError } = await supabaseApi.updateProfileById(
       state.supabase,
       state.currentUser.id,
-      { full_name: fullName },
+      { full_name: fullName, avatar_url: avatarUrl || null },
       { select: "*", maybeSingle: true }
     );
 
@@ -3528,7 +3583,7 @@
     state.pendingLeadRowCommits.clear();
     state.pendingLeadMoveCommits.clear();
     setPasswordRecoveryMode(false);
-    setShellTab("crm");
+    setShellTab(readStoredShellTab());
   }
 
   function stopLiveSync() {
@@ -7332,8 +7387,42 @@
       : FUNNEL_STRUCTURE_MODE.COMPLEX;
   }
 
+  function getFunnelViewModeStorage() {
+    try {
+      const raw = localStorage.getItem(FUNNEL_VIEW_MODE_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function getFunnelViewModeUserKey() {
+    return String(state.currentUser?.id || getCurrentUserEmail() || "anonymous").trim() || "anonymous";
+  }
+
+  function getFunnelViewMode(funnel = null) {
+    const funnelId = String(funnel?.id || "").trim();
+    if (!funnelId) return normalizeFunnelStructureMode(funnel?.structure_mode);
+    const preferences = getFunnelViewModeStorage();
+    return normalizeFunnelStructureMode(preferences?.[getFunnelViewModeUserKey()]?.[funnelId] || funnel?.structure_mode);
+  }
+
+  function setFunnelViewMode(funnelId, mode) {
+    const normalizedFunnelId = String(funnelId || "").trim();
+    if (!normalizedFunnelId) return;
+    try {
+      const preferences = getFunnelViewModeStorage();
+      const userKey = getFunnelViewModeUserKey();
+      preferences[userKey] = { ...(preferences[userKey] || {}), [normalizedFunnelId]: normalizeFunnelStructureMode(mode) };
+      localStorage.setItem(FUNNEL_VIEW_MODE_STORAGE_KEY, JSON.stringify(preferences));
+    } catch {
+      // A storage restriction must not prevent the CRM from rendering.
+    }
+  }
+
   function isSimpleFunnel(funnel = null) {
-    return normalizeFunnelStructureMode(funnel?.structure_mode) === FUNNEL_STRUCTURE_MODE.SIMPLE;
+    return getFunnelViewMode(funnel) === FUNNEL_STRUCTURE_MODE.SIMPLE;
   }
 
   function getDefaultSubfunnelIdForFunnel(funnelOrId = null) {
@@ -10292,7 +10381,8 @@
       view: state.activeView,
       activeFunnelId: state.activeFunnelId,
       activeSubfunnelId: state.activeSubfunnelId,
-      funnelSidebarOpen: state.funnelSidebarOpen
+      funnelSidebarOpen: state.funnelSidebarOpen,
+      shellTab: state.activeShellTab
     };
   }
 
@@ -10317,6 +10407,9 @@
       keepFunnelSidebarOpen: state.funnelSidebarOpen
     });
     renderAll();
+    if (fallbackState.shellTab === "tasks" || fallbackState.shellTab === "intel") {
+      setShellTab(fallbackState.shellTab, { persist: false });
+    }
   }
 
   function syncFunnelSidebarVisibility() {
@@ -12417,7 +12510,6 @@
       -1
     ) + 1;
 
-    console.warn("Snapshot remoto de pipelines estabilizado durante persistência temporária.");
     return rows.map((row) => {
       if (!isTransientRemotePosition(row?.position)) return row;
       const stageId = String(row?.id || "").trim();
@@ -12851,15 +12943,17 @@
     els.mobileOrgName.textContent = "Pax Insights";
     els.userWelcome.textContent = getUserDisplayName();
     applyRoleBasedUi();
-    setShellTab("crm");
+    setShellTab(readStoredShellTab(), { persist: false });
     syncStickyChrome();
   }
 
   function finalizePrimaryAppRender({ rebindView = true, revealScreen = true } = {}) {
+    const shellTabToRestore = readStoredShellTab();
     if (rebindView) {
       bindView(state.activeView, { resetFunnelDetail: false, keepFunnelSidebarOpen: state.funnelSidebarOpen });
     }
     renderAll();
+    setShellTab(shellTabToRestore);
     startLiveSync();
     if (revealScreen) {
       showScreen("appScreen");
@@ -15899,27 +15993,29 @@
   function renderNotifications() {
     ensureDemoPipelineReminderSeed();
     const notifications = getActiveLeadNotifications();
+    const taskNotifications = Array.isArray(state.taskNotifications) ? state.taskNotifications : [];
+    const notificationTotal = notifications.length + taskNotifications.length;
     if (els.notificationsCount) {
-      els.notificationsCount.textContent = String(notifications.length);
-      els.notificationsCount.classList.toggle("hidden", notifications.length === 0);
+      els.notificationsCount.textContent = String(notificationTotal);
+      els.notificationsCount.classList.toggle("hidden", notificationTotal === 0);
     }
-    els.notificationsBtn?.classList.toggle("has-alert", notifications.length > 0);
+    els.notificationsBtn?.classList.toggle("has-alert", notificationTotal > 0);
     if (els.profileNotificationsCount) {
-      els.profileNotificationsCount.textContent = String(notifications.length);
-      els.profileNotificationsCount.classList.toggle("hidden", notifications.length === 0);
+      els.profileNotificationsCount.textContent = String(notificationTotal);
+      els.profileNotificationsCount.classList.toggle("hidden", notificationTotal === 0);
     }
     if (els.notificationsPanelMeta) {
-      els.notificationsPanelMeta.textContent = notifications.length
-        ? `${notifications.length} pendência(s)`
+      els.notificationsPanelMeta.textContent = notificationTotal
+        ? `${notificationTotal} notificação(ões)`
         : "Nenhuma pendência";
     }
     if (!els.notificationsList) return;
-    if (!notifications.length) {
+    if (!notificationTotal) {
       els.notificationsList.innerHTML = '<div class="notifications-empty">Nenhuma notificação pendente.</div>';
       return;
     }
 
-    els.notificationsList.innerHTML = notifications.map((item) => `
+    const crmMarkup = notifications.map((item) => `
       <div class="notifications-item-shell">
         <button type="button" class="notifications-item" data-notification-lead-id="${escapeHtml(item.leadId)}">
           <div class="notifications-item-head">
@@ -15936,6 +16032,19 @@
         <button type="button" class="notifications-item-dismiss" data-dismiss-notification="${escapeHtml(item.dismissKey)}" aria-label="Dispensar notificação">×</button>
       </div>
     `).join("");
+    const taskMarkup = taskNotifications.map((item) => `
+      <div class="notifications-item-shell notifications-item-task">
+        <button type="button" class="notifications-item" data-task-notification="true">
+          <div class="notifications-item-head">
+            <span class="notifications-item-title">${escapeHtml(item.sender || "Pax Rio Verde")}</span>
+            <span class="notifications-item-badge">Tarefas</span>
+          </div>
+          <div class="notifications-item-copy">${escapeHtml(item.body || "Nova mensagem")}</div>
+          <div class="notifications-item-meta">${escapeHtml(item.createdAt ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(item.createdAt)) : "Agora")}</div>
+        </button>
+      </div>
+    `).join("");
+    els.notificationsList.innerHTML = crmMarkup + taskMarkup;
   }
 
   function renderFunnelSubfields(names = []) {
@@ -15953,14 +16062,17 @@
   function syncFunnelStructureModeFields() {
     const modalMode = String(state.funnelModalContext?.mode || "create").trim().toLowerCase();
     const isSubfunnelOnlyMode = modalMode === "create-subfunnel" || modalMode === "edit-subfunnel";
-    const canApplyStructureModeToAll = !isSubfunnelOnlyMode && Boolean(state.funnelModalContext?.funnelId);
     const simple = !isSubfunnelOnlyMode
       && normalizeFunnelStructureMode(els.funnelStructureMode?.value) === FUNNEL_STRUCTURE_MODE.SIMPLE;
 
     els.funnelStructureModeGroup?.classList.toggle("hidden", isSubfunnelOnlyMode);
     if (els.funnelStructureMode) els.funnelStructureMode.disabled = isSubfunnelOnlyMode;
-    els.funnelStructureApplyAllGroup?.classList.toggle("hidden", !canApplyStructureModeToAll);
-    if (els.funnelStructureApplyAll) els.funnelStructureApplyAll.disabled = !canApplyStructureModeToAll;
+    // The mode is private to the signed-in user; it is never applied globally.
+    els.funnelStructureApplyAllGroup?.classList.add("hidden");
+    if (els.funnelStructureApplyAll) {
+      els.funnelStructureApplyAll.checked = false;
+      els.funnelStructureApplyAll.disabled = true;
+    }
     els.funnelSubCountGroup?.classList.toggle("hidden", simple || isSubfunnelOnlyMode);
     els.funnelSubfieldsGroup?.classList.toggle("hidden", simple && !isSubfunnelOnlyMode);
 
@@ -16084,7 +16196,7 @@
     }
     if (els.funnelStructureMode) {
       els.funnelStructureMode.disabled = false;
-      els.funnelStructureMode.value = normalizeFunnelStructureMode(funnel?.structure_mode);
+      els.funnelStructureMode.value = getFunnelViewMode(funnel);
     }
     if (els.funnelStructureApplyAll) {
       els.funnelStructureApplyAll.checked = false;
@@ -16436,6 +16548,32 @@
 
     if (route === "edit-subfunnel") {
       await submitSingleSubfunnelFormChange(context, "edit");
+      return;
+    }
+
+    if (context.existingFunnel) {
+      const previousMode = getFunnelViewMode(context.existingFunnel);
+      const selectedMode = normalizeFunnelStructureMode(context.structureMode);
+      if (previousMode !== selectedMode) setFunnelViewMode(context.existingFunnel.id, selectedMode);
+
+      // Keep the shared data model unchanged. This prevents a Simple/Complex
+      // preference from creating remote writes, re-sync delays, or a broken UI.
+      const persistenceContext = {
+        ...context,
+        structureMode: normalizeFunnelStructureMode(context.existingFunnel.structure_mode),
+        applyStructureModeToAll: false
+      };
+      if (persistenceContext.structureMode === FUNNEL_STRUCTURE_MODE.COMPLEX && !persistenceContext.subfunnelNames.length) {
+        persistenceContext.subfunnelNames = (context.existingFunnel.subfunnels || []).map((subfunnel) => String(subfunnel?.name || "").trim()).filter(Boolean);
+      }
+      if (isStructureModeOnlyFunnelSubmission(context, buildFullFunnelSubmissionSubfunnels(context))) {
+        closeFunnelModal();
+        state.activeSubfunnelId = selectedMode === FUNNEL_STRUCTURE_MODE.SIMPLE ? null : state.activeSubfunnelId;
+        bindView("funil", { resetFunnelDetail: false });
+        finalizeUiOnlyMutation();
+        return;
+      }
+      await submitFullFunnelFormChange(persistenceContext);
       return;
     }
 
@@ -19849,7 +19987,7 @@
       state.adminOverlayReturnState = null;
     }
 
-    setShellTab("crm");
+    setShellTab("crm", { persist: false });
     if (name === "funil" && options.resetFunnelDetail !== false) {
       state.activeFunnelId = null;
       state.activeSubfunnelId = null;
@@ -20154,9 +20292,24 @@
         !tasksAppOrigin
         || event.origin !== tasksAppOrigin
         || event.source !== els.tasksAppFrame?.contentWindow
-        || event.data?.type !== "pax:tasks-auth-request"
       ) return;
-      void sendTasksAuthSession();
+      if (event.data?.type === "pax:tasks-auth-request") {
+        void sendTasksAuthSession();
+      }
+      if (event.data?.type === "pax:tasks-theme-request") {
+        sendTasksTheme();
+      }
+      if (event.data?.type === "pax:tasks-notifications") {
+        state.taskNotifications = Array.isArray(event.data.notifications)
+          ? event.data.notifications.slice(0, 30).map((item) => ({
+            id: String(item?.id || ""),
+            sender: String(item?.sender || "Pax Rio Verde"),
+            body: String(item?.body || ""),
+            createdAt: String(item?.createdAt || "")
+          })).filter((item) => item.id && item.body)
+          : [];
+        renderNotifications();
+      }
     });
 
     els.profileMenuBtn?.addEventListener("click", (event) => {
@@ -20852,6 +21005,12 @@
       const notificationBtn = event.target.closest("[data-notification-lead-id]");
       if (notificationBtn) {
         openLeadFromNotification(notificationBtn.dataset.notificationLeadId);
+        return;
+      }
+
+      if (event.target.closest("[data-task-notification]")) {
+        setNotificationsPanelOpen(false);
+        setShellTab("tasks");
         return;
       }
 
