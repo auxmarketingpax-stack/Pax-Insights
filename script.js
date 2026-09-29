@@ -16718,6 +16718,11 @@
       return;
     }
     renderSocialSourceOptions(lead?.social_source || "");
+    // Older CRM records can legitimately predate the source/channel fields.
+    // Editing one must not suddenly force the user to invent missing legacy
+    // data; new leads remain fully required.
+    if (els.socialSource) els.socialSource.required = !lead;
+    if (els.trafficType) els.trafficType.required = !lead;
     toggleSocialSourceCreateBox(false);
     els.trafficType.value = lead?.traffic_type || getLeadSourceNames()[0] || "";
     if (els.contractNumber) els.contractNumber.value = getLeadPrimaryContractNumber(lead);
@@ -18235,13 +18240,13 @@
       return alert("A pipeline selecionada não pertence ao destino informado.");
     }
     const requiresOwner = leadPermissions.canAssignLeadOwner || !existingLead;
-    if (!payload.name || !payload.contact || !payload.start_date || !payload.traffic_type || !payload.social_source || (requiresOwner && !payload.owner)) {
+    if (!payload.name || !payload.contact || !payload.start_date || (!existingLead && (!payload.traffic_type || !payload.social_source)) || (requiresOwner && !payload.owner)) {
       return alert("Preencha os campos obrigatorios.");
     }
-    if (!payload.social_source) {
+    if (!existingLead && !payload.social_source) {
       return alert("Selecione o canal de origem.");
     }
-    if (isReferralLeadSource(payload.traffic_type) && !referralName) {
+    if (!existingLead && isReferralLeadSource(payload.traffic_type) && !referralName) {
       return alert("Informe o nome de quem indicou.");
     }
 
