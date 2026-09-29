@@ -19860,6 +19860,10 @@
 
     try {
       await executeFinalizedCriticalMutation({
+        // Stage deletion changes the stage, its assignments and potentially
+        // many leads. Serialize it with every other stage mutation so a
+        // background save cannot overwrite part of the deletion.
+        serializeKey: "stage-workspace-content",
         snapshot: {
           stages: true,
           leads: true,
