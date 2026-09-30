@@ -33,7 +33,7 @@
           <input type="email" id="loginEmail" autocomplete="email" required />
 
           <label for="loginPassword">Senha</label>
-          <input type="password" id="loginPassword" autocomplete="current-password" required />
+          <div class="password-field"><input type="password" id="loginPassword" autocomplete="current-password" required /><button type="button" class="password-toggle" data-password-target="loginPassword" aria-label="Mostrar senha" aria-pressed="false">👁</button></div>
 
           <button class="btn btn-primary" type="submit">Entrar</button>
           <button class="btn btn-link" type="button" id="forgotPasswordBtn">Esqueci minha senha</button>
@@ -57,7 +57,7 @@
           </select>
 
           <label for="registerPassword">Senha</label>
-          <input type="password" id="registerPassword" autocomplete="new-password" required />
+          <div class="password-field"><input type="password" id="registerPassword" autocomplete="new-password" required /><button type="button" class="password-toggle" data-password-target="registerPassword" aria-label="Mostrar senha" aria-pressed="false">👁</button></div>
 
           <button class="btn btn-primary" type="submit">Enviar solicitacao</button>
         </form>
@@ -66,7 +66,7 @@
 
         <div id="resetPasswordBox" class="hidden stack reset-box">
           <label for="newPassword">Nova senha</label>
-          <input type="password" id="newPassword" autocomplete="new-password" placeholder="Digite sua nova senha" />
+          <div class="password-field"><input type="password" id="newPassword" autocomplete="new-password" placeholder="Digite sua nova senha" /><button type="button" class="password-toggle" data-password-target="newPassword" aria-label="Mostrar senha" aria-pressed="false">👁</button></div>
           <button class="btn btn-primary" type="button" id="updatePasswordBtn">Salvar nova senha</button>
         </div>
 

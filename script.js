@@ -13646,7 +13646,18 @@
       return true;
     });
 
-    const owners = [...new Set(hierarchyScopedLeads.map((x) => x.owner).filter(Boolean))].sort();
+    const allScopedOwners = [...new Set(hierarchyScopedLeads.map((x) => x.owner).filter(Boolean))].sort();
+    // A member must not be offered people outside their own access scope in
+    // the dashboard filter. Department administrators see their department;
+    // unrestricted roles keep the full list.
+    const owners = (() => {
+      if (isDeveloper() || hasUnrestrictedDepartmentAccess(state.profile)) return allScopedOwners;
+      const allowedProfiles = isAdmin()
+        ? state.profiles.filter((profile) => String(profile.id || "") === String(state.profile?.id || "") || profileMatchesCurrentDepartmentScope(profile))
+        : [state.profile];
+      const allowedNames = allowedProfiles.map((profile) => profile?.full_name || profile?.email || "").filter(Boolean);
+      return allScopedOwners.filter((owner) => allowedNames.some((name) => getCompactAliasKey(name) === getCompactAliasKey(owner) || findMatchingProfileNameForOwner(owner, allowedProfiles) === name));
+    })();
     const months = [...new Set(hierarchyScopedLeads.map((lead) => getLeadMonthKey(lead)).filter(Boolean))]
       .sort((a, b) => String(b).localeCompare(String(a), "pt-BR"));
     const stageOptions = scopedStages.map((stage) => ({ id: stage.id, name: stage.name }));
@@ -20552,6 +20563,18 @@
       }
 
       els.sidebar.classList.toggle("open");
+    });
+
+    document.querySelectorAll(".password-toggle").forEach((button) => {
+      button.addEventListener("click", () => {
+        const input = $(button.dataset.passwordTarget);
+        if (!input) return;
+        const visible = input.type === "password";
+        input.type = visible ? "text" : "password";
+        button.setAttribute("aria-pressed", String(visible));
+        button.setAttribute("aria-label", visible ? "Ocultar senha" : "Mostrar senha");
+        button.textContent = visible ? "🙈" : "👁";
+      });
     });
     els.sidebarCollapseBtn?.addEventListener("click", () => toggleSidebarCollapsed(true));
     els.sidebarExpandBtn?.addEventListener("click", () => toggleSidebarCollapsed(false));

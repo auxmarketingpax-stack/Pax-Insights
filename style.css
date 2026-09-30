@@ -457,6 +457,11 @@ input:focus,select:focus,textarea:focus{
   z-index:50;
 }
 
+.password-field{position:relative;display:flex;align-items:center}
+.password-field input{width:100%;padding-right:44px}
+.password-toggle{position:absolute;right:8px;display:grid;place-items:center;width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:var(--muted);cursor:pointer;font-size:16px}
+.password-toggle:hover,.password-toggle:focus-visible{background:rgba(21,87,51,.1);color:var(--primary);outline:none}
+
 .filter-option{
   width:100%;
   border:none;
@@ -4778,7 +4783,7 @@ body[data-theme="dark"] .crm-modal-overlay{
 
 .funnel-context-menu{
   position:fixed;
-  z-index:120;
+  z-index:10000;
   min-width:188px;
   display:grid;
   gap:4px;
