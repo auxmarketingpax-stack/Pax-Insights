@@ -15287,15 +15287,38 @@
     return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
   }
 
+  // The spreadsheet reader is nearly 900 KB and is only needed when someone
+  // imports an Excel file. Loading it at startup was delaying every login and
+  // dashboard opening, including people who only use the CRM normally.
+  function loadSpreadsheetLibrary() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    if (window.__paxSpreadsheetLibraryPromise) return window.__paxSpreadsheetLibraryPromise;
+
+    window.__paxSpreadsheetLibraryPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "vendor/xlsx.full.min.js";
+      script.async = true;
+      script.onload = () => window.XLSX ? resolve(window.XLSX) : reject(new Error("A biblioteca de planilhas não foi carregada."));
+      script.onerror = () => reject(new Error("Não foi possível carregar a biblioteca para arquivos Excel."));
+      document.head.appendChild(script);
+    }).catch((error) => {
+      window.__paxSpreadsheetLibraryPromise = null;
+      throw error;
+    });
+
+    return window.__paxSpreadsheetLibraryPromise;
+  }
+
   async function parseImportedRows(file) {
     const filename = String(file?.name || "").toLowerCase();
 
     if (filename.endsWith(".xlsx") || filename.endsWith(".xls")) {
+      const XLSX = await loadSpreadsheetLibrary();
       const buffer = await file.arrayBuffer();
-      const workbook = window.XLSX?.read(buffer, { type: "array" });
+      const workbook = XLSX.read(buffer, { type: "array" });
       const firstSheetName = workbook?.SheetNames?.[0];
       const firstSheet = firstSheetName ? workbook.Sheets[firstSheetName] : null;
-      const rows = firstSheet ? window.XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) : [];
+      const rows = firstSheet ? XLSX.utils.sheet_to_json(firstSheet, { defval: "" }) : [];
       const normalizedRows = rows.map((row) => {
         const next = {};
         Object.entries(row || {}).forEach(([key, value]) => {
