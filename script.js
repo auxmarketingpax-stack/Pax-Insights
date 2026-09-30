@@ -19922,6 +19922,13 @@
           funnelWorkspace: true,
           selectedLeadIds: true
         },
+        // Remove the pipeline immediately, then restore this snapshot if any
+        // persistence step fails. This keeps the interface responsive without
+        // ever losing data on an unsuccessful Supabase operation.
+        applyOptimistic: () => {
+          applyStageDeleteLocalState(context, targetStage);
+          removeStagesLocally(context.stageIdsToDelete);
+        },
         persist: async () => {
           const leadsHandled = await deleteStageLeadsWithStrategy(context, targetStage);
           if (!leadsHandled) {
@@ -19932,7 +19939,6 @@
           await persistStageDeleteStages(context);
         },
         afterPersist: async () => {
-          applyStageDeleteLocalState(context, targetStage);
           await logStageDeleteCompletion(context, targetStage);
           closeStageDeleteModal();
         },
