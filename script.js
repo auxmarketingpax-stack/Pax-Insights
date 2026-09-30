@@ -439,6 +439,8 @@
     historyLoaded: false,
     profilesLoaded: false,
     adminDataLoaded: false,
+    loginInProgress: false,
+    appEntryPromise: null,
     permissionRequestContext: null,
     security: {
       allowSelfRegistration: false,
@@ -12831,6 +12833,7 @@
     }
 
     if (event !== "SIGNED_IN" || !session?.user) return;
+    if (state.loginInProgress) return;
 
     state.currentUser = session.user;
     await ensureProfile();
@@ -13013,6 +13016,11 @@
   }
 
   async function enterApp() {
+    // The form submit and Supabase's SIGNED_IN event can happen together.
+    // Share a single initialization so the screen is never loaded twice.
+    if (state.appEntryPromise) return state.appEntryPromise;
+
+    state.appEntryPromise = (async () => {
     prepareAppShellEntry();
 
     const hydratedFromCache = hydrateAppDataFromCache();
@@ -13022,6 +13030,11 @@
     }
 
     await loadEnterAppFreshData();
+    })().finally(() => {
+      state.appEntryPromise = null;
+    });
+
+    return state.appEntryPromise;
   }
 
   function applyLoadedAppDataSnapshot({
@@ -20457,23 +20470,48 @@
 
     els.loginForm.addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (state.loginInProgress) return;
+      state.loginInProgress = true;
       setMessage(els.authMessage, "");
-
-      const { data, error } = await supabaseApi.signInWithPassword(state.supabase, {
-        email: $("loginEmail").value.trim(),
-        password: $("loginPassword").value.trim()
-      });
-
-      if (error) return setMessage(els.authMessage, getAuthErrorMessage(error, "Nao foi possivel fazer login."), true);
-
-      state.currentUser = data?.user || null;
-      if (!state.currentUser) {
-        return setMessage(els.authMessage, "Nao foi possivel iniciar a sessao. Tente novamente.", true);
+      const submitButton = els.loginForm.querySelector('button[type="submit"]');
+      const previousLabel = submitButton?.textContent || "Entrar";
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Entrando...";
+        submitButton.setAttribute("aria-busy", "true");
       }
 
-      await ensureProfile();
-      if (!(await enforceApprovedSession())) return;
-      await enterApp();
+      try {
+        const { data, error } = await supabaseApi.signInWithPassword(state.supabase, {
+          email: $("loginEmail").value.trim(),
+          password: $("loginPassword").value.trim()
+        });
+
+        if (error) {
+          setMessage(els.authMessage, getAuthErrorMessage(error, "Nao foi possivel fazer login."), true);
+          return;
+        }
+
+        state.currentUser = data?.user || null;
+        if (!state.currentUser) {
+          setMessage(els.authMessage, "Nao foi possivel iniciar a sessao. Tente novamente.", true);
+          return;
+        }
+
+        await ensureProfile();
+        if (!(await enforceApprovedSession())) return;
+        await enterApp();
+      } catch (error) {
+        console.error("Erro ao entrar no Pax Insights:", error);
+        setMessage(els.authMessage, "Não foi possível concluir a entrada. Verifique sua conexão e tente novamente.", true);
+      } finally {
+        state.loginInProgress = false;
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = previousLabel;
+          submitButton.removeAttribute("aria-busy");
+        }
+      }
     });
 
     els.registerForm.addEventListener("submit", async (e) => {
